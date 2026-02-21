@@ -14,12 +14,18 @@
 4. Confirm smoke check status:
    - `output/reports/smoke_check_latest.md`
    - `output/reports/smoke_check_latest.json`
-5. Confirm latest ops status is healthy:
+5. Confirm SLA + drift monitors:
+   - `output/reports/data_sla_latest.md`
+   - `output/reports/model_drift_latest.md`
+6. Confirm latest ops status is healthy:
    - `Status: PASS` in `output/reports/ops_health_latest.md`
-6. Confirm DB protection artifacts are current:
+7. Confirm DB protection artifacts are current:
    - `output/backups/db_backup_latest.json`
    - `output/backups/db_restore_test_latest.json`
-7. Confirm scheduled task entries are still present:
+   - `output/backups/db_restore_drill_latest.json`
+8. Confirm unified operator view:
+   - `output/reports/operator_dashboard_latest.md`
+9. Confirm scheduled task entries are still present:
    - `AirlineIntel_DailyOps`
    - `AirlineIntel_WeeklyPack`
    - `AirlineIntel_MaintenancePulse`
@@ -33,8 +39,12 @@ Get-Content output\reports\always_on_maintenance_state.json
 Get-Content output\reports\ops_health_latest.md | Select-Object -First 30
 Get-Content output\reports\system_status_latest.md
 Get-Content output\reports\smoke_check_latest.md
+Get-Content output\reports\data_sla_latest.md
+Get-Content output\reports\model_drift_latest.md
+Get-Content output\reports\operator_dashboard_latest.md
 Get-Content output\backups\db_backup_latest.json
 Get-Content output\backups\db_restore_test_latest.json
+Get-Content output\backups\db_restore_drill_latest.json
 schtasks /Query /TN AirlineIntel_DailyOps /FO LIST /V | findstr /I /C:"Status:" /C:"Next Run Time" /C:"Task To Run"
 schtasks /Query /TN AirlineIntel_WeeklyPack /FO LIST /V | findstr /I /C:"Status:" /C:"Next Run Time" /C:"Task To Run"
 schtasks /Query /TN AirlineIntel_MaintenancePulse /FO LIST /V | findstr /I /C:"Status:" /C:"Next Run Time" /C:"Repeat: Every"
@@ -54,6 +64,12 @@ schtasks /Query /TN AirlineIntel_MaintenancePulse /FO LIST /V | findstr /I /C:"S
   - `"ok": true`
 - `db_restore_test_latest.json`:
   - `"ok": true`
+- `db_restore_drill_latest.json`:
+  - `"ok": true` (or minor count drift within allowed threshold)
+- `data_sla_latest.md`:
+  - `Status: PASS` (or explain WARN explicitly)
+- `model_drift_latest.md`:
+  - Drift groups reviewed when status is WARN/FAIL
 - `system_status_latest.md` points to current-day `ops_health_*` file.
 - Pulse task repeats every 30 minutes.
 
@@ -108,6 +124,7 @@ Action:
 3. Confirm:
    - `output/backups/db_backup_latest.json` => `"ok": true`
    - `output/backups/db_restore_test_latest.json` => `"ok": true`
+   - `output/backups/db_restore_drill_latest.json` => `"ok": true`
 
 ## If Task Scheduler Entries Are Missing
 
@@ -147,7 +164,56 @@ Get-Content output\reports\ops_notifications.log -Tail 20
 3. Confirm new artifacts:
    - `ops_health_*.md`
    - `thesis_pack_*.zip`
+   - `data_sla_*.md/json`
+   - `model_drift_*.md/json`
+   - `operator_dashboard_*.md/html/json`
    - `system_status_*.md/json`
+
+## Recovery Scan (Missed Windows)
+
+Dry-run scan for stale routes/cabins:
+
+```powershell
+.\.venv\Scripts\python.exe tools\recover_missed_windows.py --dry-run --output-dir output\reports --timestamp-tz local
+```
+
+Active recovery run (executes targeted scrapes):
+
+```powershell
+.\.venv\Scripts\python.exe tools\recover_missed_windows.py --output-dir output\reports --timestamp-tz local --max-routes 8
+```
+
+## Runtime Profiling / Safe Parallel Scrape
+
+Single-airline runtime profile:
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py --quick --airline BG --origin DAC --destination CXB --cabin Economy --limit-routes 1 --limit-dates 1 --profile-runtime --profile-output-dir output\reports
+```
+
+Safe parallel-by-airline run:
+
+```powershell
+.\.venv\Scripts\python.exe tools\parallel_airline_runner.py --python-exe .\.venv\Scripts\python.exe --max-workers 2 --quick --limit-routes 1 --limit-dates 1 --output-dir output\reports
+```
+
+Check outputs:
+- `output/reports/runtime_profile_latest.json`
+- `output/reports/scrape_parallel_latest.json`
+
+## Local CI Guard (Every Commit)
+
+Install pre-commit hook once:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\install_git_hooks.ps1
+```
+
+Manual CI check run:
+
+```powershell
+.\.venv\Scripts\python.exe tools\ci_checks.py --reports-dir output\reports --timestamp-tz local
+```
 
 ## Known Constraints
 

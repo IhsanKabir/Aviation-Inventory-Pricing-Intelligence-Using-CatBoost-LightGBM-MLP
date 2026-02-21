@@ -8,12 +8,17 @@ import argparse
 import importlib.util
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
-DEFAULT_DATABASE_URL = "postgresql+psycopg2://postgres:Ihsan%4090134@localhost:5432/Playwright_API_Calling"
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from core.runtime_config import get_database_url
+
 
 
 SEVERITY_ORDER = {"PASS": 0, "WARN": 1, "FAIL": 2}
@@ -24,7 +29,7 @@ def parse_args():
     p.add_argument("--reports-dir", default="output/reports")
     p.add_argument("--backups-dir", default="output/backups")
     p.add_argument("--logs-dir", default="logs")
-    p.add_argument("--db-url", default=os.getenv("AIRLINE_DB_URL", DEFAULT_DATABASE_URL))
+    p.add_argument("--db-url", default=get_database_url())
     p.add_argument("--max-ops-age-hours", type=float, default=30.0)
     p.add_argument("--max-heartbeat-age-hours", type=float, default=6.0)
     p.add_argument("--timestamp-tz", choices=["local", "utc"], default="local")

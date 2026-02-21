@@ -358,7 +358,7 @@ Every week, run and record:
    - Tick completed items
    - Add blockers under "Open Questions" if any new dependency appears
 
-### Progress Snapshot (2026-02-21)
+### Progress Snapshot (2026-02-22)
 
 - `P1-B` unknown airport timezone reduction:
   - Added `tools/audit_airport_timezones.py` for recurring monthly timezone-gap detection.
@@ -403,6 +403,39 @@ Every week, run and record:
     - `scheduler/always_on_maintenance.py`
   - Current environment note:
     - Backup/restore tools now auto-discover PostgreSQL client binaries from common Windows install paths (`C:\\Program Files\\PostgreSQL\\*\\bin`) even when PATH is not preconfigured.
+- Operational excellence upgrade pack (2026-02-22):
+  - CI + commit quality gates:
+    - `tools/ci_checks.py` (compile + tests + smoke + report dry run)
+    - `.github/workflows/ci.yml`
+    - `.githooks/pre-commit`
+    - `tools/install_git_hooks.ps1`
+  - DB resilience and verification:
+    - `tools/db_backup.py` captures table metrics at backup time.
+    - `tools/db_restore_test.py` validates dump readability.
+    - `tools/db_restore_drill.py` performs full temporary-DB restore and row-count/checksum comparison.
+  - SLA + drift + operator visibility:
+    - `tools/data_sla_dashboard.py`
+    - `tools/model_drift_monitor.py`
+    - `tools/build_operator_dashboard.py`
+  - Recovery + performance:
+    - `tools/recover_missed_windows.py` (dry-run scan and active recovery mode)
+    - `run_all.py --profile-runtime --profile-output-dir <dir>`
+    - `run_pipeline.py --parallel-airlines <N>` via `tools/parallel_airline_runner.py`
+  - Retention tiers:
+    - `tools/retention_cleanup.py` now supports raw/aggregate/thesis retention windows.
+  - Secrets hardening:
+    - Removed embedded DB credentials from code/config defaults.
+    - Added env-driven DB resolution helper: `core/runtime_config.py`.
+    - Added `.env.example`.
+  - Evidence (latest):
+    - `output/reports/ci_checks_latest.json`
+    - `output/reports/data_sla_latest.md`
+    - `output/reports/model_drift_latest.md`
+    - `output/reports/recover_missed_windows_latest.json`
+    - `output/reports/operator_dashboard_latest.md`
+    - `output/backups/db_restore_drill_latest.json`
+    - `output/reports/scrape_parallel_latest.json`
+    - `output/reports/runtime_profile_latest.json`
 - `P2-A` baseline forecasting:
   - Upgraded `predict_next_day.py` with seasonal naive + EWMA baselines.
   - Added RMSE and directional metrics (directional accuracy + up/down/macro F1).

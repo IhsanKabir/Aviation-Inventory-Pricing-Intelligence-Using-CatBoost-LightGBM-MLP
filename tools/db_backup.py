@@ -10,15 +10,20 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_DATABASE_URL = "postgresql+psycopg2://postgres:Ihsan%4090134@localhost:5432/Playwright_API_Calling"
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from core.runtime_config import get_database_url
+from sqlalchemy import create_engine, text
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Create DB backup")
-    p.add_argument("--db-url", default=os.getenv("AIRLINE_DB_URL", DEFAULT_DATABASE_URL))
+    p.add_argument("--db-url", default=get_database_url())
     p.add_argument("--output-dir", default="output/backups")
     p.add_argument("--timestamp-tz", choices=["local", "utc"], default="local")
     p.add_argument("--strict", action="store_true")
@@ -66,6 +71,41 @@ def _find_pg_tool(tool_name: str) -> str | None:
     return str(candidates[0])
 
 
+def _capture_table_metrics(db_url: str, sample_limit: int = 3000):
+    tables = ["public.flight_offers", "public.flight_offer_raw_meta", "airline_intel.column_change_events"]
+    metrics = {}
+    eng = create_engine(db_url, pool_pre_ping=True, future=True)
+    with eng.connect() as conn:
+        for t in tables:
+            row = conn.execute(
+                text(
+                    f"""
+                    WITH src AS (
+                        SELECT id
+                        FROM {t}
+                        ORDER BY id
+                        LIMIT :sample_limit
+                    )
+                    SELECT
+                        (SELECT COUNT(*) FROM {t})::bigint AS row_count,
+                        (SELECT COUNT(*) FROM src)::bigint AS sample_count,
+                        COALESCE((SELECT md5(string_agg(id::text, ',' ORDER BY id)) FROM src), md5('')) AS sample_checksum,
+                        (SELECT MIN(id) FROM {t})::bigint AS min_id,
+                        (SELECT MAX(id) FROM {t})::bigint AS max_id
+                    """
+                ),
+                {"sample_limit": int(sample_limit)},
+            ).mappings().first()
+            metrics[t] = {
+                "row_count": int(row["row_count"] or 0),
+                "sample_count": int(row["sample_count"] or 0),
+                "sample_checksum": row["sample_checksum"],
+                "min_id": int(row["min_id"] or 0) if row["min_id"] is not None else None,
+                "max_id": int(row["max_id"] or 0) if row["max_id"] is not None else None,
+            }
+    return metrics
+
+
 def main():
     args = parse_args()
     now = _now(args.timestamp_tz)
@@ -84,6 +124,7 @@ def main():
         "pg_dump_found": bool(pg_dump),
         "pg_dump_path": pg_dump,
         "command": None,
+        "table_metrics": {},
         "detail": "",
     }
 
@@ -111,7 +152,11 @@ def main():
     if proc.returncode == 0 and backup_file.exists():
         result["ok"] = True
         result["backup_file"] = str(backup_file)
-        result["detail"] = f"size_bytes={backup_file.stat().st_size}"
+        try:
+            result["table_metrics"] = _capture_table_metrics(args.db_url)
+            result["detail"] = f"size_bytes={backup_file.stat().st_size}"
+        except Exception as exc:  # pragma: no cover
+            result["detail"] = f"size_bytes={backup_file.stat().st_size}; metric_capture_warn={exc}"
         print(f"backup_created={backup_file}")
     else:
         stderr = (proc.stderr or "").strip().replace("\n", " | ")

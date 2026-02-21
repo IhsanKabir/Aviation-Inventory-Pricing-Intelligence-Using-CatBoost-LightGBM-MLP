@@ -1,0 +1,64 @@
+{
+  "unbundledOffers": [
+    [
+      {
+        "status": "AVAILABLE",
+        "brandId": "PROMO",
+        "seatsRemaining": {
+          "count": 3
+        },
+        "fare": {
+          "alternatives": [
+            [
+              {
+                "amount": 5000,
+                "currency": "BDT"
+              }
+            ]
+          ]
+        },
+        "taxes": {
+          "alternatives": [
+            [
+              {
+                "amount": 1000,
+                "currency": "BDT"
+              }
+            ]
+          ]
+        },
+        "total": {
+          "alternatives": [
+            [
+              {
+                "amount": 6000,
+                "currency": "BDT"
+              }
+            ]
+          ]
+        },
+        "itineraryPart": [
+          {
+            "stops": 0,
+            "segments": [
+              {
+                "flight": {
+                  "airlineCode": "BG",
+                  "flightNumber": "123"
+                },
+                "equipment": "DH8",
+                "origin": "DAC",
+                "destination": "CXB",
+                "departure": "2026-03-20T08:00:00",
+                "arrival": "2026-03-20T09:00:00",
+                "cabinClass": "Economy",
+                "bookingClass": "Y",
+                "fareBasis": "YOW"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  ]
+}

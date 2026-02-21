@@ -1,0 +1,66 @@
+{
+  "flightSearchModel": {
+    "flightSearchData": {
+      "adultCount": 1,
+      "childCount": 0,
+      "infantCount": 0
+    }
+  },
+  "flightResultsModel": {
+    "fareSearchReference": "ref-123"
+  },
+  "flightSelections": {
+    "fareRefNum": "frn-456",
+    "currency": {
+      "code": "BDT"
+    },
+    "fareFamilies": [
+      {
+        "code": "PP",
+        "title": "Special Promo",
+        "cabin": "Y"
+      },
+      {
+        "code": "FL",
+        "title": "Flexible",
+        "cabin": "Y"
+      }
+    ],
+    "flightBlocks": [
+      {
+        "from": "DAC",
+        "into": "CXB",
+        "flightDates": [
+          {
+            "date": "2026-03-20",
+            "flights": [
+              {
+                "itinerary": [
+                  {
+                    "flight": "VQ-927",
+                    "type": "ATR725",
+                    "TOD": "2026-03-20T13:00:00",
+                    "TOA": "2026-03-20T14:05:00",
+                    "stops": null
+                  }
+                ],
+                "familyFares": {
+                  "PP": {
+                    "one": 5000,
+                    "all": 5000,
+                    "seats": 5
+                  },
+                  "FL": {
+                    "one": 9000,
+                    "all": 9000,
+                    "seats": null
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

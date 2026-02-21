@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PYTHON_BIN="python"
+if [ -x ".venv/Scripts/python.exe" ]; then
+  PYTHON_BIN=".venv/Scripts/python.exe"
+elif [ -x ".venv/bin/python" ]; then
+  PYTHON_BIN=".venv/bin/python"
+fi
+
+echo "[pre-commit] Running CI checks..."
+"$PYTHON_BIN" tools/ci_checks.py --allow-db-skip --reports-dir output/reports --timestamp-tz local

@@ -52,6 +52,15 @@ def parse_args():
     p.add_argument("--smoke-strict", action="store_true")
     p.add_argument("--smoke-max-ops-age-hours", type=float, default=30.0)
     p.add_argument("--smoke-max-heartbeat-age-hours", type=float, default=6.0)
+    p.add_argument("--disable-sla-dashboard", action="store_true", help="Skip data SLA dashboard")
+    p.add_argument("--sla-strict", action="store_true")
+    p.add_argument("--disable-drift-monitor", action="store_true", help="Skip model drift monitor")
+    p.add_argument("--drift-strict", action="store_true")
+    p.add_argument("--disable-recovery-check", action="store_true", help="Skip missed-window recovery scan")
+    p.add_argument("--recovery-active", action="store_true", help="Enable active missed-window recovery (default is dry-run scan)")
+    p.add_argument("--disable-operator-dashboard", action="store_true", help="Skip operator dashboard build")
+    p.add_argument("--disable-restore-drill", action="store_true", help="Skip weekly full restore drill")
+    p.add_argument("--restore-drill-strict", action="store_true")
     return p.parse_args()
 
 
@@ -197,6 +206,72 @@ def run_daily_ops(args) -> int:
                 return rc_sm
         else:
             _run_soft(smoke_cmd, "smoke_check")
+
+    if not args.disable_sla_dashboard:
+        sla_cmd = [
+            args.python_exe,
+            "tools/data_sla_dashboard.py",
+            "--reports-dir",
+            str(reports_dir),
+            "--logs-dir",
+            args.logs_dir,
+            "--timestamp-tz",
+            args.timestamp_tz,
+        ]
+        if args.notify_webhook_url:
+            sla_cmd.extend(["--webhook-url", args.notify_webhook_url, "--channel", args.notify_channel])
+        if args.sla_strict:
+            sla_cmd.append("--strict")
+            rc_sla = _run(sla_cmd)
+            if rc_sla != 0:
+                return rc_sla
+        else:
+            _run_soft(sla_cmd, "data_sla_dashboard")
+
+    if not args.disable_drift_monitor:
+        drift_cmd = [
+            args.python_exe,
+            "tools/model_drift_monitor.py",
+            "--reports-dir",
+            str(reports_dir),
+            "--timestamp-tz",
+            args.timestamp_tz,
+        ]
+        if args.drift_strict:
+            drift_cmd.append("--strict")
+            rc_drift = _run(drift_cmd)
+            if rc_drift != 0:
+                return rc_drift
+        else:
+            _run_soft(drift_cmd, "model_drift_monitor")
+
+    if not args.disable_recovery_check:
+        recover_cmd = [
+            args.python_exe,
+            "tools/recover_missed_windows.py",
+            "--python-exe",
+            args.python_exe,
+            "--output-dir",
+            str(reports_dir),
+            "--timestamp-tz",
+            args.timestamp_tz,
+        ]
+        if not args.recovery_active:
+            recover_cmd.append("--dry-run")
+        _run_soft(recover_cmd, "recover_missed_windows")
+
+    if not args.disable_operator_dashboard:
+        dash_cmd = [
+            args.python_exe,
+            "tools/build_operator_dashboard.py",
+            "--reports-dir",
+            str(reports_dir),
+            "--backups-dir",
+            args.db_backup_output_dir,
+            "--timestamp-tz",
+            args.timestamp_tz,
+        ]
+        _run_soft(dash_cmd, "build_operator_dashboard")
     return 0
 
 
@@ -252,6 +327,38 @@ def run_weekly_pack(args) -> int:
                 return rc_r
         else:
             _run_soft(restore_cmd, "db_restore_test")
+
+    if not args.disable_restore_drill:
+        drill_cmd = [
+            args.python_exe,
+            "tools/db_restore_drill.py",
+            "--output-dir",
+            args.db_backup_output_dir,
+            "--timestamp-tz",
+            args.timestamp_tz,
+        ]
+        if args.db_backup_output_dir:
+            drill_cmd.extend(["--backup-meta", str(Path(args.db_backup_output_dir) / "db_backup_latest.json")])
+        if args.restore_drill_strict:
+            drill_cmd.append("--strict")
+            rc_d = _run(drill_cmd)
+            if rc_d != 0:
+                return rc_d
+        else:
+            _run_soft(drill_cmd, "db_restore_drill")
+
+    if not args.disable_operator_dashboard:
+        dash_cmd = [
+            args.python_exe,
+            "tools/build_operator_dashboard.py",
+            "--reports-dir",
+            args.reports_dir,
+            "--backups-dir",
+            args.db_backup_output_dir,
+            "--timestamp-tz",
+            args.timestamp_tz,
+        ]
+        _run_soft(dash_cmd, "build_operator_dashboard")
     return 0
 
 
