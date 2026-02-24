@@ -1,9 +1,14 @@
 import argparse
+import csv
+import datetime as dt
+import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
@@ -15,28 +20,47 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+SCHEDULE_FILE = Path("config/schedule.json")
+RUN_ALL_DEFAULT_DATES_FILE = Path("config/dates.json")
+REPO_ROOT = Path(__file__).resolve().parent
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run scrape + reports as one pipeline")
+    parser = argparse.ArgumentParser(description="Run accumulation + reports as one pipeline")
     parser.add_argument("--python-exe", default=sys.executable, help="Python executable to run child scripts")
     parser.add_argument("--db-url", default=os.getenv("AIRLINE_DB_URL", DEFAULT_DATABASE_URL), help="Postgres URL")
 
-    # scrape filters
+    # accumulation filters
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--airline")
     parser.add_argument("--origin")
     parser.add_argument("--destination")
     parser.add_argument("--date", help="YYYY-MM-DD")
+    parser.add_argument("--date-start", help="Inclusive range start (YYYY-MM-DD)")
+    parser.add_argument("--date-end", help="Inclusive range end (YYYY-MM-DD)")
     parser.add_argument("--dates", help="Comma-separated YYYY-MM-DD values for dynamic search windows")
     parser.add_argument("--date-offsets", help="Comma-separated day offsets from today")
     parser.add_argument("--dates-file", help="Optional dates config file path")
+    parser.add_argument("--schedule-file", default=str(SCHEDULE_FILE), help="Optional scheduler config file for auto-run date defaults")
     parser.add_argument("--cabin")
+    parser.add_argument("--adt", type=int, default=1, help="Adult passenger count for accumulation requests (default: 1)")
+    parser.add_argument("--chd", type=int, default=0, help="Child passenger count for accumulation requests (default: 0)")
+    parser.add_argument("--inf", type=int, default=0, help="Infant passenger count for accumulation requests (default: 0)")
+    parser.add_argument("--probe-group-id", help="Optional identifier linking multi-passenger probe runs")
+    parser.add_argument("--route-scope", choices=["all", "domestic", "international"], default="all")
+    parser.add_argument("--market-country", default="BD", help="Domestic market country (e.g., BD, IN)")
+    parser.add_argument("--strict-route-audit", action="store_true", help="Fail fast if route config audit finds blocking issues")
     parser.add_argument("--limit-routes", type=int)
     parser.add_argument("--limit-dates", type=int)
     parser.add_argument("--parallel-airlines", type=int, default=1, help="Run one run_all process per airline in parallel when airline filter is not set")
     parser.add_argument("--profile-runtime", action="store_true", help="Enable runtime profiling output from run_all")
-    parser.add_argument("--skip-scrape", action="store_true")
+    parser.add_argument(
+        "--skip-scrape",
+        "--skip-accumulation",
+        dest="skip_scrape",
+        action="store_true",
+        help="Skip accumulation step (legacy alias: --skip-scrape)",
+    )
 
     # reports
     parser.add_argument("--skip-reports", action="store_true")
@@ -70,6 +94,23 @@ def parse_args():
     parser.add_argument("--prediction-departure-start-date", help="YYYY-MM-DD departure lower bound for search_dynamic")
     parser.add_argument("--prediction-departure-end-date", help="YYYY-MM-DD departure upper bound for search_dynamic")
     parser.add_argument("--prediction-disable-backtest", action="store_true")
+    parser.add_argument(
+        "--prediction-ml-models",
+        default="none",
+        help="Comma-separated ML models for prediction: catboost,lightgbm (default: none)",
+    )
+    parser.add_argument("--prediction-ml-quantiles", default="0.1,0.5,0.9")
+    parser.add_argument("--prediction-ml-min-history", type=int, default=14)
+    parser.add_argument("--prediction-ml-random-seed", type=int, default=42)
+
+    # unified intelligence hub
+    parser.add_argument("--run-intelligence-hub", action="store_true")
+    parser.add_argument("--intel-lookback-days", type=int, default=14)
+    parser.add_argument(
+        "--intel-forecast-target",
+        choices=["min_price_bdt", "avg_seat_available", "offers_count", "soldout_rate"],
+        default="min_price_bdt",
+    )
 
     # alert quality
     parser.add_argument("--run-alert-eval", action="store_true")
@@ -83,6 +124,250 @@ def parse_args():
 
     parser.add_argument("--fail-fast", action="store_true", help="Stop immediately on first step failure")
     return parser.parse_args()
+
+
+def _has_explicit_scrape_date_selection(args) -> bool:
+    return bool(
+        args.date
+        or args.dates
+        or args.date_start
+        or args.date_end
+        or args.date_offsets
+        or args.dates_file
+    )
+
+
+def _parse_iso_date_list(values) -> list[str]:
+    out = []
+    seen = set()
+    for raw in values or []:
+        s = str(raw or "").strip()
+        if not s:
+            continue
+        try:
+            d = dt.date.fromisoformat(s)
+        except Exception:
+            continue
+        iso = d.isoformat()
+        if iso not in seen:
+            seen.add(iso)
+            out.append(iso)
+    return out
+
+
+def _expand_date_range(start_raw, end_raw) -> list[str]:
+    try:
+        start = dt.date.fromisoformat(str(start_raw).strip())
+        end = dt.date.fromisoformat(str(end_raw).strip())
+    except Exception:
+        return []
+    if end < start:
+        start, end = end, start
+    return [(start + dt.timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+
+
+def _parse_offsets_csv(raw: str) -> list[int]:
+    vals = []
+    seen = set()
+    for part in str(raw or "").split(","):
+        s = part.strip()
+        if not s:
+            continue
+        try:
+            n = int(s)
+        except Exception:
+            continue
+        if n not in seen:
+            seen.add(n)
+            vals.append(n)
+    return vals
+
+
+def _load_dates_from_file_pipeline(path: Path, today: dt.date) -> list[str]:
+    if not path.exists():
+        return []
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if isinstance(obj, list):
+        return _parse_iso_date_list(obj)
+    if isinstance(obj, dict):
+        if isinstance(obj.get("dates"), list):
+            parsed = _parse_iso_date_list(obj["dates"])
+            if parsed:
+                return parsed
+        if obj.get("date_start") and obj.get("date_end"):
+            parsed = _expand_date_range(obj.get("date_start"), obj.get("date_end"))
+            if parsed:
+                return parsed
+        if obj.get("start_date") and obj.get("end_date"):
+            parsed = _expand_date_range(obj.get("start_date"), obj.get("end_date"))
+            if parsed:
+                return parsed
+        if isinstance(obj.get("date_range"), dict):
+            parsed = _expand_date_range(
+                obj["date_range"].get("start") or obj["date_range"].get("date_start"),
+                obj["date_range"].get("end") or obj["date_range"].get("date_end"),
+            )
+            if parsed:
+                return parsed
+        if isinstance(obj.get("date_ranges"), list):
+            merged = []
+            for item in obj["date_ranges"]:
+                if not isinstance(item, dict):
+                    continue
+                parsed = _expand_date_range(
+                    item.get("start") or item.get("date_start"),
+                    item.get("end") or item.get("date_end"),
+                )
+                for d in parsed:
+                    if d not in merged:
+                        merged.append(d)
+            if merged:
+                return merged
+        if isinstance(obj.get("day_offsets"), list):
+            offs = []
+            for v in obj["day_offsets"]:
+                try:
+                    offs.append(int(v))
+                except Exception:
+                    continue
+            return [(today + dt.timedelta(days=o)).isoformat() for o in dict.fromkeys(offs)]
+    return []
+
+
+def _load_schedule_date_defaults(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        LOG.warning("Failed to parse schedule file %s for date defaults: %s", path, exc)
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+    root = obj.get("auto_run_date_ranges")
+    return root if isinstance(root, dict) else {}
+
+
+def _apply_schedule_date_defaults_pipeline(args) -> None:
+    root = _load_schedule_date_defaults(Path(args.schedule_file))
+    if not root:
+        return
+
+    default_section = root.get("default") if isinstance(root.get("default"), dict) else {}
+    pipeline_section = root.get("run_pipeline") if isinstance(root.get("run_pipeline"), dict) else {}
+    # Backward-compatible section names:
+    # - legacy: "scrape"
+    # - preferred: "accumulation"
+    scrape_section = root.get("scrape") if isinstance(root.get("scrape"), dict) else {}
+    accumulation_section = root.get("accumulation") if isinstance(root.get("accumulation"), dict) else {}
+    report_section = root.get("report") if isinstance(root.get("report"), dict) else {}
+    prediction_section = root.get("prediction") if isinstance(root.get("prediction"), dict) else {}
+
+    # merged precedence inside schedule file: default < run_pipeline < legacy-scrape < accumulation
+    merged_scrape = {}
+    for s in (default_section, pipeline_section, scrape_section, accumulation_section):
+        merged_scrape.update(s)
+
+    applied = []
+    if not _has_explicit_scrape_date_selection(args):
+        if bool(merged_scrape.get("combine")):
+            today = datetime.now(timezone.utc).date()
+            combined: list[str] = []
+
+            def _add_many(values: list[str]):
+                for v in values:
+                    if v and v not in combined:
+                        combined.append(v)
+
+            if merged_scrape.get("date"):
+                _add_many(_parse_iso_date_list([merged_scrape.get("date")]))
+            dates_val = merged_scrape.get("dates")
+            if dates_val:
+                if isinstance(dates_val, list):
+                    _add_many(_parse_iso_date_list(dates_val))
+                else:
+                    _add_many(_parse_iso_date_list(str(dates_val).split(",")))
+            ds = merged_scrape.get("date_start")
+            de = merged_scrape.get("date_end")
+            if ds and de:
+                _add_many(_expand_date_range(ds, de))
+            elif ds or de:
+                _add_many(_parse_iso_date_list([ds or de]))
+            date_ranges = merged_scrape.get("date_ranges")
+            if isinstance(date_ranges, list):
+                for item in date_ranges:
+                    if not isinstance(item, dict):
+                        continue
+                    _add_many(
+                        _expand_date_range(
+                            item.get("start") or item.get("date_start"),
+                            item.get("end") or item.get("date_end"),
+                        )
+                    )
+            offs = merged_scrape.get("date_offsets")
+            if isinstance(offs, list):
+                parsed_offs = []
+                for v in offs:
+                    try:
+                        parsed_offs.append(int(v))
+                    except Exception:
+                        continue
+                _add_many([(today + dt.timedelta(days=o)).isoformat() for o in parsed_offs])
+            elif isinstance(offs, str) and offs.strip():
+                _add_many([(today + dt.timedelta(days=o)).isoformat() for o in _parse_offsets_csv(offs)])
+            if merged_scrape.get("dates_file"):
+                _add_many(_load_dates_from_file_pipeline(Path(str(merged_scrape.get("dates_file"))), today=today))
+
+            if combined:
+                args.dates = ",".join(sorted(combined))
+                applied.append(f"combine=true dates={args.dates}")
+
+        if not args.dates:
+            for attr in ("date", "date_start", "date_end", "dates", "dates_file"):
+                if getattr(args, attr, None):
+                    continue
+                val = merged_scrape.get(attr)
+                if val in (None, "", []):
+                    continue
+                if attr == "dates" and isinstance(val, list):
+                    val = ",".join(str(v) for v in val)
+                setattr(args, attr, str(val))
+                applied.append(f"{attr}={getattr(args, attr)}")
+
+        if not getattr(args, "date_offsets", None) and not args.dates:
+            offs = merged_scrape.get("date_offsets")
+            if isinstance(offs, list) and offs:
+                args.date_offsets = ",".join(str(int(x)) for x in offs)
+                applied.append(f"date_offsets={args.date_offsets}")
+            elif isinstance(offs, str) and offs.strip():
+                args.date_offsets = offs.strip()
+                applied.append(f"date_offsets={args.date_offsets}")
+
+    # Optional report date window defaults (applies only if not explicitly set)
+    report_start = report_section.get("start_date") or report_section.get("report_start_date")
+    report_end = report_section.get("end_date") or report_section.get("report_end_date")
+    if not args.report_start_date and report_start:
+        args.report_start_date = str(report_start)
+        applied.append(f"report_start_date={args.report_start_date}")
+    if not args.report_end_date and report_end:
+        args.report_end_date = str(report_end)
+        applied.append(f"report_end_date={args.report_end_date}")
+
+    # Optional prediction departure date defaults
+    pred_dep_start = prediction_section.get("departure_start_date")
+    pred_dep_end = prediction_section.get("departure_end_date")
+    if not args.prediction_departure_start_date and pred_dep_start:
+        args.prediction_departure_start_date = str(pred_dep_start)
+        applied.append(f"prediction_departure_start_date={args.prediction_departure_start_date}")
+    if not args.prediction_departure_end_date and pred_dep_end:
+        args.prediction_departure_end_date = str(pred_dep_end)
+        applied.append(f"prediction_departure_end_date={args.prediction_departure_end_date}")
+
+    if applied:
+        LOG.info("Applied auto-run date defaults from %s: %s", args.schedule_file, ", ".join(applied))
 
 
 def _count_column_events(db_url: str):
@@ -104,18 +389,132 @@ def _add_arg(cmd: list[str], flag: str, value):
 def _run_step(name: str, cmd: list[str]):
     LOG.info("%s command: %s", name, subprocess.list2cmdline(cmd))
     started = datetime.now(timezone.utc)
-    result = subprocess.run(cmd)
+    proc = None
+    try:
+        proc = subprocess.Popen(cmd, cwd=str(REPO_ROOT))
+        rc = proc.wait()
+    except KeyboardInterrupt:
+        LOG.warning("%s interrupted by user; terminating child process", name)
+        if proc is not None and proc.poll() is None:
+            try:
+                if os.name == "nt":
+                    proc.terminate()
+                else:
+                    proc.send_signal(signal.SIGTERM)
+            except Exception as exc:
+                LOG.warning("%s child terminate failed: %s", name, exc)
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                LOG.warning("%s child still running after terminate; killing", name)
+                try:
+                    proc.kill()
+                except Exception:
+                    LOG.debug("%s child kill failed", name, exc_info=True)
+        raise
+    except Exception:
+        LOG.exception("%s failed before completion", name)
+        raise
     ended = datetime.now(timezone.utc)
     duration_sec = (ended - started).total_seconds()
-    LOG.info("%s finished with rc=%s in %.1fs", name, result.returncode, duration_sec)
-    return result.returncode
+    LOG.info("%s finished with rc=%s in %.1fs", name, rc, duration_sec)
+    return rc
+
+
+def _resolve_route_audit_report_path(report_output_dir: str) -> Path:
+    # Preferred: same report output dir; fallback: canonical run_all route-audit location.
+    candidates = [
+        Path(report_output_dir) / "route_audit_report_latest.json",
+        Path("output/reports/route_audit_report_latest.json"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return candidates[0]
+
+
+def _log_per_airline_row_counts(report_output_dir: str) -> None:
+    # 1) Accumulation-level rows from output/latest/combined_results.csv
+    combined_csv = Path("output/latest/combined_results.csv")
+    if combined_csv.exists():
+        counts = {}
+        try:
+            with combined_csv.open("r", newline="", encoding="utf-8-sig") as f:
+                for row in csv.DictReader(f):
+                    airline = str(row.get("airline") or "").upper().strip() or "UNKNOWN"
+                    counts[airline] = counts.get(airline, 0) + 1
+            if counts:
+                LOG.info("accumulation_rows_by_airline %s", ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+        except Exception as exc:
+            LOG.warning("Failed to compute accumulation per-airline counts from %s: %s", combined_csv, exc)
+
+    # 2) Report-level summary rows from latest run directory
+    out_dir = Path(report_output_dir)
+    try:
+        run_dirs = [p for p in out_dir.glob("run_*") if p.is_dir()]
+        if not run_dirs:
+            return
+        latest_run = max(run_dirs, key=lambda p: p.stat().st_mtime)
+        summary_csvs = sorted(latest_run.glob("route_airline_summary_*.csv"))
+        if not summary_csvs:
+            return
+        summary_csv = summary_csvs[-1]
+        counts = {}
+        with summary_csv.open("r", newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                airline = str(row.get("airline") or "").upper().strip() or "UNKNOWN"
+                counts[airline] = counts.get(airline, 0) + 1
+        if counts:
+            LOG.info(
+                "report_route_airline_summary_rows_by_airline run_dir=%s file=%s %s",
+                latest_run,
+                summary_csv.name,
+                ", ".join(f"{k}={v}" for k, v in sorted(counts.items())),
+            )
+    except Exception as exc:
+        LOG.warning("Failed to compute report per-airline summary counts: %s", exc)
+
+
+def _resolve_scrape_dates_for_log(args) -> list[str]:
+    """
+    Reconstruct the accumulation date list as run_all will resolve it, for logging only.
+    """
+    today = datetime.now(timezone.utc).date()
+    dates: list[str] = []
+
+    if args.date:
+        dates = _parse_iso_date_list([args.date])
+    elif args.dates:
+        dates = _parse_iso_date_list(str(args.dates).split(","))
+    elif args.date_start and args.date_end:
+        dates = _expand_date_range(args.date_start, args.date_end)
+    elif args.date_start or args.date_end:
+        dates = _parse_iso_date_list([args.date_start or args.date_end])
+    elif args.date_offsets:
+        offsets = _parse_offsets_csv(args.date_offsets)
+        dates = [(today + dt.timedelta(days=o)).isoformat() for o in offsets]
+    else:
+        # Match run_all default behavior: if dates_file omitted at pipeline level, run_all defaults to config/dates.json.
+        file_path = Path(args.dates_file) if args.dates_file else RUN_ALL_DEFAULT_DATES_FILE
+        file_dates = _load_dates_from_file_pipeline(file_path, today=today)
+        if file_dates:
+            dates = file_dates
+        else:
+            day_offsets = [0] if args.quick else [0, 3, 5, 7, 15, 30]
+            dates = [(today + dt.timedelta(days=d)).isoformat() for d in day_offsets]
+
+    if not dates:
+        dates = [today.isoformat()]
+    if args.limit_dates and args.limit_dates > 0:
+        dates = dates[: args.limit_dates]
+    return dates
 
 
 def build_scrape_cmd(args):
     if (args.parallel_airlines or 1) > 1 and not args.airline:
         cmd = [
             args.python_exe,
-            "tools/parallel_airline_runner.py",
+            str(REPO_ROOT / "tools/parallel_airline_runner.py"),
             "--python-exe",
             args.python_exe,
             "--max-workers",
@@ -128,25 +527,47 @@ def build_scrape_cmd(args):
         _add_arg(cmd, "--origin", args.origin)
         _add_arg(cmd, "--destination", args.destination)
         _add_arg(cmd, "--date", args.date)
+        _add_arg(cmd, "--date-start", args.date_start)
+        _add_arg(cmd, "--date-end", args.date_end)
         _add_arg(cmd, "--dates", args.dates)
         _add_arg(cmd, "--date-offsets", args.date_offsets)
         _add_arg(cmd, "--dates-file", args.dates_file)
+        _add_arg(cmd, "--schedule-file", args.schedule_file)
         _add_arg(cmd, "--cabin", args.cabin)
+        _add_arg(cmd, "--adt", args.adt)
+        _add_arg(cmd, "--chd", args.chd)
+        _add_arg(cmd, "--inf", args.inf)
+        _add_arg(cmd, "--probe-group-id", args.probe_group_id)
+        _add_arg(cmd, "--route-scope", args.route_scope)
+        _add_arg(cmd, "--market-country", args.market_country)
+        if args.strict_route_audit:
+            cmd.append("--strict-route-audit")
         _add_arg(cmd, "--limit-routes", args.limit_routes)
         _add_arg(cmd, "--limit-dates", args.limit_dates)
         return cmd
 
-    cmd = [args.python_exe, "run_all.py"]
+    cmd = [args.python_exe, str(REPO_ROOT / "run_all.py")]
     if args.quick:
         cmd.append("--quick")
     _add_arg(cmd, "--airline", args.airline)
     _add_arg(cmd, "--origin", args.origin)
     _add_arg(cmd, "--destination", args.destination)
     _add_arg(cmd, "--date", args.date)
+    _add_arg(cmd, "--date-start", args.date_start)
+    _add_arg(cmd, "--date-end", args.date_end)
     _add_arg(cmd, "--dates", args.dates)
     _add_arg(cmd, "--date-offsets", args.date_offsets)
     _add_arg(cmd, "--dates-file", args.dates_file)
+    _add_arg(cmd, "--schedule-file", args.schedule_file)
     _add_arg(cmd, "--cabin", args.cabin)
+    _add_arg(cmd, "--adt", args.adt)
+    _add_arg(cmd, "--chd", args.chd)
+    _add_arg(cmd, "--inf", args.inf)
+    _add_arg(cmd, "--probe-group-id", args.probe_group_id)
+    _add_arg(cmd, "--route-scope", args.route_scope)
+    _add_arg(cmd, "--market-country", args.market_country)
+    if args.strict_route_audit:
+        cmd.append("--strict-route-audit")
     _add_arg(cmd, "--limit-routes", args.limit_routes)
     _add_arg(cmd, "--limit-dates", args.limit_dates)
     if args.profile_runtime:
@@ -158,7 +579,7 @@ def build_scrape_cmd(args):
 def build_report_cmd(args):
     cmd = [
         args.python_exe,
-        "generate_reports.py",
+        str(REPO_ROOT / "generate_reports.py"),
         "--format",
         args.report_format,
         "--output-dir",
@@ -173,6 +594,8 @@ def build_report_cmd(args):
     _add_arg(cmd, "--origin", args.origin)
     _add_arg(cmd, "--destination", args.destination)
     _add_arg(cmd, "--cabin", args.cabin)
+    _add_arg(cmd, "--route-scope", args.route_scope)
+    _add_arg(cmd, "--market-country", args.market_country)
     if args.route_monitor:
         cmd.append("--route-monitor")
     return cmd
@@ -181,7 +604,7 @@ def build_report_cmd(args):
 def build_prediction_cmd(args):
     cmd = [
         args.python_exe,
-        "predict_next_day.py",
+        str(REPO_ROOT / "predict_next_day.py"),
         "--series-mode",
         args.prediction_series_mode,
         "--target-column",
@@ -197,6 +620,10 @@ def build_prediction_cmd(args):
     _add_arg(cmd, "--cabin", args.cabin)
     _add_arg(cmd, "--departure-start-date", args.prediction_departure_start_date)
     _add_arg(cmd, "--departure-end-date", args.prediction_departure_end_date)
+    _add_arg(cmd, "--ml-models", args.prediction_ml_models)
+    _add_arg(cmd, "--ml-quantiles", args.prediction_ml_quantiles)
+    _add_arg(cmd, "--ml-min-history", args.prediction_ml_min_history)
+    _add_arg(cmd, "--ml-random-seed", args.prediction_ml_random_seed)
     if args.prediction_disable_backtest:
         cmd.append("--disable-backtest")
     return cmd
@@ -205,7 +632,7 @@ def build_prediction_cmd(args):
 def build_alert_eval_cmd(args):
     cmd = [
         args.python_exe,
-        "tools/evaluate_alert_quality.py",
+        str(REPO_ROOT / "tools/evaluate_alert_quality.py"),
         "--output-dir",
         args.report_output_dir,
         "--timestamp-tz",
@@ -234,20 +661,45 @@ def build_alert_eval_cmd(args):
     return cmd
 
 
+def build_intelligence_hub_cmd(args):
+    cmd = [
+        args.python_exe,
+        str(REPO_ROOT / "tools/build_intelligence_hub.py"),
+        "--output-dir",
+        args.report_output_dir,
+        "--lookback-days",
+        str(args.intel_lookback_days),
+        "--forecast-target",
+        args.intel_forecast_target,
+        "--timestamp-tz",
+        args.report_timestamp_tz,
+    ]
+    return cmd
+
+
 def main():
     args = parse_args()
+    args.adt = max(1, int(args.adt or 1))
+    args.chd = max(0, int(args.chd or 0))
+    args.inf = max(0, int(args.inf or 0))
+    _apply_schedule_date_defaults_pipeline(args)
     before_count = _count_column_events(args.db_url)
 
     pipeline_rc = 0
 
     if not args.skip_scrape:
-        rc = _run_step("scrape", build_scrape_cmd(args))
+        resolved_scrape_dates = _resolve_scrape_dates_for_log(args)
+        LOG.info("Resolved accumulation dates (%d): %s", len(resolved_scrape_dates), resolved_scrape_dates)
+        LOG.info("Accumulation passenger mix: ADT=%d CHD=%d INF=%d", args.adt, args.chd, args.inf)
+        if args.probe_group_id:
+            LOG.info("Probe group id: %s", args.probe_group_id)
+        rc = _run_step("accumulation", build_scrape_cmd(args))
         if rc != 0:
             pipeline_rc = rc
             if args.fail_fast:
                 return pipeline_rc
     else:
-        LOG.info("Skipping scrape step.")
+        LOG.info("Skipping accumulation step.")
 
     if not args.skip_reports:
         rc = _run_step("reports", build_report_cmd(args))
@@ -265,6 +717,13 @@ def main():
             if args.fail_fast:
                 return pipeline_rc
 
+    if args.run_intelligence_hub:
+        rc = _run_step("intelligence_hub", build_intelligence_hub_cmd(args))
+        if rc != 0:
+            pipeline_rc = rc or pipeline_rc
+            if args.fail_fast:
+                return pipeline_rc
+
     if args.run_alert_eval:
         rc = _run_step("alert_eval", build_alert_eval_cmd(args))
         if rc != 0:
@@ -276,8 +735,22 @@ def main():
     if before_count is not None and after_count is not None:
         LOG.info("column_change_events before=%s after=%s delta=%s", before_count, after_count, after_count - before_count)
 
+    route_audit_path = _resolve_route_audit_report_path(args.report_output_dir)
+    _log_per_airline_row_counts(args.report_output_dir)
+    LOG.info(
+        "pipeline_summary rc=%s route_audit_report=%s exists=%s report_output_dir=%s",
+        pipeline_rc,
+        route_audit_path,
+        route_audit_path.exists(),
+        args.report_output_dir,
+    )
+
     return pipeline_rc
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        LOG.warning("Pipeline interrupted by user. Child process termination was requested.")
+        raise SystemExit(130)

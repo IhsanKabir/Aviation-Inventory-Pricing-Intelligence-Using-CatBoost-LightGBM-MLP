@@ -10,7 +10,10 @@ import os
 from sqlalchemy.dialects.postgresql import insert
 from models.flight_offer import FlightOfferORM
 from models.flight_offer_raw_meta import FlightOfferRawMetaORM
+from models.raw_offer_payload_store import RawOfferPayloadStoreORM
 from core.runtime_config import get_database_url
+from collections import Counter
+import hashlib
 
 
 
@@ -33,6 +36,7 @@ def _ensure_schema_extensions():
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS adt_count INTEGER",
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS chd_count INTEGER",
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS inf_count INTEGER",
+        "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS probe_group_id VARCHAR",
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS departure_local TIMESTAMP",
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS departure_utc TIMESTAMP",
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS departure_tz_offset VARCHAR",
@@ -41,6 +45,10 @@ def _ensure_schema_extensions():
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS fare_ref_num VARCHAR",
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS fare_search_reference VARCHAR",
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS source_endpoint VARCHAR",
+        "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS raw_offer_fingerprint VARCHAR(64)",
+        "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS raw_offer_storage VARCHAR(32)",
+        "CREATE INDEX IF NOT EXISTS ix_flight_offer_raw_meta_raw_offer_fingerprint ON flight_offer_raw_meta (raw_offer_fingerprint)",
+        "CREATE INDEX IF NOT EXISTS ix_flight_offer_raw_meta_probe_group_id ON flight_offer_raw_meta (probe_group_id)",
     ]
     with engine.begin() as conn:
         for stmt in ddl:
@@ -219,14 +227,85 @@ def bulk_insert_raw_meta(rows):
     if not rows:
         return 0
 
+    dedupe_mode = os.getenv("RAW_META_PAYLOAD_DEDUPE_MODE", "externalize_duplicates").strip().lower()
+    dedupe_enabled = dedupe_mode not in ("", "0", "false", "off", "disabled", "none")
+
     session = get_session()
     try:
+        prepared_rows = [dict(r) for r in rows]
+        payload_map: dict[str, dict] = {}
+        payload_fingerprint_counts: Counter[str] = Counter()
+
+        # Build canonical payload fingerprint map (payload only, not observation row fields),
+        # so we can preserve observation history while deduplicating repeated raw payload JSON.
+        for row in prepared_rows:
+            raw_offer = row.get("raw_offer")
+            if raw_offer is None:
+                continue
+            try:
+                payload_text = json.dumps(raw_offer, sort_keys=True, ensure_ascii=False, default=str)
+            except Exception:
+                payload_text = json.dumps({"_raw_offer_repr": repr(raw_offer)}, sort_keys=True, ensure_ascii=False)
+                raw_offer = {"_raw_offer_repr": repr(raw_offer)}
+                row["raw_offer"] = raw_offer
+            fp = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
+            row["raw_offer_fingerprint"] = fp
+            payload_fingerprint_counts[fp] += 1
+            if fp not in payload_map:
+                payload_map[fp] = {
+                    "fingerprint": fp,
+                    "payload_json": raw_offer,
+                    "payload_size_bytes": len(payload_text.encode("utf-8")),
+                    "seen_count": 0,
+                }
+        for fp, cnt in payload_fingerprint_counts.items():
+            if fp in payload_map:
+                payload_map[fp]["seen_count"] = int(cnt)
+
+        existing_fingerprints: set[str] = set()
+        if dedupe_enabled and payload_map:
+            fps = list(payload_map.keys())
+            for i in range(0, len(fps), 5000):
+                batch = fps[i : i + 5000]
+                q = text(
+                    "SELECT fingerprint FROM raw_offer_payload_store WHERE fingerprint = ANY(CAST(:fps AS text[]))"
+                )
+                rows_existing = session.execute(q, {"fps": batch}).fetchall()
+                existing_fingerprints.update(str(r[0]) for r in rows_existing if r and r[0])
+
+            payload_rows = list(payload_map.values())
+            stmt = insert(RawOfferPayloadStoreORM).values(payload_rows)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["fingerprint"],
+                set_={
+                    "last_seen_at": text("NOW()"),
+                    "seen_count": text("raw_offer_payload_store.seen_count + EXCLUDED.seen_count"),
+                },
+            )
+            session.execute(stmt)
+
+            for row in prepared_rows:
+                fp = row.get("raw_offer_fingerprint")
+                if not fp:
+                    continue
+                if dedupe_mode == "externalize_all":
+                    row["raw_offer"] = None
+                    row["raw_offer_storage"] = "external_ref"
+                elif dedupe_mode == "externalize_duplicates":
+                    if fp in existing_fingerprints or payload_fingerprint_counts.get(fp, 0) > 1:
+                        row["raw_offer"] = None
+                        row["raw_offer_storage"] = "external_ref"
+                    else:
+                        row["raw_offer_storage"] = "inline+ref"
+                else:
+                    row["raw_offer_storage"] = "inline_only"
+
         session.bulk_insert_mappings(
             FlightOfferRawMetaORM,
-            rows,
+            prepared_rows,
         )
         session.commit()
-        return len(rows)
+        return len(prepared_rows)
     finally:
         session.close()
 
@@ -380,6 +459,7 @@ def normalize_raw_meta(rows, scraped_at):
             "adt_count": r.get("adt_count"),
             "chd_count": r.get("chd_count"),
             "inf_count": r.get("inf_count"),
+            "probe_group_id": r.get("probe_group_id"),
             "departure_local": r.get("departure_local"),
             "departure_utc": r.get("departure_utc"),
             "departure_tz_offset": r.get("departure_tz_offset"),

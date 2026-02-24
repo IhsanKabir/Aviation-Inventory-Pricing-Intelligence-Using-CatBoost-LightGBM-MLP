@@ -2,7 +2,7 @@
 Data SLA dashboard:
 - route coverage
 - mandatory null rate
-- scrape success rate
+- accumulation success rate
 - freshness lag
 Includes threshold evaluation and optional webhook alerting.
 """
@@ -38,7 +38,14 @@ def parse_args():
     p.add_argument("--lookback-hours", type=float, default=24.0)
     p.add_argument("--min-route-coverage-pct", type=float, default=80.0)
     p.add_argument("--max-null-rate-pct", type=float, default=10.0)
-    p.add_argument("--min-scrape-success-pct", type=float, default=85.0)
+    p.add_argument(
+        "--min-scrape-success-pct",
+        "--min-accumulation-success-pct",
+        dest="min_scrape_success_pct",
+        type=float,
+        default=85.0,
+        help="Minimum successful accumulation run percentage (legacy alias: --min-scrape-success-pct)",
+    )
     p.add_argument("--max-freshness-lag-hours", type=float, default=8.0)
     p.add_argument("--webhook-url", default=os.getenv("AIRLINE_OPS_WEBHOOK_URL", ""))
     p.add_argument("--channel", default="ops-alerts")
@@ -188,10 +195,11 @@ def _evaluate(metrics: dict, args):
     )
     checks.append(
         {
-            "name": "scrape_success_pct",
-            "value": metrics["scrape_success_pct"],
+            "name": "accumulation_success_pct",
+            "legacy_name": "scrape_success_pct",
+            "value": metrics["accumulation_success_pct"],
             "threshold": f">= {args.min_scrape_success_pct}",
-            "ok": metrics["scrape_success_pct"] >= args.min_scrape_success_pct,
+            "ok": metrics["accumulation_success_pct"] >= args.min_scrape_success_pct,
         }
     )
     lag = metrics["freshness_lag_hours"] if metrics["freshness_lag_hours"] is not None else 9999.0
@@ -245,10 +253,14 @@ def main():
         "null_rows": dbm["null_rows"],
         "null_rate_pct": dbm["null_rate_pct"],
         "freshness_lag_hours": dbm["freshness_lag_hours"],
-        "scrape_runs_total": lm["total_runs"],
-        "scrape_runs_success": lm["success_runs"],
-        "scrape_success_pct": lm["success_pct"],
+        "accumulation_runs_total": lm["total_runs"],
+        "accumulation_runs_success": lm["success_runs"],
+        "accumulation_success_pct": lm["success_pct"],
     }
+    # Compatibility aliases (legacy terminology)
+    metrics["scrape_runs_total"] = metrics["accumulation_runs_total"]
+    metrics["scrape_runs_success"] = metrics["accumulation_runs_success"]
+    metrics["scrape_success_pct"] = metrics["accumulation_success_pct"]
 
     status, checks, failed = _evaluate(metrics, args)
     missing_routes = sorted(expected - observed)

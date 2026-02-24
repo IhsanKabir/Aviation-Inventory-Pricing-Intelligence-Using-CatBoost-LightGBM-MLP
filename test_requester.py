@@ -1,6 +1,8 @@
-from utils.requester import send_graphql
+﻿from modules.requester import Requester
 
 dummy_url = "https://booking.biman-airlines.com/api/graphql"
 dummy_payload = {"query": "query { __typename }"}
 
-print(send_graphql(dummy_url, dummy_payload))
+req = Requester(timeout=30)
+ok, body, status = req.post(dummy_url, dummy_payload)
+print({"ok": ok, "status": status, "body": body})

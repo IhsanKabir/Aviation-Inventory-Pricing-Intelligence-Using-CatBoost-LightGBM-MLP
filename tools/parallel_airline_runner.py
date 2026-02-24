@@ -12,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="Parallel run_all by airline")
@@ -21,10 +23,20 @@ def parse_args():
     p.add_argument("--origin")
     p.add_argument("--destination")
     p.add_argument("--date")
+    p.add_argument("--date-start")
+    p.add_argument("--date-end")
     p.add_argument("--dates")
     p.add_argument("--date-offsets")
     p.add_argument("--dates-file")
+    p.add_argument("--schedule-file")
     p.add_argument("--cabin")
+    p.add_argument("--adt", type=int, default=1)
+    p.add_argument("--chd", type=int, default=0)
+    p.add_argument("--inf", type=int, default=0)
+    p.add_argument("--probe-group-id")
+    p.add_argument("--route-scope", choices=["all", "domestic", "international"])
+    p.add_argument("--market-country")
+    p.add_argument("--strict-route-audit", action="store_true")
     p.add_argument("--quick", action="store_true")
     p.add_argument("--limit-routes", type=int)
     p.add_argument("--limit-dates", type=int)
@@ -41,28 +53,39 @@ def _load_enabled_airlines(path: Path):
 
 
 def _build_cmd(args, airline: str):
-    cmd = [args.python_exe, "run_all.py", "--airline", airline]
+    cmd = [args.python_exe, str(REPO_ROOT / "run_all.py"), "--airline", airline]
     if args.quick:
         cmd.append("--quick")
     for flag, value in [
         ("--origin", args.origin),
         ("--destination", args.destination),
         ("--date", args.date),
+        ("--date-start", args.date_start),
+        ("--date-end", args.date_end),
         ("--dates", args.dates),
         ("--date-offsets", args.date_offsets),
         ("--dates-file", args.dates_file),
+        ("--schedule-file", args.schedule_file),
         ("--cabin", args.cabin),
+        ("--adt", args.adt),
+        ("--chd", args.chd),
+        ("--inf", args.inf),
+        ("--probe-group-id", args.probe_group_id),
+        ("--route-scope", args.route_scope),
+        ("--market-country", args.market_country),
         ("--limit-routes", args.limit_routes),
         ("--limit-dates", args.limit_dates),
     ]:
         if value is not None:
             cmd.extend([flag, str(value)])
+    if args.strict_route_audit:
+        cmd.append("--strict-route-audit")
     return cmd
 
 
 def _run_one(cmd: list[str], airline: str):
     started = datetime.now(timezone.utc)
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT))
     ended = datetime.now(timezone.utc)
     return {
         "airline": airline,

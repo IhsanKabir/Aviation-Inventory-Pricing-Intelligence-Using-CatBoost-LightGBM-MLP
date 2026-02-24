@@ -42,6 +42,10 @@ def parse_args():
 
     p.add_argument("--disable-status-snapshot", action="store_true", help="Skip status snapshot generation")
     p.add_argument("--logs-dir", default="logs")
+    p.add_argument("--disable-db-storage-health", action="store_true", help="Skip DB storage health check")
+    p.add_argument("--db-storage-health-strict", action="store_true")
+    p.add_argument("--db-storage-health-warn-runway-days", type=float, default=60.0)
+    p.add_argument("--db-storage-health-fail-runway-days", type=float, default=21.0)
     p.add_argument("--disable-db-backup", action="store_true", help="Skip daily DB backup")
     p.add_argument("--db-backup-output-dir", default="output/backups")
     p.add_argument("--db-backup-strict", action="store_true")
@@ -61,6 +65,14 @@ def parse_args():
     p.add_argument("--disable-operator-dashboard", action="store_true", help="Skip operator dashboard build")
     p.add_argument("--disable-restore-drill", action="store_true", help="Skip weekly full restore drill")
     p.add_argument("--restore-drill-strict", action="store_true")
+    p.add_argument("--enable-db-compact-raw-meta", action="store_true", help="Run raw-meta compaction in weekly task if within maintenance window")
+    p.add_argument("--db-compact-mode", choices=["analyze", "vacuum", "vacuum_full", "reindex", "vacuum_full_reindex"], default="vacuum")
+    p.add_argument("--db-compact-window-weekday", type=int, default=6, help="0=Mon ... 6=Sun")
+    p.add_argument("--db-compact-window-hour", type=int, default=3)
+    p.add_argument("--db-compact-window-minute", type=int, default=30)
+    p.add_argument("--db-compact-window-span-minutes", type=int, default=120)
+    p.add_argument("--db-compact-dry-run", action="store_true", help="Build and run compaction script in dry-run mode only")
+    p.add_argument("--db-compact-strict", action="store_true")
     return p.parse_args()
 
 
@@ -80,6 +92,14 @@ def _run_soft(cmd, label: str):
 
 def _now_local():
     return datetime.datetime.now().astimezone()
+
+
+def _within_maintenance_window(now_dt: datetime.datetime, weekday: int, hour: int, minute: int, span_minutes: int) -> bool:
+    if now_dt.weekday() != int(weekday):
+        return False
+    start_min = int(hour) * 60 + int(minute)
+    now_min = now_dt.hour * 60 + now_dt.minute
+    return start_min <= now_min < (start_min + max(int(span_minutes), 1))
 
 
 def run_daily_ops(args) -> int:
@@ -182,6 +202,27 @@ def run_daily_ops(args) -> int:
         ]
         _run_soft(status_cmd, "system_status_snapshot")
 
+    if not args.disable_db_storage_health:
+        storage_cmd = [
+            args.python_exe,
+            "tools/db_storage_health_check.py",
+            "--output-dir",
+            str(reports_dir),
+            "--timestamp-tz",
+            args.timestamp_tz,
+            "--warn-runway-days",
+            str(args.db_storage_health_warn_runway_days),
+            "--fail-runway-days",
+            str(args.db_storage_health_fail_runway_days),
+        ]
+        if args.db_storage_health_strict:
+            storage_cmd.append("--strict")
+            rc_sh = _run(storage_cmd)
+            if rc_sh != 0:
+                return rc_sh
+        else:
+            _run_soft(storage_cmd, "db_storage_health_check")
+
     if not args.disable_smoke_check:
         smoke_cmd = [
             args.python_exe,
@@ -272,6 +313,40 @@ def run_daily_ops(args) -> int:
             args.timestamp_tz,
         ]
         _run_soft(dash_cmd, "build_operator_dashboard")
+
+    if args.enable_db_compact_raw_meta:
+        now_local = _now_local()
+        if _within_maintenance_window(
+            now_local,
+            args.db_compact_window_weekday,
+            args.db_compact_window_hour,
+            args.db_compact_window_minute,
+            args.db_compact_window_span_minutes,
+        ):
+            compact_cmd = [
+                args.python_exe,
+                "tools/db_compact_raw_meta.py",
+                "--mode",
+                args.db_compact_mode,
+                "--output-dir",
+                args.reports_dir,
+                "--timestamp-tz",
+                args.timestamp_tz,
+            ]
+            if args.db_compact_dry_run:
+                compact_cmd.append("--dry-run")
+            if args.db_compact_strict:
+                compact_cmd.append("--strict")
+                rc_c = _run(compact_cmd)
+                if rc_c != 0:
+                    return rc_c
+            else:
+                _run_soft(compact_cmd, "db_compact_raw_meta")
+        else:
+            print(
+                "SKIP: db_compact_raw_meta outside maintenance window "
+                f"(weekday={now_local.weekday()} time={now_local.strftime('%H:%M')})"
+            )
     return 0
 
 

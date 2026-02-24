@@ -1,8 +1,16 @@
-{
-  "BG": {
+[
+  {
+    "code": "BG",
     "module": "biman",
-    "active": true,
+    "enabled": true,
     "throttle_per_minute": 30,
     "cabin_classes": ["Economy", "Business"]
+  },
+  {
+    "code": "VQ",
+    "module": "novoair",
+    "enabled": true,
+    "throttle_per_minute": 30,
+    "cabin_classes": ["Economy"]
   }
-}
+]

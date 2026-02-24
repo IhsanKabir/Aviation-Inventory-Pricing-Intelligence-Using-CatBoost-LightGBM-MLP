@@ -1,11 +1,21 @@
-from utils.cookies import load_cookies
+﻿from pathlib import Path
+
+import requests
+
+from modules.requester import Requester
+
+
+def load_cookies(path: str = "cookies/biman.json") -> dict:
+    req = Requester(cookies_path=Path(path))
+    return requests.utils.dict_from_cookiejar(req.session.cookies)
+
 
 try:
     cookies = load_cookies()
-    print("\n✅ Cookie module works correctly!")
+    print("\nCookie module works correctly.")
     print(f"Loaded {len(cookies)} cookies:")
     for k, v in cookies.items():
-        print(f"  {k} = {v[:20]}...")   # show first 20 chars
+        print(f"  {k} = {str(v)[:20]}...")
 except Exception as e:
-    print("\n❌ Cookie module has an error:")
+    print("\nCookie module has an error:")
     print(e)

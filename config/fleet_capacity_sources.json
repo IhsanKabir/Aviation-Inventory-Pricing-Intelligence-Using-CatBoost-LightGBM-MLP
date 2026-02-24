@@ -1,0 +1,8 @@
+{
+  "refresh_hours": 24,
+  "failure_retry_minutes": 60,
+  "sources": {
+    "VQ": "https://www.flynovoair.com/about/fleet",
+    "BG": "https://www.biman-airlines.com/fleet"
+  }
+}
