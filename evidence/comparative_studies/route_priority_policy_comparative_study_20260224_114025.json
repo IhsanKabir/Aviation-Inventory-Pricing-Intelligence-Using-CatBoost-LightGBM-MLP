@@ -1,0 +1,86 @@
+{
+  "artifact_type": "route_priority_policy_comparative_study",
+  "policies": [
+    "beats_zero_folds",
+    "mean_rmse"
+  ],
+  "source_files": [
+    "inventory_state_baseline_20260224_113001_684966.json",
+    "inventory_state_baseline_20260224_113024_935032.json"
+  ],
+  "row_count": 4,
+  "rows": [
+    {
+      "route_key": "CXB-DAC",
+      "priority_beats_zero_folds": "hold",
+      "priority_reason_beats_zero_folds": "rolling_no_signal",
+      "priority_mean_rmse": "hold",
+      "priority_reason_mean_rmse": "rolling_no_signal",
+      "rolling_viable_rmse_beats_zero_folds": false,
+      "rolling_viable_mae_beats_zero_folds": false,
+      "rolling_viable_rmse_mean_rmse": false,
+      "rolling_viable_mae_mean_rmse": false,
+      "sparse_stage_b_beats_zero_folds": false,
+      "sparse_stage_b_mean_rmse": false,
+      "rmse_beats_zero_folds_count_beats_zero_folds": 0,
+      "rmse_beats_zero_folds_count_mean_rmse": 0,
+      "mae_beats_zero_folds_count_beats_zero_folds": 0,
+      "mae_beats_zero_folds_count_mean_rmse": 0,
+      "policy_priority_changed": false
+    },
+    {
+      "route_key": "DAC-CXB",
+      "priority_beats_zero_folds": "watch",
+      "priority_reason_beats_zero_folds": "some_rolling_fold_signal_no_viability",
+      "priority_mean_rmse": "high",
+      "priority_reason_mean_rmse": "rolling_viable_rmse_mae",
+      "rolling_viable_rmse_beats_zero_folds": false,
+      "rolling_viable_mae_beats_zero_folds": false,
+      "rolling_viable_rmse_mean_rmse": true,
+      "rolling_viable_mae_mean_rmse": true,
+      "sparse_stage_b_beats_zero_folds": false,
+      "sparse_stage_b_mean_rmse": false,
+      "rmse_beats_zero_folds_count_beats_zero_folds": 1,
+      "rmse_beats_zero_folds_count_mean_rmse": 1,
+      "mae_beats_zero_folds_count_beats_zero_folds": 1,
+      "mae_beats_zero_folds_count_mean_rmse": 1,
+      "policy_priority_changed": true
+    },
+    {
+      "route_key": "DAC-SPD",
+      "priority_beats_zero_folds": "watch",
+      "priority_reason_beats_zero_folds": "rolling_sparse_folds",
+      "priority_mean_rmse": "watch",
+      "priority_reason_mean_rmse": "rolling_sparse_folds",
+      "rolling_viable_rmse_beats_zero_folds": false,
+      "rolling_viable_mae_beats_zero_folds": false,
+      "rolling_viable_rmse_mean_rmse": false,
+      "rolling_viable_mae_mean_rmse": false,
+      "sparse_stage_b_beats_zero_folds": false,
+      "sparse_stage_b_mean_rmse": false,
+      "rmse_beats_zero_folds_count_beats_zero_folds": 0,
+      "rmse_beats_zero_folds_count_mean_rmse": 0,
+      "mae_beats_zero_folds_count_beats_zero_folds": 0,
+      "mae_beats_zero_folds_count_mean_rmse": 0,
+      "policy_priority_changed": false
+    },
+    {
+      "route_key": "SPD-DAC",
+      "priority_beats_zero_folds": "watch",
+      "priority_reason_beats_zero_folds": "rolling_sparse_folds",
+      "priority_mean_rmse": "watch",
+      "priority_reason_mean_rmse": "rolling_sparse_folds",
+      "rolling_viable_rmse_beats_zero_folds": false,
+      "rolling_viable_mae_beats_zero_folds": false,
+      "rolling_viable_rmse_mean_rmse": false,
+      "rolling_viable_mae_mean_rmse": false,
+      "sparse_stage_b_beats_zero_folds": false,
+      "sparse_stage_b_mean_rmse": false,
+      "rmse_beats_zero_folds_count_beats_zero_folds": 0,
+      "rmse_beats_zero_folds_count_mean_rmse": 0,
+      "mae_beats_zero_folds_count_beats_zero_folds": 0,
+      "mae_beats_zero_folds_count_mean_rmse": 0,
+      "policy_priority_changed": false
+    }
+  ]
+}

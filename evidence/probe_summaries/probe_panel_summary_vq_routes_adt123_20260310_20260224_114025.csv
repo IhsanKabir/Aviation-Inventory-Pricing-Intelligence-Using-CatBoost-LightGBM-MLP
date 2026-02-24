@@ -1,0 +1,5 @@
+probe_group_id,airline,route_key,origin,destination,cabin,flight_rows_unique,paired_adt1_adt2_flights,paired_adt1_adt3_flights,paired_adt2_adt3_flights,price_jump_1_to_2_pct_of_pairs,availability_drop_1_to_2_pct_of_pairs,median_fare_gap_1_to_2,median_fare_gap_1_to_3,median_fare_gap_2_to_3,breakpoint_2_count,breakpoint_3_count,breakpoint_4_count
+probe_VQ_CXB-DAC_a1-2-3_20260224_113652,VQ,CXB-DAC,CXB,DAC,Economy,20,20,20,20,100.0,0.0,4999.0,9998.0,4999.0,20,0,0
+probe_VQ_DAC-CXB_a1-2-3_20260224_113448,VQ,DAC-CXB,DAC,CXB,Economy,20,20,20,20,100.0,0.0,4999.0,9998.0,4999.0,20,0,0
+probe_VQ_DAC-SPD_a1-2-3_20260224_113236,VQ,DAC-SPD,DAC,SPD,Economy,11,11,11,11,100.0,0.0,4999.0,10898.0,5899.0,11,0,0
+probe_VQ_SPD-DAC_a1-2-3_20260224_113334,VQ,SPD-DAC,SPD,DAC,Economy,11,11,11,11,100.0,0.0,4799.0,9598.0,4799.0,11,0,0

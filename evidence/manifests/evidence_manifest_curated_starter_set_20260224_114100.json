@@ -1,0 +1,129 @@
+{
+  "artifact_type": "evidence_manifest",
+  "manifest_name": "curated_starter_set_github_publish_prep",
+  "generated_at_local": "2026-02-24T11:41:00",
+  "copied_count": 17,
+  "missing_count": 0,
+  "copied": [
+    {
+      "category": "comparative_studies",
+      "src": "output\\reports\\route_priority_policy_comparative_study_20260224_114025.json",
+      "dst": "evidence\\comparative_studies\\route_priority_policy_comparative_study_20260224_114025.json",
+      "bytes": 3536,
+      "note": "Route priority policy comparison (beats_zero_folds vs mean_rmse)"
+    },
+    {
+      "category": "comparative_studies",
+      "src": "output\\reports\\route_priority_policy_comparative_study_20260224_114025.csv",
+      "dst": "evidence\\comparative_studies\\route_priority_policy_comparative_study_20260224_114025.csv",
+      "bytes": 952,
+      "note": "Route priority policy comparison table"
+    },
+    {
+      "category": "comparative_studies",
+      "src": "output\\reports\\route_priority_policy_comparative_study_20260224_114025.md",
+      "dst": "evidence\\comparative_studies\\route_priority_policy_comparative_study_20260224_114025.md",
+      "bytes": 611,
+      "note": "Route priority policy comparison markdown summary"
+    },
+    {
+      "category": "probe_summaries",
+      "src": "output\\reports\\probe_panel_summary_vq_routes_adt123_20260310_20260224_114025.json",
+      "dst": "evidence\\probe_summaries\\probe_panel_summary_vq_routes_adt123_20260310_20260224_114025.json",
+      "bytes": 3033,
+      "note": "VQ 4-route probe panel summary (ADT=1,2,3, fixed validation date)"
+    },
+    {
+      "category": "probe_summaries",
+      "src": "output\\reports\\probe_panel_summary_vq_routes_adt123_20260310_20260224_114025.csv",
+      "dst": "evidence\\probe_summaries\\probe_panel_summary_vq_routes_adt123_20260310_20260224_114025.csv",
+      "bytes": 821,
+      "note": "VQ 4-route probe panel summary table"
+    },
+    {
+      "category": "probe_summaries",
+      "src": "output\\reports\\probe_panel_summary_vq_routes_adt123_20260310_20260224_114025.md",
+      "dst": "evidence\\probe_summaries\\probe_panel_summary_vq_routes_adt123_20260310_20260224_114025.md",
+      "bytes": 533,
+      "note": "VQ 4-route probe panel markdown summary"
+    },
+    {
+      "category": "model_summaries",
+      "src": "output\\reports\\inventory_state_v2_20260224_112937_339292_UTCp0600.json",
+      "dst": "evidence\\model_summaries\\inventory_state_v2_20260224_112937_339292_UTCp0600.json",
+      "bytes": 6351,
+      "note": "inventory_state_v2 dataset build summary for training cycle"
+    },
+    {
+      "category": "model_summaries",
+      "src": "output\\reports\\inventory_state_baseline_20260224_113001_684966.json",
+      "dst": "evidence\\model_summaries\\inventory_state_baseline_20260224_113001_684966.json",
+      "bytes": 263273,
+      "note": "4-route trainer summary (beats_zero_folds policy)"
+    },
+    {
+      "category": "model_summaries",
+      "src": "output\\reports\\inventory_state_baseline_20260224_113001_684966.md",
+      "dst": "evidence\\model_summaries\\inventory_state_baseline_20260224_113001_684966.md",
+      "bytes": 7684,
+      "note": "4-route trainer markdown summary (beats_zero_folds policy)"
+    },
+    {
+      "category": "model_summaries",
+      "src": "output\\reports\\route_threshold_tuning_20260224_113001_684966.csv",
+      "dst": "evidence\\model_summaries\\route_threshold_tuning_20260224_113001_684966.csv",
+      "bytes": 33334,
+      "note": "Per-route threshold tuning table (beats_zero_folds run)"
+    },
+    {
+      "category": "model_summaries",
+      "src": "output\\reports\\route_rolling_eval_20260224_113001_684966.csv",
+      "dst": "evidence\\model_summaries\\route_rolling_eval_20260224_113001_684966.csv",
+      "bytes": 3564,
+      "note": "Per-route rolling-fold evaluation table (beats_zero_folds run)"
+    },
+    {
+      "category": "model_summaries",
+      "src": "output\\reports\\route_feature_impact_20260224_113001_684966.csv",
+      "dst": "evidence\\model_summaries\\route_feature_impact_20260224_113001_684966.csv",
+      "bytes": 13428,
+      "note": "Per-route feature impact summary (beats_zero_folds run)"
+    },
+    {
+      "category": "model_summaries",
+      "src": "output\\reports\\inventory_state_baseline_20260224_113024_935032.json",
+      "dst": "evidence\\model_summaries\\inventory_state_baseline_20260224_113024_935032.json",
+      "bytes": 263193,
+      "note": "4-route trainer summary (mean_rmse policy)"
+    },
+    {
+      "category": "model_summaries",
+      "src": "output\\reports\\inventory_state_baseline_20260224_113024_935032.md",
+      "dst": "evidence\\model_summaries\\inventory_state_baseline_20260224_113024_935032.md",
+      "bytes": 7676,
+      "note": "4-route trainer markdown summary (mean_rmse policy)"
+    },
+    {
+      "category": "model_summaries",
+      "src": "output\\reports\\route_threshold_tuning_20260224_113024_935032.csv",
+      "dst": "evidence\\model_summaries\\route_threshold_tuning_20260224_113024_935032.csv",
+      "bytes": 33334,
+      "note": "Per-route threshold tuning table (mean_rmse run)"
+    },
+    {
+      "category": "model_summaries",
+      "src": "output\\reports\\route_rolling_eval_20260224_113024_935032.csv",
+      "dst": "evidence\\model_summaries\\route_rolling_eval_20260224_113024_935032.csv",
+      "bytes": 3564,
+      "note": "Per-route rolling-fold evaluation table (mean_rmse run)"
+    },
+    {
+      "category": "model_summaries",
+      "src": "output\\reports\\route_feature_impact_20260224_113024_935032.csv",
+      "dst": "evidence\\model_summaries\\route_feature_impact_20260224_113024_935032.csv",
+      "bytes": 13428,
+      "note": "Per-route feature impact summary (mean_rmse run)"
+    }
+  ],
+  "missing": []
+}

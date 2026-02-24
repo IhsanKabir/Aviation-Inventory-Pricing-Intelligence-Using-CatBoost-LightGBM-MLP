@@ -1,0 +1,5 @@
+route_key,priority_beats_zero_folds,priority_reason_beats_zero_folds,priority_mean_rmse,priority_reason_mean_rmse,rolling_viable_rmse_beats_zero_folds,rolling_viable_mae_beats_zero_folds,rolling_viable_rmse_mean_rmse,rolling_viable_mae_mean_rmse,sparse_stage_b_beats_zero_folds,sparse_stage_b_mean_rmse,rmse_beats_zero_folds_count_beats_zero_folds,rmse_beats_zero_folds_count_mean_rmse,mae_beats_zero_folds_count_beats_zero_folds,mae_beats_zero_folds_count_mean_rmse,policy_priority_changed
+CXB-DAC,hold,rolling_no_signal,hold,rolling_no_signal,False,False,False,False,False,False,0,0,0,0,False
+DAC-CXB,watch,some_rolling_fold_signal_no_viability,high,rolling_viable_rmse_mae,False,False,True,True,False,False,1,1,1,1,True
+DAC-SPD,watch,rolling_sparse_folds,watch,rolling_sparse_folds,False,False,False,False,False,False,0,0,0,0,False
+SPD-DAC,watch,rolling_sparse_folds,watch,rolling_sparse_folds,False,False,False,False,False,False,0,0,0,0,False

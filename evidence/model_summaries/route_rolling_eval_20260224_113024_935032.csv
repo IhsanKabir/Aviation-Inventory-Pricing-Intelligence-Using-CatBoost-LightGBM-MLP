@@ -1,0 +1,17 @@
+route_key,fold,rows_total,rows_train,rows_test,min_move_delta,min_test_moves,min_stage_b_moves,stage_a_calibration_method,stage_b_model_family,skipped,reason,sparse_stage_b,sparse_test_moves,beats_zero_rmse,beats_zero_mae,best_threshold_by_rmse,best_rmse,best_threshold_by_mae,best_mae,zero_baseline_rmse,zero_baseline_mae,actual_move_count,predicted_move_count_default,stage_a_balanced_accuracy,stage_a_f1_move,split_timestamp_utc
+CXB-DAC,1,2313,465,462,200.0,1,5,none,ridge,False,,False,False,False,False,0.5,50.63436362744601,0.5,6.104575163398692,50.63436362744601,6.104575163398692,8.0,0.0,0.5,0.0,2026-02-22 06:01:41.558990
+CXB-DAC,2,2313,927,462,200.0,1,5,none,ridge,False,,False,False,False,False,0.56,143.2988743546311,0.56,14.784782608695652,143.2988743546311,14.784782608695652,9.0,1.0,0.49889135254988914,0.0,2026-02-22 20:58:42.355493
+CXB-DAC,3,2313,1389,462,200.0,1,5,none,ridge,False,,False,False,False,False,0.5,44.13674147523748,0.5,3.896103896103896,44.13674147523748,3.896103896103896,4.0,0.0,0.5,0.0,2026-02-23 11:30:03.956383
+CXB-DAC,4,2313,1851,462,200.0,1,5,none,ridge,False,,False,False,False,False,0.5,139.62170986258465,0.5,18.980707395498392,139.62170986258465,18.980707395498392,9.0,0.0,0.5,0.0,2026-02-23 19:30:03.349250
+DAC-CXB,1,2377,477,475,200.0,1,5,none,ridge,False,,False,False,True,True,0.5,343.25012817851746,0.5,31.20834439190855,443.99796053547396,39.602972399150744,13.0,1.0,0.5384615384615384,0.14285714285714285,2026-02-22 06:17:41.520152
+DAC-CXB,2,2377,952,475,200.0,1,5,none,ridge,False,,False,False,False,False,0.5,189.28931847517157,0.5,24.209302325581394,189.28931847517157,24.209302325581394,12.0,0.0,0.5,0.0,2026-02-22 20:58:42.355493
+DAC-CXB,3,2377,1427,475,200.0,1,5,none,ridge,False,,False,False,False,False,0.5,30.895443370384434,0.5,2.002105263157895,30.895443370384434,2.002105263157895,2.0,0.0,0.5,0.0,2026-02-23 11:30:03.956383
+DAC-CXB,4,2377,1902,475,200.0,1,5,none,ridge,False,,False,False,False,False,0.5,182.75415247515878,0.5,32.5679012345679,182.75415247515878,32.5679012345679,13.0,0.0,0.5,0.0,2026-02-23 19:30:03.349250
+DAC-SPD,1,835,167,167,200.0,1,5,none,ridge,False,,False,False,False,False,0.65,157.50700883238594,0.65,28.91566265060241,157.50700883238594,28.91566265060241,9.0,2.0,0.5523708421797594,0.18181818181818182,2026-02-22 20:58:42.355493
+DAC-SPD,2,835,334,167,200.0,1,5,none,ridge,False,,False,False,False,False,0.8,80.73461657339442,0.8,8.439759036144578,80.73461657339442,8.439759036144578,3.0,8.0,0.8149284253578732,0.36363636363636365,2026-02-23 07:30:03.653289
+DAC-SPD,3,835,501,167,200.0,1,5,none,ridge,False,,False,False,False,False,0.68,76.7140268540745,0.68,8.395209580838323,76.7140268540745,8.395209580838323,2.0,4.0,0.48787878787878786,0.0,2026-02-23 11:30:03.956383
+DAC-SPD,4,835,668,167,200.0,1,5,none,ridge,True,Insufficient move rows in Stage A test split (0 < min_test_moves=1),False,True,False,False,,,,,,,0.0,,,,
+SPD-DAC,1,909,185,181,200.0,1,5,none,ridge,True,Stage A train split has only one class (move/no-move),False,False,False,False,,,,,,,,,,,
+SPD-DAC,2,909,366,181,200.0,1,5,none,ridge,True,Insufficient moved rows for Stage B training (4 < min_stage_b_moves=5),True,False,False,False,,,,,,,,,,,
+SPD-DAC,3,909,547,181,200.0,1,5,none,ridge,True,Insufficient move rows in Stage A test split (0 < min_test_moves=1),False,True,False,False,,,,,,,0.0,,,,
+SPD-DAC,4,909,728,181,200.0,1,5,none,ridge,False,,False,False,False,False,0.5,71.545512903792,0.5,7.302083333333333,71.545512903792,7.302083333333333,1.0,0.0,0.5,0.0,2026-02-23 19:30:03.349250
