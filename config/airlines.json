@@ -12,5 +12,12 @@
     "enabled": true,
     "throttle_per_minute": 30,
     "cabin_classes": ["Economy"]
+  },
+  {
+    "code": "2A",
+    "module": "airastra",
+    "enabled": false,
+    "throttle_per_minute": 10,
+    "cabin_classes": ["Economy"]
   }
 ]

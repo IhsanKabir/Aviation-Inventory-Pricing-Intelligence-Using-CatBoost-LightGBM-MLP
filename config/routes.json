@@ -74,7 +74,19 @@
   { "airline": "BG", "origin": "MED", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
   { "airline": "BG", "origin": "SHJ", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
   { "airline": "BG", "origin": "AUH", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "AUH", "cabins": ["Economy","Premium Economy","Business"] }
+  { "airline": "BG", "origin": "DAC", "destination": "AUH", "cabins": ["Economy","Premium Economy","Business"] },
+  { "airline": "2A", "origin": "CGP", "destination": "DAC", "cabins": ["Economy"] },
+  { "airline": "2A", "origin": "CGP", "destination": "SPD", "cabins": ["Economy"] },
+  { "airline": "2A", "origin": "CXB", "destination": "DAC", "cabins": ["Economy"] },
+  { "airline": "2A", "origin": "CXB", "destination": "SPD", "cabins": ["Economy"] },
+  { "airline": "2A", "origin": "DAC", "destination": "CGP", "cabins": ["Economy"] },
+  { "airline": "2A", "origin": "DAC", "destination": "CXB", "cabins": ["Economy"] },
+  { "airline": "2A", "origin": "DAC", "destination": "SPD", "cabins": ["Economy"] },
+  { "airline": "2A", "origin": "DAC", "destination": "ZYL", "cabins": ["Economy"] },
+  { "airline": "2A", "origin": "SPD", "destination": "CGP", "cabins": ["Economy"] },
+  { "airline": "2A", "origin": "SPD", "destination": "CXB", "cabins": ["Economy"] },
+  { "airline": "2A", "origin": "SPD", "destination": "DAC", "cabins": ["Economy"] },
+  { "airline": "2A", "origin": "ZYL", "destination": "DAC", "cabins": ["Economy"] }
 
 
 ]
