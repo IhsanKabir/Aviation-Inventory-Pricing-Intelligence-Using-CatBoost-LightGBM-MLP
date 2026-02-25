@@ -167,6 +167,7 @@ def generate_route_flight_fare_monitor(
 ):
     engine = create_engine(db_url, pool_pre_ping=True, future=True)
     scrape_ctx = ScrapeContext(engine)
+    selection_airline_codes = parse_csv_upper_codes(airline)
 
     if current_scrape_id and previous_scrape_id:
         current_scrape = current_scrape_id
@@ -177,9 +178,12 @@ def generate_route_flight_fare_monitor(
                 lookback=scrape_lookback,
                 min_rows_floor=min_full_scrape_rows,
                 min_full_ratio=min_full_ratio,
+                airline_codes=selection_airline_codes,
             )
         else:
-            current_scrape, previous_scrape = scrape_ctx.get_latest_two_scrapes()
+            current_scrape, previous_scrape = scrape_ctx.get_latest_two_scrapes(
+                airline_codes=selection_airline_codes,
+            )
 
     current_mix = _dominant_scrape_passenger_mix(engine, current_scrape)
     previous_mix = _dominant_scrape_passenger_mix(engine, previous_scrape)
