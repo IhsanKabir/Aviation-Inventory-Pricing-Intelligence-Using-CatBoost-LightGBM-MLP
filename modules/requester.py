@@ -11,12 +11,22 @@ class RequesterError(Exception):
     pass
 
 class Requester:
-    def __init__(self, cookies_path: Optional[Path] = None, user_agent: Optional[str] = None, timeout: int = 30):
+    def __init__(
+        self,
+        cookies_path: Optional[Path] = None,
+        user_agent: Optional[str] = None,
+        timeout: int = 30,
+        proxy_url: Optional[str] = None,
+    ):
         self.session = requests.Session()
         self.timeout = timeout
         self.cookies_path = Path(cookies_path) if cookies_path else None
+        self.proxy_url = proxy_url or None
         if user_agent:
             self.session.headers.update({"User-Agent": user_agent})
+        if self.proxy_url:
+            self.session.proxies.update({"http": self.proxy_url, "https": self.proxy_url})
+            LOG.info("Using proxy for session: %s", self.proxy_url)
         if self.cookies_path and self.cookies_path.exists():
             try:
                 with open(self.cookies_path, "r", encoding="utf-8") as fh:
@@ -28,7 +38,8 @@ class Requester:
 
     def post(self, url: str, json_payload: dict, headers: dict | None = None, **kwargs):
         try:
-            resp = self.session.post(url, json=json_payload, headers=headers, timeout=self.timeout)
+            timeout = kwargs.pop("timeout", self.timeout)
+            resp = self.session.post(url, json=json_payload, headers=headers, timeout=timeout, **kwargs)
             ok = resp.status_code in (200, 201)
             # Try to return JSON if possible, else raw text
             try:
@@ -39,12 +50,10 @@ class Requester:
         except Exception as e:
             raise RequesterError(str(e))
 
-        except Exception as e:
-            raise RequesterError(str(e))
-
     def get(self, url: str, params: dict = None, headers: dict = None, **kwargs):
         try:
-            resp = self.session.get(url, params=params, headers=headers, timeout=self.timeout, **kwargs)
+            timeout = kwargs.pop("timeout", self.timeout)
+            resp = self.session.get(url, params=params, headers=headers, timeout=timeout, **kwargs)
             return resp
         except Exception as e:
             raise RequesterError(e)

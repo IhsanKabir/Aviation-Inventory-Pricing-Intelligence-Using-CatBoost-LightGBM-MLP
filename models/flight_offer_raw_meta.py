@@ -52,6 +52,17 @@ class FlightOfferRawMetaORM(Base):
     source_endpoint = Column(String)
     raw_offer_fingerprint = Column(String(64), index=True)
     raw_offer_storage = Column(String(32))
+    penalty_source = Column(String)
+    penalty_currency = Column(String)
+    penalty_rule_text = Column(String)
+    fare_change_fee_before_24h = Column(Numeric(10, 2))
+    fare_change_fee_within_24h = Column(Numeric(10, 2))
+    fare_change_fee_no_show = Column(Numeric(10, 2))
+    fare_cancel_fee_before_24h = Column(Numeric(10, 2))
+    fare_cancel_fee_within_24h = Column(Numeric(10, 2))
+    fare_cancel_fee_no_show = Column(Numeric(10, 2))
+    fare_changeable = Column(Boolean)
+    fare_refundable = Column(Boolean)
 
     raw_offer = Column(JSON)
 

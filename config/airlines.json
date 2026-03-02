@@ -1,37 +1,192 @@
 [
   {
+    "code": "2A",
+    "module": "airastra",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "3L",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "6E",
+    "module": "indigo",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "8D",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "AK",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
     "code": "BG",
     "module": "biman",
     "enabled": true,
     "throttle_per_minute": 30,
-    "cabin_classes": ["Economy", "Business"]
-  },
-  {
-    "code": "VQ",
-    "module": "novoair",
-    "enabled": true,
-    "throttle_per_minute": 30,
-    "cabin_classes": ["Economy"]
+    "cabin_classes": [
+      "Economy",
+      "Business"
+    ]
   },
   {
     "code": "BS",
     "module": "bs",
-    "enabled": false,
+    "enabled": true,
     "throttle_per_minute": 10,
-    "cabin_classes": ["Economy", "Premium Economy", "Business"]
+    "cabin_classes": [
+      "Economy"
+    ]
   },
   {
-    "code": "2A",
-    "module": "airastra",
-    "enabled": false,
+    "code": "CZ",
+    "module": "sharetrip",
+    "enabled": true,
     "throttle_per_minute": 10,
-    "cabin_classes": ["Economy"]
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "EK",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "FZ",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "G9",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "MH",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "OD",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
   },
   {
     "code": "Q2",
     "module": "maldivian",
     "enabled": false,
     "throttle_per_minute": 5,
-    "cabin_classes": ["Economy"]
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "QR",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "SQ",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "SV",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "TG",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "UL",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "VQ",
+    "module": "novoair",
+    "enabled": true,
+    "throttle_per_minute": 30,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "WY",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
   }
 ]

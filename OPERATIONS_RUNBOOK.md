@@ -31,6 +31,7 @@
    - `AirlineIntel_MaintenancePulse`
    - `AirlineIntel_Ingestion4H`
    - `AirlineIntel_IngestionOnLogon`
+   - Current default ingestion cadence is every 6 hours (`RepeatMinutes=360`).
 
 ## Exact Verification Commands
 
@@ -243,6 +244,35 @@ Route monitor comparison basis check:
 - `generate_route_flight_fare_monitor.py` now warns if current/previous compared scrapes have mismatched passenger mix (`ADT/CHD/INF`).
 - If warning appears, regenerate using a like-for-like accumulation pair for valid change analysis.
 
+## ML/DL Forecast Workflow (Daily)
+
+Goal:
+- Train on previously captured dates and validate using future realized runs.
+
+1. Run prediction with ML + DL enabled:
+
+```powershell
+.\.venv\Scripts\python.exe run_pipeline.py --skip-scrape --skip-reports --run-prediction --prediction-target total_change_events --prediction-series-mode event_daily --report-start-date 2026-02-01 --report-end-date 2026-03-01 --prediction-ml-models catboost,lightgbm --prediction-dl-models mlp
+```
+
+2. Check model activation in console/log output:
+- `ml_active_models=[...]`
+- `dl_active_models=[...]`
+
+3. Compare latest overall metrics:
+
+```powershell
+Get-ChildItem output\reports\prediction_eval_total_change_events_*.csv | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+```
+
+4. Forward validation rule:
+- Do not backfill targets from future.
+- Let new pipeline runs append actual outcomes, then re-run prediction and compare metric trend.
+
+5. Tuning order:
+- Keep baseline metrics as reference.
+- Tune ML/DL quantiles and min-history only when route-level + overall metrics improve consistently.
+
 ## Local CI Guard (Every Commit)
 
 Install pre-commit hook once:
@@ -255,6 +285,100 @@ Manual CI check run:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\ci_checks.py --reports-dir output\reports --timestamp-tz local
+```
+
+## OTA Penalty Extraction (Gozayaan HAR)
+
+Use this when you want OTA-side fare/policy comparison and penalty benchmarking.
+
+```powershell
+.\.venv\Scripts\python.exe tools\extract_gozayaan_har.py --har "C:\Users\TLL-90134\Downloads\gozayaan.com.har" --output-dir output\reports --timestamp-tz local
+```
+
+Expected outputs:
+- `output/reports/gozayaan_fares_*.csv`
+- `output/reports/gozayaan_policies_*.csv`
+- `output/reports/gozayaan_extract_latest.json`
+
+Optional BG fare-rule penalty extraction from saved GraphQL response:
+
+```powershell
+.\.venv\Scripts\python.exe tools\extract_bg_fare_rules.py --input output\reports\bg_getBookingFareRules_sample.json --output-dir output\reports
+```
+
+## OTA Live Connector (ShareTrip)
+
+BS and 2A use OTA feed by default in `run_all.py` through `modules/sharetrip.py`.
+Additional interim OTA carriers are enabled through the same ShareTrip connector (`module=sharetrip`):
+`SV, G9, 3L, FZ, EK, QR, WY, CZ, 8D, UL, MH, AK, OD, SQ, TG, 6E`.
+
+Baseline ShareTrip mode (recommended):
+
+```powershell
+$env:BS_SOURCE_MODE="sharetrip"
+$env:AIRASTRA_SOURCE_MODE="sharetrip"
+# Optional ShareTrip overrides:
+# $env:SHARETRIP_ACCESS_TOKEN="<token>"   # defaults to known working token in code
+# $env:SHARETRIP_PAGE_LIMIT="50"
+# $env:SHARETRIP_POLL_MAX_ATTEMPTS="8"
+# $env:SHARETRIP_POLL_SLEEP_SEC="1"
+```
+
+Quick connector validation:
+
+```powershell
+.\.venv\Scripts\python.exe -m modules.sharetrip --airline BS --origin DAC --destination CGP --date 2026-03-27 --cabin Economy
+.\.venv\Scripts\python.exe -m modules.sharetrip --airline 2A --origin DAC --destination CGP --date 2026-03-27 --cabin Economy
+.\.venv\Scripts\python.exe -m modules.sharetrip --airline SV --origin DAC --destination JED --date 2026-03-27 --cabin Economy
+.\.venv\Scripts\python.exe -m modules.sharetrip --airline EK --origin DAC --destination DXB --date 2026-03-27 --cabin Economy
+```
+
+Targeted run examples:
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py --quick --airline BS --origin DAC --destination CGP --cabin Economy
+.\.venv\Scripts\python.exe run_all.py --quick --airline 2A --origin DAC --destination CGP --cabin Economy
+```
+
+If AMYBD-specific follow-up is needed later (currently can return `Invalid Login`), switch mode:
+
+```powershell
+$env:BS_SOURCE_MODE="amybd"
+$env:AIRASTRA_SOURCE_MODE="amybd"
+.\.venv\Scripts\python.exe tools/refresh_amybd_session.py --wait-seconds 240
+. .\output\manual_sessions\amybd_env_latest.ps1
+```
+
+AMYBD direct connector checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m modules.amybd --airline BS --origin DAC --destination CGP --date 2026-03-27 --cabin Economy
+.\.venv\Scripts\python.exe -m modules.amybd --airline 2A --origin DAC --destination CGP --date 2026-03-27 --cabin Economy
+```
+
+Optional fallback to Gozayaan mode:
+
+```powershell
+$env:BS_SOURCE_MODE="gozayaan"
+$env:AIRASTRA_SOURCE_MODE="gozayaan"
+$env:GOZAYAAN_TOKEN_AUTO_REFRESH="1"
+$env:GOZAYAAN_TOKEN_CACHE_FILE="output/manual_sessions/gozayaan_token_latest.json"
+$env:GOZAYAAN_COOKIES_PATH="output/manual_sessions/gozayaan_cookies.json"
+$env:GOZAYAAN_HEADERS_FILE="output/manual_sessions/gozayaan_headers_latest.json"
+$env:GOZAYAAN_TOKEN_REFRESH_CMD='.\.venv\Scripts\python.exe tools/refresh_gozayaan_token.py --out {cache_file} --cookies-out {cookies_file} --headers-out {headers_file} --non-interactive --origin {origin} --destination {destination} --date {date} --cabin {cabin} --adt {adt} --chd {chd} --inf {inf}'
+```
+
+Manual override token for Gozayaan emergency fallback:
+
+```powershell
+$env:GOZAYAAN_X_KONG_SEGMENT_ID="<fresh token>"
+```
+
+If direct airline fallback is needed temporarily:
+
+```powershell
+$env:BS_SOURCE_MODE="ttinteractive"
+$env:AIRASTRA_SOURCE_MODE="ttinteractive"
 ```
 
 ## Known Constraints

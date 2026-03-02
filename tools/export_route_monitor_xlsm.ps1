@@ -346,6 +346,7 @@ End Sub
         $cb.Caption = $code
         $cb.Name = "mflt_air_$code"
         $cb.Value = 1
+        $cb.OnAction = "ApplyMainSheetFilters"
     }
 
     $airRows = [int][Math]::Ceiling([double]$airlineCodes.Count / [double]$perRow)
@@ -364,18 +365,16 @@ End Sub
         $cb.Caption = $code
         $cb.Name = "mflt_sig_$codeName"
         $cb.Value = 1
+        $cb.OnAction = "ApplyMainSheetFilters"
     }
 
     $sigRows = [int][Math]::Ceiling([double]$signalCodes.Count / [double]$perRow)
     if ($sigRows -lt 1) { $sigRows = 1 }
     $btnTop = $signalTop + ($sigRows * $yGap) + 6
 
-    $btnMainA = $wsMain.Shapes.AddShape(1, $baseLeft, $btnTop, 180, 24)
-    $btnMainA.Name = "btnApplyMainFilters"
-    $btnMainA.TextFrame.Characters().Text = "Apply Main Sheet Filters"
-    $btnMainA.OnAction = "ApplyMainSheetFilters"
+    $wsMain.Cells.Item(2 + $airRows + $sigRows + 3, $anchorCol).Value2 = "Click any checkbox to apply instantly."
 
-    $btnMainB = $wsMain.Shapes.AddShape(1, $baseLeft + 190, $btnTop, 180, 24)
+    $btnMainB = $wsMain.Shapes.AddShape(1, $baseLeft, $btnTop, 200, 24)
     $btnMainB.Name = "btnClearMainFilters"
     $btnMainB.TextFrame.Characters().Text = "Clear Main Sheet Filters"
     $btnMainB.OnAction = "ClearMainSheetFilters"

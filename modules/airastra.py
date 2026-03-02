@@ -23,7 +23,11 @@ import re
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin
 
+from modules.amybd import fetch_flights_for_airline as fetch_from_amybd
+from modules.bdfare import fetch_flights_for_airline as fetch_from_bdfare
+from modules.gozayaan import fetch_flights_for_airline as fetch_from_gozayaan
 from modules.requester import Requester
+from modules.sharetrip import fetch_flights_for_airline as fetch_from_sharetrip
 from modules.ttinteractive_flexible_html_parser import extract_flexible_fares_from_search_body
 
 
@@ -57,6 +61,50 @@ SEARCH_HEADERS = {
 
 ENV_COOKIES_PATH = "AIRASTRA_COOKIES_PATH"
 ENV_PROXY_URL = "AIRASTRA_PROXY_URL"
+ENV_SOURCE_MODE = "AIRASTRA_SOURCE_MODE"
+
+
+def _sharetrip_fetch_with_bdfare_fallback(
+    origin: str,
+    destination: str,
+    date: str,
+    cabin: str,
+    adt: int,
+    chd: int,
+    inf: int,
+) -> Dict[str, Any]:
+    sharetrip_out = fetch_from_sharetrip(
+        airline_code="2A",
+        origin=origin,
+        destination=destination,
+        date=date,
+        cabin=cabin,
+        adt=adt,
+        chd=chd,
+        inf=inf,
+    )
+    st_rows = sharetrip_out.get("rows") if isinstance(sharetrip_out, dict) else None
+    st_ok = bool(sharetrip_out.get("ok")) if isinstance(sharetrip_out, dict) else False
+    if st_ok and isinstance(st_rows, list) and st_rows:
+        return sharetrip_out
+
+    LOG.warning("[2A] ShareTrip returned no usable rows; attempting BDFare fallback")
+    bdfare_out = fetch_from_bdfare(
+        airline_code="2A",
+        origin=origin,
+        destination=destination,
+        date=date,
+        cabin=cabin,
+        adt=adt,
+        chd=chd,
+        inf=inf,
+    )
+    bd_rows = bdfare_out.get("rows") if isinstance(bdfare_out, dict) else None
+    bd_ok = bool(bdfare_out.get("ok")) if isinstance(bdfare_out, dict) else False
+    if bd_ok and isinstance(bd_rows, list) and bd_rows:
+        return bdfare_out
+
+    return sharetrip_out if isinstance(sharetrip_out, dict) else bdfare_out
 
 
 def _extract_data_config(html_text: str) -> Dict[str, Any]:
@@ -404,6 +452,67 @@ def fetch_flights(
     Unified contract for run_all.py:
     { raw, originalResponse, rows, ok }
     """
+    source_mode = (os.getenv(ENV_SOURCE_MODE) or "sharetrip").strip().lower()
+    if source_mode == "sharetrip":
+        return _sharetrip_fetch_with_bdfare_fallback(
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+    if source_mode == "amybd":
+        amy = fetch_from_amybd(
+            airline_code="2A",
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+        if bool(amy.get("ok")):
+            return amy
+        msg = str(((amy.get("raw") or {}).get("message")) or "")
+        err = str(((amy.get("raw") or {}).get("error")) or "")
+        if err == "search_not_ok" and "invalid login" in msg.lower():
+            LOG.warning("[2A] AMYBD returned Invalid Login; falling back to ShareTrip")
+            return fetch_from_sharetrip(
+                airline_code="2A",
+                origin=origin,
+                destination=destination,
+                date=date,
+                cabin=cabin,
+                adt=adt,
+                chd=chd,
+                inf=inf,
+            )
+        return amy
+    if source_mode == "gozayaan":
+        return fetch_from_gozayaan(
+            airline_code="2A",
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+    if source_mode != "ttinteractive":
+        return _sharetrip_fetch_with_bdfare_fallback(
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+
     cookies_path = os.getenv(ENV_COOKIES_PATH) or None
     proxy_url = os.getenv(ENV_PROXY_URL) or None
     return airastra_search(

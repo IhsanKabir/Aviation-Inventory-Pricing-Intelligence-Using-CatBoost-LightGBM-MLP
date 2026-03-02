@@ -14,3 +14,5 @@ xlsxwriter
 scikit-learn
 catboost
 lightgbm
+# OTA/browser-assisted token/session tooling
+playwright

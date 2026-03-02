@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -139,27 +140,56 @@ def _heartbeat_age_minutes(payload: dict) -> float | None:
 
 
 def _list_relevant_processes() -> list[dict]:
-    ps_cmd = r"""
+    if os.name == "nt":
+        ps_cmd = r"""
 $procs = Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'python|powershell|cmd' } |
   Select-Object ProcessId, ParentProcessId, Name, CommandLine
 $procs | ConvertTo-Json -Depth 4 -Compress
 """
+        try:
+            raw = subprocess.check_output(
+                ["powershell.exe", "-NoProfile", "-Command", ps_cmd],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            if not raw:
+                return []
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return [data]
+            if isinstance(data, list):
+                return [x for x in data if isinstance(x, dict)]
+            return []
+        except Exception:
+            return []
+
     try:
         raw = subprocess.check_output(
-            ["powershell.exe", "-NoProfile", "-Command", ps_cmd],
+            ["ps", "-eo", "pid=,ppid=,comm=,args="],
             text=True,
             stderr=subprocess.DEVNULL,
-        ).strip()
-        if not raw:
-            return []
-        data = json.loads(raw)
-        if isinstance(data, dict):
-            return [data]
-        if isinstance(data, list):
-            return [x for x in data if isinstance(x, dict)]
-        return []
+        )
     except Exception:
         return []
+    rows: list[dict] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            # Split into 4 fields: pid ppid comm args
+            pid_s, ppid_s, name, cmd = line.split(None, 3)
+            rows.append(
+                {
+                    "ProcessId": int(pid_s),
+                    "ParentProcessId": int(ppid_s),
+                    "Name": name,
+                    "CommandLine": cmd,
+                }
+            )
+        except Exception:
+            continue
+    return rows
 
 
 def _is_active_pipeline_process(proc: dict) -> bool:
@@ -176,22 +206,59 @@ def _active_pipeline_processes() -> list[dict]:
 
 
 def _launch_ingestion_batch(root: Path, dry_run: bool) -> tuple[bool, str]:
-    batch = root / "scheduler" / "run_ingestion_4h_once.bat"
-    if not batch.exists():
-        return False, f"missing batch: {batch}"
+    if os.name == "nt":
+        batch = root / "scheduler" / "run_ingestion_4h_once.bat"
+        if not batch.exists():
+            return False, f"missing batch: {batch}"
+        if dry_run:
+            return True, f"dry-run would launch: {batch}"
+        creationflags = 0
+        for name in ("CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS"):
+            creationflags |= int(getattr(subprocess, name, 0))
+        subprocess.Popen(
+            ["cmd.exe", "/c", str(batch)],
+            cwd=str(root),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+        return True, f"launched: {batch}"
+
+    shell_script = root / "scheduler" / "run_ingestion_4h_once.sh"
+    if shell_script.exists():
+        if dry_run:
+            return True, f"dry-run would launch: {shell_script}"
+        subprocess.Popen(
+            ["/bin/bash", str(shell_script)],
+            cwd=str(root),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True, f"launched: {shell_script}"
+
+    # Fallback on non-Windows if shell wrapper is not present.
+    cmd = [
+        sys.executable,
+        str(root / "run_pipeline.py"),
+        "--python-exe",
+        sys.executable,
+        "--skip-reports",
+        "--report-output-dir",
+        str((root / "output" / "reports").resolve()),
+        "--report-timestamp-tz",
+        "local",
+    ]
     if dry_run:
-        return True, f"dry-run would launch: {batch}"
-    creationflags = 0
-    for name in ("CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS"):
-        creationflags |= int(getattr(subprocess, name, 0))
+        return True, f"dry-run would launch fallback: {cmd}"
     subprocess.Popen(
-        ["cmd.exe", "/c", str(batch)],
+        cmd,
         cwd=str(root),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        creationflags=creationflags,
+        start_new_session=True,
     )
-    return True, f"launched: {batch}"
+    return True, f"launched fallback run_pipeline: {cmd}"
 
 
 def _minutes_since_last_attempt(state: dict) -> float | None:

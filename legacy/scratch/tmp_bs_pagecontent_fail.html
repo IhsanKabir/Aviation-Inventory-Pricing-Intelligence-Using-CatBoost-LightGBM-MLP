@@ -1,0 +1,236 @@
+<!DOCTYPE html><html lang="en-GB" style="" class=" js flexbox flexboxlegacy canvas canvastext webgl no-touch geolocation postmessage no-websqldatabase indexeddb hashchange history draganddrop websockets rgba hsla multiplebgs backgroundsize borderimage borderradius boxshadow textshadow opacity cssanimations csscolumns cssgradients cssreflections csstransforms csstransforms3d csstransitions fontface generatedcontent video audio localstorage sessionstorage webworkers no-applicationcache svg inlinesvg smil svgclippaths"><head>
+    <meta name="robots" content="noindex">
+    <meta name="googlebot" content="noindex">
+
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book a new flight</title>
+    <script async="" src="https://js.datadome.co/tags.js"></script><script src="/Zenith/FrontOffice/bundles/modernizr?v=inCVuEFe6J4Q07A0AcRsbJic_UE5MwpRMNGcOtk94TE1"></script>
+
+    <script src="/Zenith/FrontOffice/bundles/jquery?v=tmj-UaHmTpBJBIe90z0ueS_rPgpcuwWjBfqb0mIUh_01"></script>
+
+    <script src="/Zenith/FrontOffice/bundles/typeahead?v=qbTjkUG7rdsnQHRRlxy3WTPux7BYYWx5mWKfolZWoHE1"></script>
+
+
+    <!--Flag Number--->
+    <link href="/Zenith/FrontOffice/Scripts/BookingEngine/intl-tel-input/css/intlTelInput.min.css?v=25.14.1" rel="stylesheet">
+    <script language="javascript" src="/Zenith/FrontOffice/Scripts/BookingEngine/intl-tel-input/js/intlTelInput.min.js?v=25.14.1"></script>
+
+    <!-- FormValidation plugin and the class supports validating Bootstrap form -->
+    <script src="/Zenith/FrontOffice/Scripts/BookingEngine/formvalidation/vendor/formvalidation/js/formValidation.min.js"></script>
+    <script src="/Zenith/FrontOffice/Scripts/BookingEngine/formvalidation/vendor/formvalidation/js/framework/bootstrap.min.js"></script>
+    <script language="javascript" src="/Zenith/FrontOffice/Scripts/bootbox.min.js"></script>
+    
+
+
+    
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link href="/Zenith/FrontOffice/Content/usbangla/bootstrap?v=qCIDrVntUOAaFuWn0mcJgJ1BPPb-JErBtPKqJCj6CT01" rel="stylesheet">
+
+    
+    <script type="text/javascript" src="https://www.google.com/jsapi"></script>
+    <link rel="icon" href="/usbangla/favicon.ico?v=2">
+
+    <!-- FormValidation CSS file -->
+    <link href="/Zenith/FrontOffice/Scripts/BookingEngine/formvalidation/vendor/formvalidation/css/formValidation.min.css" rel="stylesheet">
+
+    <!--Flag SearchCriteria--->
+    <link href="/Zenith/FrontOffice/Scripts/BookingEngine/flags/flags.css" rel="stylesheet">
+
+    
+    
+
+<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script language="javascript" src="/Zenith/FrontOffice/Scripts/VueLib/vue3.global.prod.js"></script>
+<script language="javascript" src="/Zenith/FrontOffice/Scripts/utils/popper.min.js"></script>
+<script language="javascript" src="/Zenith/FrontOffice/Scripts/utils/lodash.min.js"></script>
+    <link href="/Zenith/FrontOffice/Content/usbangla/SearchCriteria?v=nh9rnDXJpYRdZ0r_OGCUV8-J43POPzneFGlzW_G5sVI1" rel="stylesheet">
+
+
+    <style type="text/css">
+        body {
+            padding: 0;
+        }
+    </style>
+</head>
+<body id="body">
+    
+
+	<script>
+					  !function (a, b, c, d, e, f) {
+						  a.ddjskey = e;
+						  a.ddoptions = f || null;
+						  var m = b.createElement(c), n = b.getElementsByTagName(c)[0];
+						  m.async = 1, m.src = d, n.parentNode.insertBefore(m, n);
+					  }(window, document, "script", "https://js.datadome.co/tags.js","448C8C102B74E1699B0FADF21BAADF", { ajaxListenerPath: true });
+	</script>
+            <iframe src="https://usbair.com/zenith/header.html" id="TopFrameId" class="integrated-iframe" seamless="seamless" scrolling="no"></iframe>
+            <div class="mobile-banner">
+                <a href="/Zenith/FrontOffice/usbangla/" style="background-image: url('/usbangla/images_site/logos/logo_header.png')"></a>
+            </div>
+
+    <div id="TTINotifications" class="ErrorNotification">
+    <div style="display: none" data-bind="visible : anyNotification()" class="wrapper-error">
+        
+        <div class="row">
+            <div class="col-md-12 notification notification-success" data-bind="foreach : { data : success }"></div>
+            <div class="col-md-12 notification notification-info" data-bind="foreach : { data : info }"></div>
+            <div class="col-md-12 notification notification-warning" data-bind="foreach : { data : warning }"></div>
+            <div class="col-md-12 notification notification-danger" data-bind="foreach : { data : danger }"></div>
+        </div>
+    </div>
+</div>
+    
+<div class="modal fade" id="AlertModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">×</span></button>
+                <h4 class="modal-title"></h4>
+            </div>
+            <div class="modal-body">
+                <p class="modal-body-content">
+                </p>
+            </div>
+            <div class="modal-footer">
+            </div>
+        </div>
+    </div>
+</div>
+
+
+    
+
+
+
+<div class="container flex-grid" id="SearchNbe">
+        <div id="FilArianne">
+            
+    <div class="booking-paths d-md-block">
+        <div>
+            <span id="progressbar" class="t-visuallyhidden">
+                Progress bar: 5 steps to follow
+            </span>        
+            <div class="d-sm-none d-flex justify-content-center font-weight-bold">
+                <span class="ts-pb__number">1</span>
+                <span class="ts-pb__label">Flight search</span>
+            </div>
+            <ul class="ts-pb ts-pb--long-label d-flex justify-content-center" aria-labelledby="progressbar" data-steps="5">
+                        <li class="ts-pb__step ts-pb__step--current">
+                            <p class="step_name d-none d-sm-block" aria-hidden="true">
+                                <span class="ts-pb__number">1</span>
+                                <span class="ts-pb__label">Flight search</span>
+                            </p>
+                            <span class="ts-aria-only d-none">Step 0: Flight search</span>
+                        </li>
+                        <li class="ts-pb__step">
+                            <p class="step_name d-none d-sm-block" aria-hidden="true">
+                                <span class="ts-pb__number">2</span>
+                                <span class="ts-pb__label">Results</span>
+                            </p>
+                            <span class="ts-aria-only d-none">Step 1: Results</span>
+                        </li>
+                        <li class="ts-pb__step">
+                            <p class="step_name d-none d-sm-block" aria-hidden="true">
+                                <span class="ts-pb__number">3</span>
+                                <span class="ts-pb__label">Customer</span>
+                            </p>
+                            <span class="ts-aria-only d-none">Step 2: Customer</span>
+                        </li>
+                        <li class="ts-pb__step">
+                            <p class="step_name d-none d-sm-block" aria-hidden="true">
+                                <span class="ts-pb__number">4</span>
+                                <span class="ts-pb__label">Passenger</span>
+                            </p>
+                            <span class="ts-aria-only d-none">Step 3: Passenger</span>
+                        </li>
+                        <li class="ts-pb__step">
+                            <p class="step_name d-none d-sm-block" aria-hidden="true">
+                                <span class="ts-pb__number">5</span>
+                                <span class="ts-pb__label">Book</span>
+                            </p>
+                            <span class="ts-aria-only d-none">Step 4: Book</span>
+                        </li>
+            </ul>
+        </div>
+    </div>
+
+        </div>
+
+    <div id="SearchCriterias" data-v-app=""><div class="searchbar-container"><div class="text-center" style="width: 100%; display: none;"><div class="lds-roller"><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div></div><div class="text-center" style="padding: 5px; display: none;"></div></div><div class="searchbar-main"><div role="tablist" aria-labelledby="ibe-modules-list" class="nav nav-tabs searchbar-main_tabs"><button id="tab-FlightSearch" type="button" role="tab" class="searchbar-main_tabs_tab searchbar-main_tabs_tab--search active" aria-selected="true" aria-controls="FlightSearch"><div class="tab"><p><span class="z-icon material-icons" aria-hidden="true">flight</span><span class="tab-name">FLIGHTS</span></p></div></button><button id="tab-ManageBooking" type="button" role="tab" class="searchbar-main_tabs_tab searchbar-main_tabs_tab--reservation" aria-selected="false" aria-controls="ManageBooking" tabindex="-1"><div class="tab"><p><span class="z-icon material-icons" aria-hidden="true">settings_suggest</span><span class="tab-name">YOUR BOOKING</span></p></div></button></div><div class="tab-content searchbar-main_tab-content"><div class="tab-pane searchbar-main_tab-content_pane search active"><div class="pane-wrapper"><div class="tab-pane_options-container"><fieldset><legend class="accessibility"><span>Trip type</span></legend><div class="form-checkbox--button"><label for="oneWay"><input id="oneWay" type="radio" name="tripType" value="oneWay"><span>One way</span></label></div><div class="form-checkbox--button"><label for="roundTrip"><input type="radio" id="roundTrip" name="tripType" value="roundTrip"><span>Round trip</span></label></div><div class="form-checkbox--button"><label for="multiCity"><input type="radio" id="multiCity" name="tripType" value="multiCity"><span>Multi city</span></label></div></fieldset></div><div class="form-group form-group--flight-search"><div class="form-input origin"><label class="form-input_label" for="originInput">Departure</label><div class="input-group scoped"><span class="prefix" style="display: none;"></span><input class="form-control scoped" maxlength="30" type="text" id="originInput" placeholder="Airport or country" aria-expanded="false" aria-controls="originList" aria-autocomplete="list" autocomplete="off" role="combobox"></div><!----><div class="searchbar-popup cities-sugestion-popup force-popup" style="display: none;"><!----><ul id="originList" class="cities-sugestion-popup_list" aria-label="Airports" role="listbox"><li aria-disabled="true" aria-selected="false" class="title liStation">All airports</li><li aria-disabled="true" aria-selected="false" class="title liNoResultsFound" style="display: none;">No airports found</li><li id="origin05543" aria-selected="false" class="liStation" role="option"><p class="list-item">Abu Dhabi, Zayed International Airport</p><p class="list-item">United Arab Emirates</p><p class="list-item">AUH</p><!----></li><li id="origin05866" aria-selected="false" class="liStation" role="option"><p class="list-item">Bangkok</p><p class="list-item">Thailand</p><p class="list-item">BKK</p><!----></li><li id="origin06207" aria-selected="false" class="liStation" role="option"><p class="list-item">Guangzhou</p><p class="list-item">China</p><p class="list-item">CAN</p><!----></li><li id="origin06261" aria-selected="false" class="liStation" role="option"><p class="list-item">Kolkata</p><p class="list-item">India</p><p class="list-item">CCU</p><!----></li><li id="origin06337" aria-selected="false" class="liStation" role="option"><p class="list-item">Chattogram</p><p class="list-item">Bangladesh</p><p class="list-item">CGP</p><!----></li><li id="origin06658" aria-selected="false" class="liStation" role="option"><p class="list-item">Cox's Bazar</p><p class="list-item">Bangladesh</p><p class="list-item">CXB</p><!----></li><li id="origin06707" aria-selected="false" class="liStation" role="option"><p class="list-item">Dhaka</p><p class="list-item">Bangladesh</p><p class="list-item">DAC</p><!----></li><li id="origin024499" aria-selected="false" class="liStation" role="option"><p class="list-item">Dammam</p><p class="list-item">Saudi Arabia</p><p class="list-item">DMM</p><!----></li><li id="origin06865" aria-selected="false" class="liStation" role="option"><p class="list-item">Doha</p><p class="list-item">Qatar</p><p class="list-item">DOH</p><!----></li><li id="origin06942" aria-selected="false" class="liStation" role="option"><p class="list-item">Dubai Intl</p><p class="list-item">United Arab Emirates</p><p class="list-item">DXB</p><!----></li><li id="origin08284" aria-selected="false" class="liStation" role="option"><p class="list-item">Jeddah, King Abdulaziz Intl</p><p class="list-item">Saudi Arabia</p><p class="list-item">JED</p><!----></li><li id="origin08403" aria-selected="false" class="liStation" role="option"><p class="list-item">Jashore</p><p class="list-item">Bangladesh</p><p class="list-item">JSR</p><!----></li><li id="origin08820" aria-selected="false" class="liStation" role="option"><p class="list-item">Kuala Lumpur</p><p class="list-item">Malaysia</p><p class="list-item">KUL</p><!----></li><li id="origin09310" aria-selected="false" class="liStation" role="option"><p class="list-item">Chennai</p><p class="list-item">India</p><p class="list-item">MAA</p><!----></li><li id="origin09376" aria-selected="false" class="liStation" role="option"><p class="list-item">Muscat</p><p class="list-item">Oman</p><p class="list-item">MCT</p><!----></li><li id="origin09412" aria-selected="false" class="liStation" role="option"><p class="list-item">Madinah Abdulaziz</p><p class="list-item">Saudi Arabia</p><p class="list-item">MED</p><!----></li><li id="origin09567" aria-selected="false" class="liStation" role="option"><p class="list-item">Male Velana Intl</p><p class="list-item">Maldives</p><p class="list-item">MLE</p><!----></li><li id="origin011336" aria-selected="false" class="liStation" role="option"><p class="list-item">Rajshahi</p><p class="list-item">Bangladesh</p><p class="list-item">RJH</p><!----></li><li id="origin011228" aria-selected="false" class="liStation" role="option"><p class="list-item">Riyadh, King Khalid Intl</p><p class="list-item">Saudi Arabia</p><p class="list-item">RUH</p><!----></li><li id="origin011639" aria-selected="false" class="liStation" role="option"><p class="list-item">Sharjah</p><p class="list-item">United Arab Emirates</p><p class="list-item">SHJ</p><!----></li><li id="origin011692" aria-selected="false" class="liStation" role="option"><p class="list-item">Singapore</p><p class="list-item">Singapore</p><p class="list-item">SIN</p><!----></li><li id="origin011880" aria-selected="false" class="liStation" role="option"><p class="list-item">Saidpur</p><p class="list-item">Bangladesh</p><p class="list-item">SPD</p><!----></li><li id="origin013458" aria-selected="false" class="liStation" role="option"><p class="list-item">Sylhet</p><p class="list-item">Bangladesh</p><p class="list-item">ZYL</p><!----></li><!----></ul></div></div><button class="switch-airports disabled"><i class="material-icons" aria-hidden="true">sync_alt</i></button><div class="form-input destination"><label class="form-input_label" for="destinationInput">Arrival</label><div class="input-group scoped"><span class="prefix" style="display: none;"></span><input class="form-control scoped" maxlength="30" type="text" id="destinationInput" placeholder="Airport or country" aria-expanded="false" aria-controls="destinationList" aria-autocomplete="list" autocomplete="off" role="combobox"></div><!----><div class="searchbar-popup cities-sugestion-popup force-popup" style="display: none;"><!----><ul id="destinationList" class="cities-sugestion-popup_list" aria-label="Airports" role="listbox"><li aria-disabled="true" aria-selected="false" class="title liStation">All airports</li><li aria-disabled="true" aria-selected="false" class="title liNoResultsFound" style="display: none;">No airports found</li><li id="destination05866" aria-selected="false" class="liStation" role="option"><p class="list-item">Bangkok</p><p class="list-item">Thailand</p><p class="list-item">BKK</p><!----></li><li id="destination06207" aria-selected="false" class="liStation" role="option"><p class="list-item">Guangzhou</p><p class="list-item">China</p><p class="list-item">CAN</p><!----></li><li id="destination06261" aria-selected="false" class="liStation" role="option"><p class="list-item">Kolkata</p><p class="list-item">India</p><p class="list-item">CCU</p><!----></li><li id="destination06337" aria-selected="false" class="liStation" role="option"><p class="list-item">Chattogram</p><p class="list-item">Bangladesh</p><p class="list-item">CGP</p><!----></li><li id="destination06658" aria-selected="false" class="liStation" role="option"><p class="list-item">Cox's Bazar</p><p class="list-item">Bangladesh</p><p class="list-item">CXB</p><!----></li><li id="destination06707" aria-selected="false" class="liStation" role="option"><p class="list-item">Dhaka</p><p class="list-item">Bangladesh</p><p class="list-item">DAC</p><!----></li><li id="destination08820" aria-selected="false" class="liStation" role="option"><p class="list-item">Kuala Lumpur</p><p class="list-item">Malaysia</p><p class="list-item">KUL</p><!----></li><li id="destination011692" aria-selected="false" class="liStation" role="option"><p class="list-item">Singapore</p><p class="list-item">Singapore</p><p class="list-item">SIN</p><!----></li><li id="destination013458" aria-selected="false" class="liStation" role="option"><p class="list-item">Sylhet</p><p class="list-item">Bangladesh</p><p class="list-item">ZYL</p><!----></li><li id="destination05543" aria-selected="false" class="liStation" role="option"><p class="list-item">Abu Dhabi, Zayed International Airport</p><p class="list-item">United Arab Emirates</p><p class="list-item">AUH</p><!----></li><li id="destination06865" aria-selected="false" class="liStation" role="option"><p class="list-item">Doha</p><p class="list-item">Qatar</p><p class="list-item">DOH</p><!----></li><li id="destination06942" aria-selected="false" class="liStation" role="option"><p class="list-item">Dubai Intl</p><p class="list-item">United Arab Emirates</p><p class="list-item">DXB</p><!----></li><li id="destination08284" aria-selected="false" class="liStation" role="option"><p class="list-item">Jeddah, King Abdulaziz Intl</p><p class="list-item">Saudi Arabia</p><p class="list-item">JED</p><!----></li><li id="destination08403" aria-selected="false" class="liStation" role="option"><p class="list-item">Jashore</p><p class="list-item">Bangladesh</p><p class="list-item">JSR</p><!----></li><li id="destination09310" aria-selected="false" class="liStation" role="option"><p class="list-item">Chennai</p><p class="list-item">India</p><p class="list-item">MAA</p><!----></li><li id="destination09376" aria-selected="false" class="liStation" role="option"><p class="list-item">Muscat</p><p class="list-item">Oman</p><p class="list-item">MCT</p><!----></li><li id="destination09567" aria-selected="false" class="liStation" role="option"><p class="list-item">Male Velana Intl</p><p class="list-item">Maldives</p><p class="list-item">MLE</p><!----></li><li id="destination011228" aria-selected="false" class="liStation" role="option"><p class="list-item">Riyadh, King Khalid Intl</p><p class="list-item">Saudi Arabia</p><p class="list-item">RUH</p><!----></li><li id="destination011639" aria-selected="false" class="liStation" role="option"><p class="list-item">Sharjah</p><p class="list-item">United Arab Emirates</p><p class="list-item">SHJ</p><!----></li><li id="destination011880" aria-selected="false" class="liStation" role="option"><p class="list-item">Saidpur</p><p class="list-item">Bangladesh</p><p class="list-item">SPD</p><!----></li><li id="destination011336" aria-selected="false" class="liStation" role="option"><p class="list-item">Rajshahi</p><p class="list-item">Bangladesh</p><p class="list-item">RJH</p><!----></li><li id="destination024499" aria-selected="false" class="liStation" role="option"><p class="list-item">Dammam</p><p class="list-item">Saudi Arabia</p><p class="list-item">DMM</p><!----></li><li id="destination09412" aria-selected="false" class="liStation" role="option"><p class="list-item">Madinah Abdulaziz</p><p class="list-item">Saudi Arabia</p><p class="list-item">MED</p><!----></li><!----></ul></div></div><div class="form-input dates"><div columns="3"><div class="date-range"><label class="form-input_label" for="outboundDate" aria-label="Outbound">Outbound</label><!----><div class="input-group scoped"><input class="form-control js-searchbar-input js-searchbar-date-input" placeholder="DD/MM/YYYY"><label class="any-date" style="display: none;">Any date</label><span class="z-icon material-icons" aria-hidden="true">calendar_month</span></div></div><div class="date-range"><!----><!----></div><div class="vc-popover-content-wrapper" placement="bottom-start"><!----></div></div><!----></div><div class="form-input passengers first-trip last-trip last-form-input"><label class="form-input_label">1 Adult, 0 Children, 0 Infant, 0 Maldivian National - Child(ren)</label><div class="input-group scoped"><input class="form-control js-searchbar-input scoped" readonly="" type="text" aria-expanded="false" aria-label="Passengers"><span class="z-icon icon-expand material-icons">expand_more</span></div><!----><div class="searchbar-popup passengers-popup" style="display: none;"><div class="searchbar-popup_header"><span class="icon-close material-icons">close</span><h5 class="title">Passengers</h5></div><div class="passengers-popup_main"><ul><li><span vy-icon-paths="" class="vy-icon-passenger passengers-popup_main_icon"></span><div class="passengers-popup_main_description"><p class="title">Adult(s)</p><span class="label">more than 12 year(s) old</span><!----></div><div class="passengers-popup_main_counter" role="group"><span class="c-icon material-icons" role="button" tabindex="0" aria-label="Remove 1" aria-disabled="false"> remove_circle_outline </span><div class="number" role="status">1</div><span class="c-icon material-icons" role="button" tabindex="0" id="adultsIncrease" aria-label="Add 1" aria-disabled="false"> add_circle_outline </span></div></li><li><span vy-icon-paths="" class="vy-icon-passenger passengers-popup_main_icon"></span><div class="passengers-popup_main_description"><p class="title">Child(ren)</p><!----><span class="label">from 2 to 12 year(s) old</span></div><div class="passengers-popup_main_counter" role="group"><span class="c-icon material-icons disabled" role="button" tabindex="0" aria-label="Remove 1" aria-disabled="false"> remove_circle_outline </span><div class="number" role="status">0</div><span class="c-icon material-icons" role="button" tabindex="0" id="adultsIncrease" aria-label="Add 1" aria-disabled="false"> add_circle_outline </span></div></li><li><span vy-icon-paths="" class="vy-icon-passenger passengers-popup_main_icon"></span><div class="passengers-popup_main_description"><p class="title">Infant(s)</p><span class="label">until 2 year(s) old</span></div><div class="passengers-popup_main_counter" role="group"><span class="c-icon material-icons disabled" role="button" tabindex="0" aria-label="Remove 1" aria-disabled="false"> remove_circle_outline </span><div class="number" role="status">0</div><span class="c-icon material-icons" role="button" tabindex="0" id="adultsIncrease" aria-label="Add 1" aria-disabled="false"> add_circle_outline </span></div></li><li><span vy-icon-paths="" class="vy-icon-passenger passengers-popup_main_icon"></span><div class="passengers-popup_main_description"><p class="title">Maldivian National - Child(ren)</p><!----><span class="label">from 2 to 12 year(s) old</span></div><div class="passengers-popup_main_counter" role="group"><span class="c-icon material-icons disabled" role="button" tabindex="0" aria-label="Remove 1" aria-disabled="false"> remove_circle_outline </span><div class="number" role="status">0</div><span class="c-icon material-icons" role="button" tabindex="0" id="adultsIncrease" aria-label="Add 1" aria-disabled="false"> add_circle_outline </span></div></li></ul><div class="other-settings travelers-select"><div class="input-group scoped"><button type="button" class="btn-select"><span class="z-icon icon-expand material-icons">expand_more</span><span class="font-weight-bold">Passenger occupying two seats</span></button><ul class="dropdown-list-popup" style="display: none;"><li><a href="#">Passenger occupying two seats</a></li><li><a href="#">Maldivian National - Adult(s)</a></li><li><a href="#">Maldivian National - Infant(s)</a></li></ul><span class="c-icon material-icons" role="button"> add_circle_outline </span></div></div><!----></div><div class="passengers-popup_main discount"><div class="other-settings"><input type="checkbox" class="checkbox-default" id="FlexibleDates"><label for="FlexibleDates">My travel dates are flexible</label></div><div class="other-settings currency"><label>Currency</label><div class="input-group scoped"><button type="button" class="btn-select"><span class="z-icon icon-expand material-icons" aria-hidden="true">expand_more</span><span class="font-weight-bold">Taka</span></button><ul class="dropdown-list-popup" style="display: none;"><li><a href="#">Baht (THB)</a></li><li><a href="#">Euro (EUR)</a></li><li><a href="#">Indian Rupee (INR)</a></li><li><a href="#">Malaysian Ringgit (MYR)</a></li><li><a href="#">Maldivian Rufiyaa (MVR)</a></li><li><a href="#">Nepalese Rupee (NPR)</a></li><li><a href="#">Pound Sterling (GBP)</a></li><li><a href="#">Qatari Rial (QAR)</a></li><li><a href="#">Rial Omani (OMR)</a></li><li><a href="#">Saudi Riyal (SAR)</a></li><li><a href="#">Singapore Dollar (SGD)</a></li><li><a href="#">Sri Lanka Rupee (LKR)</a></li><li><a href="#">Taka (BDT)</a></li><li><a href="#">UAE Dirham (AED)</a></li><li><a href="#">US Dollar (USD)</a></li><li><a href="#">Yuan Renminbi (CNY)</a></li></ul></div></div><!----><!----><div class="other-settings"><label>Promotional Code</label><input type="text" class="scoped font-weight-bold"></div><!----></div><div class="passengers-popup_action"><button class="button-accept">Accept</button></div></div></div><!----></div><div class="form-action"><button type="button" class="button-search"><span class="button__text">Search</span></button></div><!----></div></div></div></div></div></div>
+
+</div>
+
+
+
+        <iframe src="https://usbair.com/zenith/footer.php" id="BottomFrameId" class="integrated-iframe" seamless="seamless" scrolling="no"></iframe>
+
+    <div id="expiredSession" class="modal fade">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h4 class="modal-title">Session expired</h4>
+                </div>
+                <div class="modal-body">
+                    <p>Your session has expired .<br>You will be redirected to the homepage.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" onclick="javascript: window.location.href = '/Zenith/FrontOffice/(S(4eff945ec38e48f793c80f186f8570ae))/usbangla/en-GB';">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/Zenith/FrontOffice/bundles/bootstrap?v=-ktyuuYVm8reiCqek-REkH9kFQQZ53F1Ay-TXz9RIew1"></script>
+
+    <script src="/Zenith/FrontOffice/bundles/bootstrap-datetimepicker?v=gC4ae5cp4QstPS2q_bWRzFoJ0sJXRobh018jNEyU4cI1"></script>
+
+    <script src="/Zenith/FrontOffice/bundles/knockout?v=bLDcv6hRnK4zaUutJB-0gzr-Yvcf41z_fGikXXon8Ko1"></script>
+
+    <script src="/Zenith/FrontOffice/bundles/TTI?v=sr1guw2O_g1bJNce4ZbfBtsgQ_6M_2PHYGloZCQVppY1"></script>
+
+    <script src="/Zenith/FrontOffice/bundles/TTIUI?v=iHr8OflduCvToncJDbUMr2cEGsG91OBqxUFZWPGAu6Q1"></script>
+
+    <script src="/Zenith/FrontOffice/bundles/TTIMoney?v=hc0QlJxWlKt_RvbDcpFsix1bVujWns1eSj1HZjBFGRs1"></script>
+
+    
+
+    <script type="module">
+        import app from '/Zenith/FrontOffice/Scripts/Themes/breezewings/search-criterias.build.min.js?v=1.220'
+        window.vueApp = app.mount('#SearchCriterias');
+    </script>
+    
+    <script type="text/javascript">
+    </script>
+
+
+
+<script type="text/javascript">
+    $(document).ready(function() {
+                            });
+
+</script>
+    
+
+
+
+        <script type="text/javascript">
+
+            $(document).ready(function () {
+                if ( $("#SearchCriteria").length ) {
+                    setTimeout(function () { self.location.reload(); }, 1000 * 60 * 29);
+                }
+            });
+        </script>
+
+<script type="text/javascript">
+    window.dataLayer = window.dataLayer || [];
+    $("#languages").change(function() {
+        var url = $('#languages :selected').val();
+        window.location.replace(url);
+    });
+</script>
+
+
+
+<!----></body></html>

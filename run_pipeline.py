@@ -102,6 +102,14 @@ def parse_args():
     parser.add_argument("--prediction-ml-quantiles", default="0.1,0.5,0.9")
     parser.add_argument("--prediction-ml-min-history", type=int, default=14)
     parser.add_argument("--prediction-ml-random-seed", type=int, default=42)
+    parser.add_argument(
+        "--prediction-dl-models",
+        default="mlp",
+        help="Comma-separated DL models for prediction: mlp (default: mlp)",
+    )
+    parser.add_argument("--prediction-dl-quantiles", default="0.1,0.5,0.9")
+    parser.add_argument("--prediction-dl-min-history", type=int, default=8)
+    parser.add_argument("--prediction-dl-random-seed", type=int, default=42)
 
     # unified intelligence hub
     parser.add_argument("--run-intelligence-hub", action="store_true")
@@ -370,6 +378,142 @@ def _apply_schedule_date_defaults_pipeline(args) -> None:
         LOG.info("Applied auto-run date defaults from %s: %s", args.schedule_file, ", ".join(applied))
 
 
+def _load_execution_plan(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        LOG.warning("Failed to parse schedule file %s for execution plan: %s", path, exc)
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+    plan = obj.get("execution_plan")
+    return plan if isinstance(plan, dict) else {}
+
+
+def _collect_expected_airlines_from_routes(routes_file: Path) -> list[str]:
+    if not routes_file.exists():
+        return []
+    try:
+        obj = json.loads(routes_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        LOG.warning("Failed to parse routes file %s: %s", routes_file, exc)
+        return []
+    if not isinstance(obj, list):
+        return []
+    seen = set()
+    out = []
+    for row in obj:
+        if not isinstance(row, dict):
+            continue
+        airline = str(row.get("airline") or "").upper().strip()
+        if not airline or airline in seen:
+            continue
+        seen.add(airline)
+        out.append(airline)
+    return sorted(out)
+
+
+def _collect_observed_airline_row_counts(combined_csv: Path) -> dict:
+    counts = {}
+    if not combined_csv.exists():
+        return counts
+    try:
+        with combined_csv.open("r", newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                airline = str(row.get("airline") or "").upper().strip()
+                if not airline:
+                    continue
+                counts[airline] = counts.get(airline, 0) + 1
+    except Exception as exc:
+        LOG.warning("Failed to compute observed airline counts from %s: %s", combined_csv, exc)
+    return counts
+
+
+def _compute_all_airline_coverage(plan: dict) -> dict:
+    gate = plan.get("coverage_gate") if isinstance(plan.get("coverage_gate"), dict) else {}
+    enabled = bool(gate.get("enabled"))
+
+    routes_file_raw = gate.get("routes_file") or "config/routes.json"
+    routes_file = Path(str(routes_file_raw))
+    if not routes_file.is_absolute():
+        routes_file = REPO_ROOT / routes_file
+
+    try:
+        min_rows = int(gate.get("minimum_rows_per_airline") or 1)
+    except Exception:
+        min_rows = 1
+    min_rows = max(1, min_rows)
+
+    expected = _collect_expected_airlines_from_routes(routes_file)
+    observed_counts = _collect_observed_airline_row_counts(Path("output/latest/combined_results.csv"))
+
+    covered = []
+    missing = []
+    for airline in expected:
+        if int(observed_counts.get(airline, 0)) >= min_rows:
+            covered.append(airline)
+        else:
+            missing.append(airline)
+
+    coverage_pct = 0.0
+    if expected:
+        coverage_pct = round((100.0 * len(covered)) / len(expected), 2)
+
+    return {
+        "enabled": enabled,
+        "routes_file": str(routes_file),
+        "minimum_rows_per_airline": min_rows,
+        "expected_airlines": expected,
+        "observed_row_counts": observed_counts,
+        "covered_airlines": covered,
+        "missing_airlines": missing,
+        "coverage_pct": coverage_pct,
+        "coverage_gate_passed": bool(expected) and not missing,
+    }
+
+
+def _write_execution_plan_status(report_output_dir: str, plan: dict, coverage: dict, pipeline_rc: int) -> Path | None:
+    if not plan:
+        return None
+    out_dir = Path(report_output_dir)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        LOG.warning("Failed to create report output dir %s for execution plan status: %s", out_dir, exc)
+        return None
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    gate_passed = bool(coverage.get("coverage_gate_passed"))
+
+    recommended_next_phase = plan.get("current_phase")
+    if gate_passed:
+        recommended_next_phase = "ota_discount_markup_calculation"
+
+    payload = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "ultimate_priority_goal": plan.get("ultimate_priority_goal"),
+        "current_phase": plan.get("current_phase"),
+        "phase_sequence": plan.get("phase_sequence"),
+        "coverage_summary": coverage,
+        "pipeline_rc": int(pipeline_rc or 0),
+        "recommended_next_phase": recommended_next_phase,
+    }
+
+    latest_json = out_dir / "pipeline_execution_plan_latest.json"
+    run_json = out_dir / f"pipeline_execution_plan_{stamp}.json"
+    try:
+        text_payload = json.dumps(payload, indent=2, ensure_ascii=False)
+        latest_json.write_text(text_payload + "\n", encoding="utf-8")
+        run_json.write_text(text_payload + "\n", encoding="utf-8")
+    except Exception as exc:
+        LOG.warning("Failed writing execution plan status artifacts: %s", exc)
+        return None
+
+    return latest_json
+
+
 def _count_column_events(db_url: str):
     try:
         engine = create_engine(db_url, pool_pre_ping=True, future=True)
@@ -473,6 +617,61 @@ def _log_per_airline_row_counts(report_output_dir: str) -> None:
             )
     except Exception as exc:
         LOG.warning("Failed to compute report per-airline summary counts: %s", exc)
+
+
+def _log_prediction_health(report_output_dir: str) -> None:
+    out_dir = Path(report_output_dir)
+    try:
+        history_files = [p for p in out_dir.glob("prediction_history_*_*.csv") if p.is_file()]
+        if not history_files:
+            LOG.warning("prediction_health: prediction output file not found in %s", out_dir)
+            return
+        latest_history = max(history_files, key=lambda p: p.stat().st_mtime)
+        m = None
+        try:
+            m = latest_history.stem.rsplit("_", 2)
+        except Exception:
+            m = None
+        if not m or len(m) < 2:
+            LOG.info("prediction_health: latest_history=%s (timestamp parse unavailable)", latest_history.name)
+            return
+        stamp = f"{m[-2]}_{m[-1]}"
+        meta_candidates = list(out_dir.glob(f"prediction_backtest_meta_*_{stamp}.json"))
+        if not meta_candidates:
+            LOG.info(
+                "prediction_health: latest_history=%s stamp=%s metadata_missing (likely backtest disabled)",
+                latest_history.name,
+                stamp,
+            )
+            return
+
+        latest_meta = max(meta_candidates, key=lambda p: p.stat().st_mtime)
+        meta = json.loads(latest_meta.read_text(encoding="utf-8"))
+        if not isinstance(meta, dict):
+            LOG.warning("prediction_health: invalid metadata format in %s", latest_meta)
+            return
+
+        ml_requested = meta.get("ml_requested_models") or []
+        ml_active = meta.get("ml_active_models") or []
+        dl_requested = meta.get("dl_requested_models") or []
+        dl_active = meta.get("dl_active_models") or []
+        backtest = meta.get("backtest") if isinstance(meta.get("backtest"), dict) else {}
+        backtest_status = backtest.get("status")
+        LOG.info(
+            "prediction_health: meta=%s ml_requested=%s ml_active=%s dl_requested=%s dl_active=%s backtest_status=%s",
+            latest_meta.name,
+            ml_requested,
+            ml_active,
+            dl_requested,
+            dl_active,
+            backtest_status,
+        )
+        if ml_requested and not ml_active:
+            LOG.warning("prediction_health: ML models were requested but none were activated")
+        if dl_requested and not dl_active:
+            LOG.warning("prediction_health: DL models were requested but none were activated")
+    except Exception as exc:
+        LOG.warning("prediction_health: failed to inspect prediction metadata: %s", exc)
 
 
 def _resolve_scrape_dates_for_log(args) -> list[str]:
@@ -624,6 +823,10 @@ def build_prediction_cmd(args):
     _add_arg(cmd, "--ml-quantiles", args.prediction_ml_quantiles)
     _add_arg(cmd, "--ml-min-history", args.prediction_ml_min_history)
     _add_arg(cmd, "--ml-random-seed", args.prediction_ml_random_seed)
+    _add_arg(cmd, "--dl-models", args.prediction_dl_models)
+    _add_arg(cmd, "--dl-quantiles", args.prediction_dl_quantiles)
+    _add_arg(cmd, "--dl-min-history", args.prediction_dl_min_history)
+    _add_arg(cmd, "--dl-random-seed", args.prediction_dl_random_seed)
     if args.prediction_disable_backtest:
         cmd.append("--disable-backtest")
     return cmd
@@ -683,6 +886,13 @@ def main():
     args.chd = max(0, int(args.chd or 0))
     args.inf = max(0, int(args.inf or 0))
     _apply_schedule_date_defaults_pipeline(args)
+    execution_plan = _load_execution_plan(Path(args.schedule_file))
+    if execution_plan:
+        LOG.info(
+            "Execution plan loaded: current_phase=%s ultimate_priority_goal=%s",
+            execution_plan.get("current_phase"),
+            execution_plan.get("ultimate_priority_goal"),
+        )
     before_count = _count_column_events(args.db_url)
 
     pipeline_rc = 0
@@ -716,6 +926,8 @@ def main():
             pipeline_rc = rc or pipeline_rc
             if args.fail_fast:
                 return pipeline_rc
+        else:
+            _log_prediction_health(args.report_output_dir)
 
     if args.run_intelligence_hub:
         rc = _run_step("intelligence_hub", build_intelligence_hub_cmd(args))
@@ -737,6 +949,26 @@ def main():
 
     route_audit_path = _resolve_route_audit_report_path(args.report_output_dir)
     _log_per_airline_row_counts(args.report_output_dir)
+    coverage = _compute_all_airline_coverage(execution_plan)
+    if execution_plan and coverage.get("enabled"):
+        LOG.info(
+            "all_airline_coverage expected=%d covered=%d missing=%d pct=%.2f pass=%s",
+            len(coverage.get("expected_airlines") or []),
+            len(coverage.get("covered_airlines") or []),
+            len(coverage.get("missing_airlines") or []),
+            float(coverage.get("coverage_pct") or 0.0),
+            bool(coverage.get("coverage_gate_passed")),
+        )
+        if coverage.get("missing_airlines"):
+            LOG.info("all_airline_coverage_missing=%s", ",".join(coverage.get("missing_airlines")))
+    execution_plan_status_path = _write_execution_plan_status(
+        args.report_output_dir,
+        execution_plan,
+        coverage,
+        pipeline_rc,
+    )
+    if execution_plan_status_path:
+        LOG.info("execution_plan_status_artifact=%s", execution_plan_status_path)
     LOG.info(
         "pipeline_summary rc=%s route_audit_report=%s exists=%s report_output_dir=%s",
         pipeline_rc,

@@ -2,7 +2,7 @@ param(
     [string]$TaskName = "AirlineIntel_Ingestion4H",
     [string]$OnLogonTaskName = "AirlineIntel_IngestionOnLogon",
     [string]$StartTime = "00:05",
-    [int]$RepeatMinutes = 240,
+    [int]$RepeatMinutes = 360,
     [switch]$SkipStartupShortcut,
     [switch]$SkipOnLogonTask,
     [switch]$WhatIf
@@ -82,7 +82,7 @@ function Register-IngestionTask {
         -StartWhenAvailable `
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries `
-        -ExecutionTimeLimit (New-TimeSpan -Hours 3)
+        -ExecutionTimeLimit (New-TimeSpan -Hours 8)
 
     if ($WhatIf) {
         Write-Host "[WhatIf] Register-ScheduledTask -TaskName $Name (every $EveryMinutes minutes, anchor $($anchor.ToString('yyyy-MM-dd HH:mm')))"

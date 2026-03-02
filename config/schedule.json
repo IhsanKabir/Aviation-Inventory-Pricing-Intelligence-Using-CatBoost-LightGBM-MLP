@@ -1,16 +1,14 @@
 {
   "mode": "manual",
   "concurrency": 6,
-  "auto_run_interval_hours": 1,
+  "auto_run_interval_hours": 6,
   "auto_run_date_ranges": {
     "default": {
       "combine": true,
-      "date_start": "2026-03-10",
-      "date_end": "2026-03-20",
-      "date_ranges": [
-        { "start": "2026-04-01", "end": "2026-04-05" }
-      ],
-      "date_offsets": [0, 3, 5, 7, 15, 30]
+      "date_start": null,
+      "date_end": null,
+      "date_ranges": [],
+      "date_offsets": [0, 3, 7, 15, 30]
     },
     "run_all": {
     },
@@ -23,6 +21,32 @@
     "prediction": {
       "departure_start_date": null,
       "departure_end_date": null
+    }
+  },
+  "execution_plan": {
+    "ultimate_priority_goal": "ML+DL prediction of fare and inventory changes",
+    "current_phase": "all_airline_data_collection",
+    "phase_sequence": [
+      {
+        "id": "all_airline_data_collection",
+        "status": "in_progress",
+        "description": "Collect reliable data coverage for all target airlines first."
+      },
+      {
+        "id": "ota_discount_markup_calculation",
+        "status": "pending",
+        "description": "After all-airline coverage is stable, run OTA discount/markup comparative calculations."
+      },
+      {
+        "id": "ml_dl_prediction_study",
+        "status": "priority",
+        "description": "Ultimate top-priority thesis goal: ML and DL prediction of fare and inventory change behavior."
+      }
+    ],
+    "coverage_gate": {
+      "enabled": true,
+      "routes_file": "config/routes.json",
+      "minimum_rows_per_airline": 1
     }
   }
 }

@@ -1,135 +1,1770 @@
 [
-  { "airline": "VQ", "origin": "DAC", "destination": "CXB", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "CXB", "destination": "DAC", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "DAC", "destination": "CGP", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "CGP", "destination": "DAC", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "DAC", "destination": "SPD", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "SPD", "destination": "DAC", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "DAC", "destination": "ZYL", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "ZYL", "destination": "DAC", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "DAC", "destination": "RJH", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "RJH", "destination": "DAC", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "DAC", "destination": "JSR", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "JSR", "destination": "DAC", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "DAC", "destination": "BZL", "cabins": ["Economy"] },
-  { "airline": "VQ", "origin": "BZL", "destination": "DAC", "cabins": ["Economy"] },
-  { "airline": "BG", "origin": "DAC", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "CGP", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "CCU", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "CCU", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "CXB", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "ZYL", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "RJH", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "RJH", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "JSR", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "JSR", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "SPD", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "SPD", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "BZL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "BZL", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "KUL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "KUL", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "BKK", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "BKK", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "JED", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "JED", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "MLE", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "MLE", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "SHJ", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "SHJ", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "DXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DXB", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "MCT", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "MCT", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "CAN", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "CAN", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "DOH", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DOH", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "SIN", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "SIN", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "MAA", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "MAA", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "AUH", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DOH", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "MCT", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "JED", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "MED", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "CCU", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "SIN", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "KUL", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "SHJ", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "JED", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DXB", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "KWI", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "MCT", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "CMB", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "BAH", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "LHR", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DXB", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "MAN", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DOH", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "JED", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "MED", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "SHJ", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "AUH", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BG", "origin": "DAC", "destination": "AUH", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "2A", "origin": "CGP", "destination": "DAC", "cabins": ["Economy"] },
-  { "airline": "2A", "origin": "CGP", "destination": "SPD", "cabins": ["Economy"] },
-  { "airline": "2A", "origin": "CXB", "destination": "DAC", "cabins": ["Economy"] },
-  { "airline": "2A", "origin": "CXB", "destination": "SPD", "cabins": ["Economy"] },
-  { "airline": "2A", "origin": "DAC", "destination": "CGP", "cabins": ["Economy"] },
-  { "airline": "2A", "origin": "DAC", "destination": "CXB", "cabins": ["Economy"] },
-  { "airline": "2A", "origin": "DAC", "destination": "SPD", "cabins": ["Economy"] },
-  { "airline": "2A", "origin": "DAC", "destination": "ZYL", "cabins": ["Economy"] },
-  { "airline": "2A", "origin": "SPD", "destination": "CGP", "cabins": ["Economy"] },
-  { "airline": "2A", "origin": "SPD", "destination": "CXB", "cabins": ["Economy"] },
-  { "airline": "2A", "origin": "SPD", "destination": "DAC", "cabins": ["Economy"] },
-  { "airline": "2A", "origin": "ZYL", "destination": "DAC", "cabins": ["Economy"] },
-  { "airline": "BS", "origin": "CGP", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "CGP", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "CGP", "destination": "JSR", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "CGP", "destination": "RJH", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "CGP", "destination": "SPD", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "CGP", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "CXB", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "CXB", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "CXB", "destination": "JSR", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "CXB", "destination": "RJH", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "CXB", "destination": "SPD", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "CXB", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "DAC", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "DAC", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "DAC", "destination": "JSR", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "DAC", "destination": "RJH", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "DAC", "destination": "SPD", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "DAC", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "JSR", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "JSR", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "JSR", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "JSR", "destination": "RJH", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "JSR", "destination": "SPD", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "JSR", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "RJH", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "RJH", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "RJH", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "RJH", "destination": "JSR", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "RJH", "destination": "SPD", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "RJH", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "SPD", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "SPD", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "SPD", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "SPD", "destination": "JSR", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "SPD", "destination": "RJH", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "SPD", "destination": "ZYL", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "ZYL", "destination": "CGP", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "ZYL", "destination": "CXB", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "ZYL", "destination": "DAC", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "ZYL", "destination": "JSR", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "ZYL", "destination": "RJH", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "BS", "origin": "ZYL", "destination": "SPD", "cabins": ["Economy","Premium Economy","Business"] },
-  { "airline": "Q2", "origin": "DAC", "destination": "MLE", "cabins": ["Economy"] },
-  { "airline": "Q2", "origin": "MLE", "destination": "DAC", "cabins": ["Economy"] }
-
+  {
+    "airline": "2A",
+    "origin": "BZL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "CGP",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "CXB",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "DAC",
+    "destination": "BZL",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "DAC",
+    "destination": "CGP",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "DAC",
+    "destination": "CXB",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "DAC",
+    "destination": "JSR",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "DAC",
+    "destination": "RJH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "DAC",
+    "destination": "SPD",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "DAC",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "JSR",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "RJH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "SPD",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "2A",
+    "origin": "ZYL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "3L",
+    "origin": "AUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "3L",
+    "origin": "DAC",
+    "destination": "AUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "CCU",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "DAC",
+    "destination": "CCU",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "DAC",
+    "destination": "MAA",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "MAA",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "8D",
+    "origin": "DAC",
+    "destination": "MLE",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "8D",
+    "origin": "MLE",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "AK",
+    "origin": "DAC",
+    "destination": "KUL",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "AK",
+    "origin": "KUL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "AUH",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "AUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "BAH",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "BKK",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "BZL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "CAN",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "CCU",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "CCU",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "CGP",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "CMB",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "CXB",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "AUH",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "BKK",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "BZL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "CAN",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "CCU",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "DOH",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "DXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "JSR",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "KUL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "MAA",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "MCT",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "MLE",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "RJH",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "SHJ",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "SIN",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "SPD",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DAC",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DOH",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DOH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DOH",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DXB",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DXB",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "DXB",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "JED",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "JED",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "JED",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "JSR",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "KUL",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "KUL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "KWI",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "LHR",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "MAA",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "MAN",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "MCT",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "MCT",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "MCT",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "MED",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "MED",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "MLE",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "RJH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "SHJ",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "SHJ",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "SHJ",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "SIN",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "SIN",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "SPD",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BG",
+    "origin": "ZYL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "AUH",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "AUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "BAH",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "BKK",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "BZL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "CAN",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "CCU",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "CCU",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "CGP",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "CMB",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "CXB",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "AUH",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "BKK",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "BZL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "CAN",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "CCU",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "DOH",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "DXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "JSR",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "KUL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "MAA",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "MCT",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "MLE",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "RJH",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "SHJ",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "SIN",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "SPD",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DOH",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DOH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DOH",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DXB",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DXB",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DXB",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "JED",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "JED",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "JED",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "JSR",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "KUL",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "KUL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "KWI",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "LHR",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "MAA",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "MAN",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "MCT",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "MCT",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "MCT",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "MED",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "MED",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "MLE",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "RJH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "SHJ",
+    "destination": "CXB",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "SHJ",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "SHJ",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "SIN",
+    "destination": "CGP",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "SIN",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "SPD",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "ZYL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy",
+      "Premium Economy",
+      "Business"
+    ]
+  },
+  {
+    "airline": "CZ",
+    "origin": "CAN",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "CZ",
+    "origin": "DAC",
+    "destination": "CAN",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EK",
+    "origin": "DAC",
+    "destination": "DXB",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EK",
+    "origin": "DXB",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "FZ",
+    "origin": "DAC",
+    "destination": "DXB",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "FZ",
+    "origin": "DXB",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "G9",
+    "origin": "DAC",
+    "destination": "SHJ",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "G9",
+    "origin": "SHJ",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "MH",
+    "origin": "DAC",
+    "destination": "KUL",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "MH",
+    "origin": "KUL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "OD",
+    "origin": "DAC",
+    "destination": "KUL",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "OD",
+    "origin": "KUL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "Q2",
+    "origin": "DAC",
+    "destination": "MLE",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "Q2",
+    "origin": "MLE",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "QR",
+    "origin": "DAC",
+    "destination": "DOH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "QR",
+    "origin": "DOH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "SQ",
+    "origin": "DAC",
+    "destination": "SIN",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "SQ",
+    "origin": "SIN",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "SV",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "SV",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "SV",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "SV",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "TG",
+    "origin": "BKK",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "TG",
+    "origin": "DAC",
+    "destination": "BKK",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "UL",
+    "origin": "DAC",
+    "destination": "MLE",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "UL",
+    "origin": "MLE",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "BZL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "CGP",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "CXB",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "DAC",
+    "destination": "BZL",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "DAC",
+    "destination": "CGP",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "DAC",
+    "destination": "CXB",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "DAC",
+    "destination": "JSR",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "DAC",
+    "destination": "RJH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "DAC",
+    "destination": "SPD",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "DAC",
+    "destination": "ZYL",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "JSR",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "RJH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "SPD",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "VQ",
+    "origin": "ZYL",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "WY",
+    "origin": "DAC",
+    "destination": "MCT",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "WY",
+    "origin": "MCT",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  }
 ]

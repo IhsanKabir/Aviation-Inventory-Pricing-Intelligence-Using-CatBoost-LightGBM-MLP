@@ -38,6 +38,7 @@ from engines.route_scope import (
     parse_csv_upper_codes,
     route_matches_scope,
 )
+from modules.penalties import apply_penalty_inference
 
 def is_valid_core_offer(o: dict) -> bool:
     required = [
@@ -258,6 +259,32 @@ def _has_explicit_date_selection(args) -> bool:
         or args.date_end
         or args.date_offsets
     )
+
+
+def _truthy_env(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "1" if default else "0")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _prepare_public_export_rows(rows: list[dict]) -> list[dict]:
+    """
+    Redact connector/source internals from public-facing CSV/JSON exports.
+    Local DB/raw-meta still retains full details.
+    """
+    if not _truthy_env("PUBLIC_EXPORT_REDACT_SOURCES", default=True):
+        return rows
+    redacted = []
+    drop_keys = {
+        "source_endpoint",
+        "penalty_source",
+        "raw_offer",
+        "raw_response",
+    }
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        redacted.append({k: v for k, v in row.items() if k not in drop_keys})
+    return redacted
 
 
 def _load_schedule_date_defaults(path: Path) -> dict:
@@ -577,6 +604,35 @@ def load_routes_for_airline(airline_code: str):
         routes = json.load(f)
     # expected schema is list of dicts with 'airline', 'origin', 'destination', optional 'cabins'
     return [r for r in routes if r.get("airline") == airline_code]
+
+
+def resolve_route_cabins(route: Dict[str, Any], airline_cfg: Dict[str, Any]) -> list[str]:
+    """
+    Resolve effective cabins per route with airline-level guardrails.
+
+    Route-level cabin lists may be broader than currently supported connector
+    capability. We intersect route cabins with airline-config cabins to avoid
+    unsupported queries.
+    """
+    airline_cabins = [str(c).strip() for c in (airline_cfg.get("cabins") or ["Economy"]) if str(c).strip()]
+    if not airline_cabins:
+        airline_cabins = ["Economy"]
+
+    route_cabins = route.get("cabins")
+    if not isinstance(route_cabins, list) or not route_cabins:
+        return airline_cabins
+
+    allowed = {c.lower(): c for c in airline_cabins}
+    resolved: list[str] = []
+    for c in route_cabins:
+        key = str(c).strip().lower()
+        if not key or key not in allowed:
+            continue
+        canonical = allowed[key]
+        if canonical not in resolved:
+            resolved.append(canonical)
+
+    return resolved or airline_cabins
 
 
 def audit_route_config(
@@ -924,6 +980,17 @@ def _raw_meta_hash_key(meta: dict) -> str:
         "fare_ref_num": meta.get("fare_ref_num"),
         "fare_search_reference": meta.get("fare_search_reference"),
         "source_endpoint": meta.get("source_endpoint"),
+        "penalty_source": meta.get("penalty_source"),
+        "penalty_currency": meta.get("penalty_currency"),
+        "penalty_rule_text": meta.get("penalty_rule_text"),
+        "fare_change_fee_before_24h": meta.get("fare_change_fee_before_24h"),
+        "fare_change_fee_within_24h": meta.get("fare_change_fee_within_24h"),
+        "fare_change_fee_no_show": meta.get("fare_change_fee_no_show"),
+        "fare_cancel_fee_before_24h": meta.get("fare_cancel_fee_before_24h"),
+        "fare_cancel_fee_within_24h": meta.get("fare_cancel_fee_within_24h"),
+        "fare_cancel_fee_no_show": meta.get("fare_cancel_fee_no_show"),
+        "fare_changeable": meta.get("fare_changeable"),
+        "fare_refundable": meta.get("fare_refundable"),
         "raw_offer": meta.get("raw_offer"),
     }
     text = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
@@ -1145,7 +1212,7 @@ def main():
         if args.limit_routes and args.limit_routes > 0:
             routes_preview = routes_preview[: args.limit_routes]
         for r in routes_preview:
-            cabin_list_preview = r.get("cabins", cfg["cabins"])
+            cabin_list_preview = resolve_route_cabins(r, cfg)
             if args.cabin:
                 cabin_list_preview = [c for c in cabin_list_preview if str(c).lower() == args.cabin.strip().lower()]
             overall_query_total += len(cabin_list_preview) * len(dates)
@@ -1192,7 +1259,7 @@ def main():
         airline_query_total = 0
         airline_route_cabin_pairs = 0
         for r in routes:
-            planned_cabins = list(r.get("cabins", cfg["cabins"]))
+            planned_cabins = list(resolve_route_cabins(r, cfg))
             if args.cabin:
                 planned_cabins = [c for c in planned_cabins if str(c).lower() == args.cabin.strip().lower()]
             airline_route_cabins = len(planned_cabins)
@@ -1222,7 +1289,7 @@ def main():
         for r in routes:
             origin = r["origin"]
             dest = r["destination"]
-            cabin_list = r.get("cabins", cfg["cabins"])
+            cabin_list = resolve_route_cabins(r, cfg)
             if args.cabin:
                 cabin_list = [c for c in cabin_list if str(c).lower() == args.cabin.strip().lower()]
                 if not cabin_list:
@@ -1290,6 +1357,7 @@ def main():
                         resp = _safe_call_fetch(
                             fetch_fn, origin, dest, dt, cabin,
                             timeout_seconds=args.query_timeout_seconds,
+                            airline_code=code,
                             adt=args.adt,
                             chd=args.chd,
                             inf=args.inf,
@@ -1344,8 +1412,25 @@ def main():
                                 resp = {"ok": False, "raw": {}, "originalResponse": None, "rows": []}
                         else:
                             # No fallback available
-                            LOG.info("[%s] No fetch function or fallback present for module %s; skipping %s->%s %s (%s).", code, cfg["module"], origin, dest, dt, cabin)
-                            resp = {"ok": False, "raw": {}, "originalResponse": None, "rows": []}
+                            LOG.info(
+                                "[%s] Primary fetch returned ok=false and no legacy fallback is defined for module %s; skipping %s->%s %s (%s).",
+                                code,
+                                cfg["module"],
+                                origin,
+                                dest,
+                                dt,
+                                cabin,
+                            )
+                            if isinstance(resp, dict):
+                                # Preserve raw error context from primary fetch for diagnostics.
+                                resp = {
+                                    "ok": False,
+                                    "raw": resp.get("raw", resp),
+                                    "originalResponse": resp.get("originalResponse"),
+                                    "rows": resp.get("rows") if isinstance(resp.get("rows"), list) else [],
+                                }
+                            else:
+                                resp = {"ok": False, "raw": {}, "originalResponse": None, "rows": []}
 
                     # At this point resp exists and follows unified contract
                     rows = resp.get("rows", [])
@@ -1518,6 +1603,27 @@ def main():
                                     continue
                                 raw_meta_matched += 1
 
+                                penalty_payload = apply_penalty_inference(
+                                    {
+                                        "airline": r.get("airline"),
+                                        "origin": r.get("origin"),
+                                        "destination": r.get("destination"),
+                                        "brand": r.get("brand"),
+                                        "fare_basis": r.get("fare_basis"),
+                                        "penalty_source": r.get("penalty_source") or raw_offer.get("penalty_source"),
+                                        "penalty_currency": r.get("penalty_currency") or raw_offer.get("penalty_currency"),
+                                        "penalty_rule_text": r.get("penalty_rule_text") or raw_offer.get("penalty_rule_text"),
+                                        "fare_change_fee_before_24h": r.get("fare_change_fee_before_24h") if r.get("fare_change_fee_before_24h") is not None else raw_offer.get("fare_change_fee_before_24h"),
+                                        "fare_change_fee_within_24h": r.get("fare_change_fee_within_24h") if r.get("fare_change_fee_within_24h") is not None else raw_offer.get("fare_change_fee_within_24h"),
+                                        "fare_change_fee_no_show": r.get("fare_change_fee_no_show") if r.get("fare_change_fee_no_show") is not None else raw_offer.get("fare_change_fee_no_show"),
+                                        "fare_cancel_fee_before_24h": r.get("fare_cancel_fee_before_24h") if r.get("fare_cancel_fee_before_24h") is not None else raw_offer.get("fare_cancel_fee_before_24h"),
+                                        "fare_cancel_fee_within_24h": r.get("fare_cancel_fee_within_24h") if r.get("fare_cancel_fee_within_24h") is not None else raw_offer.get("fare_cancel_fee_within_24h"),
+                                        "fare_cancel_fee_no_show": r.get("fare_cancel_fee_no_show") if r.get("fare_cancel_fee_no_show") is not None else raw_offer.get("fare_cancel_fee_no_show"),
+                                        "fare_changeable": r.get("fare_changeable") if r.get("fare_changeable") is not None else raw_offer.get("fare_changeable"),
+                                        "fare_refundable": r.get("fare_refundable") if r.get("fare_refundable") is not None else raw_offer.get("fare_refundable"),
+                                    }
+                                )
+
                                 raw_meta_to_insert.append({
                                     "flight_offer_id": flight_offer_id,
                                     "currency": r.get("currency"),
@@ -1545,6 +1651,17 @@ def main():
                                     "fare_ref_num": r.get("fare_ref_num") or raw_offer.get("fare_ref_num"),
                                     "fare_search_reference": r.get("fare_search_reference") or raw_offer.get("fare_search_reference"),
                                     "source_endpoint": r.get("source_endpoint"),
+                                    "penalty_source": penalty_payload.get("penalty_source"),
+                                    "penalty_currency": penalty_payload.get("penalty_currency"),
+                                    "penalty_rule_text": penalty_payload.get("penalty_rule_text"),
+                                    "fare_change_fee_before_24h": penalty_payload.get("fare_change_fee_before_24h"),
+                                    "fare_change_fee_within_24h": penalty_payload.get("fare_change_fee_within_24h"),
+                                    "fare_change_fee_no_show": penalty_payload.get("fare_change_fee_no_show"),
+                                    "fare_cancel_fee_before_24h": penalty_payload.get("fare_cancel_fee_before_24h"),
+                                    "fare_cancel_fee_within_24h": penalty_payload.get("fare_cancel_fee_within_24h"),
+                                    "fare_cancel_fee_no_show": penalty_payload.get("fare_cancel_fee_no_show"),
+                                    "fare_changeable": penalty_payload.get("fare_changeable"),
+                                    "fare_refundable": penalty_payload.get("fare_refundable"),
                                     "raw_offer": raw_offer,
                                     "scraped_at": scraped_at,
                                 })
@@ -1621,7 +1738,50 @@ def main():
 
                     else:
                         # Friendly message — we don't error out here.
-                        LOG.info("[%s] No rows for %s->%s on %s (%s). This can be normal (none scheduled / sold out / non-operated).", code, origin, dest, dt, cabin)
+                        # If fetch returned ok=false, include compact reason/hint.
+                        reason_bits = []
+                        try:
+                            raw = resp.get("raw") if isinstance(resp, dict) else {}
+                            if isinstance(raw, dict):
+                                err = raw.get("error")
+                                if err:
+                                    reason_bits.append(f"error={err}")
+                                msg = raw.get("message")
+                                if msg:
+                                    reason_bits.append(f"message={msg}")
+                                search_body = raw.get("search_response")
+                                if isinstance(search_body, dict):
+                                    s_msg = search_body.get("message")
+                                    if s_msg:
+                                        reason_bits.append(f"search_message={s_msg}")
+                                    s_err = search_body.get("error")
+                                    if isinstance(s_err, dict) and s_err.get("message"):
+                                        reason_bits.append(f"search_error={s_err.get('message')}")
+                                hint = raw.get("hint")
+                                if hint:
+                                    reason_bits.append(f"hint={str(hint)[:120]}")
+                        except Exception:
+                            pass
+
+                        if reason_bits:
+                            LOG.info(
+                                "[%s] No rows for %s->%s on %s (%s). Details: %s",
+                                code,
+                                origin,
+                                dest,
+                                dt,
+                                cabin,
+                                " | ".join(reason_bits),
+                            )
+                        else:
+                            LOG.info(
+                                "[%s] No rows for %s->%s on %s (%s). This can be normal (none scheduled / sold out / non-operated).",
+                                code,
+                                origin,
+                                dest,
+                                dt,
+                                cabin,
+                            )
                         run_status.update(
                             {
                                 "phase": "query_complete",
@@ -1645,26 +1805,28 @@ def main():
         except Exception:
             LOG.debug("Unable to archive previous results (continuing).", exc_info=True)
 
+    export_rows = _prepare_public_export_rows(all_rows)
+
     # Save JSON
     try:
         with json_path.open("w", encoding="utf-8") as f:
-            json.dump(all_rows, f, indent=2)
+            json.dump(export_rows, f, indent=2)
     except Exception as e:
         LOG.error("Failed to write combined results JSON: %s", e)
 
     # Save CSV
-    if all_rows:
+    if export_rows:
         try:
             import csv
-            keys = sorted({k for row in all_rows for k in row.keys()})
+            keys = sorted({k for row in export_rows for k in row.keys()})
             with csv_path.open("w", newline="", encoding="utf-8") as f:
                 w = csv.DictWriter(f, fieldnames=keys)
                 w.writeheader()
-                for row in all_rows:
+                for row in export_rows:
                     # ensure fields match header
                     safe_row = {k: row.get(k, "") for k in keys}
                     w.writerow(safe_row)
-            LOG.info("Saved CSV: %s (%d rows)", csv_path, len(all_rows))
+            LOG.info("Saved CSV: %s (%d rows)", csv_path, len(export_rows))
         except Exception as e:
             LOG.error("Failed to write CSV: %s", e)
     else:

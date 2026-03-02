@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from modules.fleet_mapping import resolve_seat_capacity
+from modules.penalties import parse_bg_category16_penalties, parse_gozayaan_policies
 
 LOG = logging.getLogger("modules.parser")
 LOG.addHandler(logging.NullHandler())
@@ -227,6 +228,71 @@ def extract_baggage_from_fare_families(fare_families: List[Dict]) -> Dict[str, O
                 kg = f"{m2.group(1)} KG"
         res[brand] = kg or None
     return res
+
+
+def _extract_penalty_fields_for_offer(
+    offer: Dict[str, Any],
+    original: Dict[str, Any],
+    fare_basis: str | None = None,
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    if not isinstance(offer, dict):
+        return out
+    if not isinstance(original, dict):
+        original = {}
+
+    fb = str(fare_basis or offer.get("fareBasis") or "").strip().upper()
+
+    # 1) BG getBookingFareRules shape (category 16 text parsing)
+    seg_rules = original.get("segmentFareRules")
+    if isinstance(seg_rules, list):
+        for item in seg_rules:
+            if not isinstance(item, dict):
+                continue
+            fbr = item.get("fareBasisRules") or {}
+            if not isinstance(fbr, dict):
+                continue
+            fb_item = str(fbr.get("fareBasis") or "").strip().upper()
+            if fb and fb_item and fb != fb_item:
+                continue
+            fare_rules = fbr.get("fareRules") or []
+            if not isinstance(fare_rules, list):
+                continue
+            cat16_texts = []
+            for fr in fare_rules:
+                if not isinstance(fr, dict):
+                    continue
+                if str(fr.get("category") or "").strip() == "16":
+                    txt = fr.get("ruleText")
+                    if txt:
+                        cat16_texts.append(str(txt))
+            if cat16_texts:
+                out.update(parse_bg_category16_penalties("\n\n".join(cat16_texts)))
+                break
+
+    # 2) OTA policy list shape (Gozayaan)
+    policies = original.get("policies")
+    if isinstance(policies, list) and policies:
+        pol = parse_gozayaan_policies(policies)
+        for k, v in pol.items():
+            if out.get(k) is None and v is not None:
+                out[k] = v
+
+    # 3) OTA leg-wise fare rule flags (changeable/refundable)
+    leg_rules = offer.get("leg_wise_fare_rules")
+    if isinstance(leg_rules, dict) and leg_rules:
+        first_leg = next(iter(leg_rules.values()), None)
+        if isinstance(first_leg, dict):
+            adt_rule = first_leg.get("ADT")
+            if isinstance(adt_rule, dict):
+                if out.get("fare_changeable") is None and adt_rule.get("changeable") is not None:
+                    out["fare_changeable"] = bool(adt_rule.get("changeable"))
+                if out.get("fare_refundable") is None and adt_rule.get("refundable") is not None:
+                    out["fare_refundable"] = bool(adt_rule.get("refundable"))
+                if out.get("penalty_currency") is None and adt_rule.get("currency"):
+                    out["penalty_currency"] = str(adt_rule.get("currency"))
+
+    return out
 
 
 def _parse_price_alternatives(alts: Any) -> Tuple[Optional[float], Optional[str], List[Dict]]:
@@ -494,6 +560,7 @@ def extract_offers_from_response(resp: Any, keep_soldout: bool = False) -> List[
                     or _safe_get(offer, ["metadata", "fareSearchReference"], default=None)
                 )
                 source_endpoint = "api/graphql:bookingAirSearch"
+                penalty_fields = _extract_penalty_fields_for_offer(offer, original)
 
                 # Baggage from fare families (map brand -> baggage)
                 baggage = None
@@ -510,7 +577,7 @@ def extract_offers_from_response(resp: Any, keep_soldout: bool = False) -> List[
                             row_destination = offer.get("destination") or offer.get("arrivalAirport")
                             row_dep = offer.get("departure")
                             row_arr = offer.get("arrival")
-                            rows.append({
+                            row = {
                                 "brand": brand_id,
                                 "soldout": soldout_flag,
                                 "seats_remaining": seats,
@@ -531,7 +598,9 @@ def extract_offers_from_response(resp: Any, keep_soldout: bool = False) -> List[
                                 "source_endpoint": source_endpoint,
                                 "raw_offer": offer,
                                 "seat_available": seat_available,
-                            })
+                            }
+                            row.update(penalty_fields)
+                            rows.append(row)
                             continue
 
                         # For each segment create a row (you can aggregate later for multi-segment)
@@ -604,6 +673,7 @@ def extract_offers_from_response(resp: Any, keep_soldout: bool = False) -> List[
                                 "fare_search_reference": fare_search_reference,
                                 "source_endpoint": source_endpoint,
                             }
+                            row.update(penalty_fields)
                             append_row(row)
                     except Exception as e:
                         LOG.warning("Error parsing itineraryPart: %s", e)

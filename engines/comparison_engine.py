@@ -240,6 +240,24 @@ def finalize_comparison_df(df: pd.DataFrame) -> pd.DataFrame:
     df["inventory_pressure_delta"] = df["inventory_pressure_pct"] - df["previous_inventory_pressure_pct"]
     df["load_delta"] = df["inventory_pressure_delta"]
 
+    penalty_fee_bases = [
+        "fare_change_fee_before_24h",
+        "fare_change_fee_within_24h",
+        "fare_change_fee_no_show",
+        "fare_cancel_fee_before_24h",
+        "fare_cancel_fee_within_24h",
+        "fare_cancel_fee_no_show",
+    ]
+    for base in penalty_fee_bases:
+        c_col = f"current_{base}"
+        p_col = f"previous_{base}"
+        d_col = f"{base}_delta"
+        if c_col not in df.columns or p_col not in df.columns:
+            continue
+        c_val = pd.to_numeric(df[c_col], errors="coerce")
+        p_val = pd.to_numeric(df[p_col], errors="coerce")
+        df[d_col] = c_val - p_val
+
     # =========================================================
     # 12. ROUTE LEADER
     # =========================================================
@@ -368,6 +386,30 @@ class ComparisonEngine:
             cm.tax_amount     AS current_tax,
             pm.tax_amount     AS previous_tax,
             COALESCE(cm.booking_class, pm.booking_class) AS rbd,
+            cm.penalty_source AS current_penalty_source,
+            pm.penalty_source AS previous_penalty_source,
+            cm.source_endpoint AS current_source_endpoint,
+            pm.source_endpoint AS previous_source_endpoint,
+            cm.penalty_currency AS current_penalty_currency,
+            pm.penalty_currency AS previous_penalty_currency,
+            cm.penalty_rule_text AS current_penalty_rule_text,
+            pm.penalty_rule_text AS previous_penalty_rule_text,
+            cm.fare_change_fee_before_24h AS current_fare_change_fee_before_24h,
+            pm.fare_change_fee_before_24h AS previous_fare_change_fee_before_24h,
+            cm.fare_change_fee_within_24h AS current_fare_change_fee_within_24h,
+            pm.fare_change_fee_within_24h AS previous_fare_change_fee_within_24h,
+            cm.fare_change_fee_no_show AS current_fare_change_fee_no_show,
+            pm.fare_change_fee_no_show AS previous_fare_change_fee_no_show,
+            cm.fare_cancel_fee_before_24h AS current_fare_cancel_fee_before_24h,
+            pm.fare_cancel_fee_before_24h AS previous_fare_cancel_fee_before_24h,
+            cm.fare_cancel_fee_within_24h AS current_fare_cancel_fee_within_24h,
+            pm.fare_cancel_fee_within_24h AS previous_fare_cancel_fee_within_24h,
+            cm.fare_cancel_fee_no_show AS current_fare_cancel_fee_no_show,
+            pm.fare_cancel_fee_no_show AS previous_fare_cancel_fee_no_show,
+            cm.fare_refundable AS current_fare_refundable,
+            pm.fare_refundable AS previous_fare_refundable,
+            cm.fare_changeable AS current_fare_changeable,
+            pm.fare_changeable AS previous_fare_changeable,
 
             CASE
                 WHEN p.id IS NULL THEN 'NEW_FLIGHT'
