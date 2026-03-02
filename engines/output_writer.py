@@ -2,6 +2,7 @@ import pandas as pd
 import hashlib
 from xlsxwriter.utility import xl_range
 
+from engines.route_scope import load_airport_countries
 from modules.fleet_mapping import get_fleet_capacity_map, get_fleet_inventory
 
 
@@ -1147,20 +1148,36 @@ class OutputWriter:
         fmt_cell = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "center"})
         fmt_cell_left = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "left"})
 
-        sheet.write(0, 0, "Tax Change Timeline (Route + Airline)", fmt_title)
-        sheet.write(1, 0, "Shows only dates where route+airline tax range changed vs previous scrape.", fmt_note)
+        sheet.write(0, 0, "Tax Snapshot by Country Flow (Current)", fmt_title)
+        sheet.write(
+            1,
+            0,
+            "Simple country-flow view (BD-first): BD->BD, BD->Outside, Outside->BD. "
+            "Shows current tax only and a change flag vs previous scrape.",
+            fmt_note,
+        )
 
         if df is None or df.empty:
             sheet.write(3, 0, "No rows available.", fmt_note)
             return
 
         work = df.copy()
-        for col in ["route", "airline", "flight_date", "current_tax", "previous_tax", "current_capture_label", "previous_capture_label"]:
+        for col in [
+            "route",
+            "airline",
+            "flight_date",
+            "current_tax",
+            "previous_tax",
+            "current_capture_label",
+            "previous_capture_label",
+        ]:
             if col not in work.columns:
                 work[col] = pd.NA
         work["flight_date"] = pd.to_datetime(work["flight_date"], errors="coerce")
         work["current_tax"] = pd.to_numeric(work["current_tax"], errors="coerce")
         work["previous_tax"] = pd.to_numeric(work["previous_tax"], errors="coerce")
+
+        airport_countries = load_airport_countries()
 
         def _first_text(series):
             for v in series:
@@ -1171,125 +1188,119 @@ class OutputWriter:
                     return s
             return None
 
-        rows = []
-        for (route, airline, fdate), grp in work.groupby(["route", "airline", "flight_date"], sort=True):
-            curr = grp["current_tax"].dropna()
-            prev = grp["previous_tax"].dropna()
-            rec = {
-                "route": route,
-                "airline": str(airline or "").upper(),
-                "flight_date": fdate,
-                "current_capture_label": _first_text(grp["current_capture_label"]) or "Current snapshot",
-                "previous_capture_label": _first_text(grp["previous_capture_label"]) or "Previous snapshot",
-                "curr_min": float(curr.min()) if not curr.empty else None,
-                "curr_max": float(curr.max()) if not curr.empty else None,
-                "curr_count": int(curr.shape[0]),
-                "prev_min": float(prev.min()) if not prev.empty else None,
-                "prev_max": float(prev.max()) if not prev.empty else None,
-                "prev_count": int(prev.shape[0]),
-            }
-            rows.append(rec)
-        summary = pd.DataFrame(rows)
-
-        def _range_text(mn, mx):
+        def _tax_text(mn, mx):
             if mn is None and mx is None:
                 return "--"
             if mn is None:
                 return f"-- to {mx:,.0f}"
             if mx is None:
                 return f"{mn:,.0f} to --"
+            if float(mn) == float(mx):
+                return f"{mn:,.0f}"
             return f"{mn:,.0f} to {mx:,.0f}"
 
-        changes = []
-        for _, rec in summary.iterrows():
-            prev_has = rec["prev_count"] > 0
-            curr_has = rec["curr_count"] > 0
-            if not prev_has and not curr_has:
+        def _flow_from_route(route_value: str):
+            r = str(route_value or "").strip().upper()
+            if "-" not in r:
+                return "Unknown", 99
+            parts = r.split("-", 1)
+            org = parts[0].strip().upper()
+            dst = parts[1].strip().upper()
+            oc = airport_countries.get(org, "")
+            dc = airport_countries.get(dst, "")
+            if oc == "BD" and dc == "BD":
+                return "BD->BD", 1
+            if oc == "BD" and dc and dc != "BD":
+                return "BD->Outside", 2
+            if dc == "BD" and oc and oc != "BD":
+                return "Outside->BD", 3
+            if oc and dc:
+                return "Outside->Outside", 4
+            return "Unknown", 99
+
+        rows = []
+        for (route, airline, fdate), grp in work.groupby(["route", "airline", "flight_date"], sort=True):
+            curr = grp["current_tax"].dropna()
+            prev = grp["previous_tax"].dropna()
+            curr_count = int(curr.shape[0])
+            prev_count = int(prev.shape[0])
+            curr_min = float(curr.min()) if curr_count > 0 else None
+            curr_max = float(curr.max()) if curr_count > 0 else None
+            prev_min = float(prev.min()) if prev_count > 0 else None
+            prev_max = float(prev.max()) if prev_count > 0 else None
+
+            if curr_count <= 0:
                 continue
-            if curr_has and not prev_has:
-                ctype = "NEW"
-            elif prev_has and not curr_has:
-                ctype = "REMOVED"
+
+            if prev_count <= 0:
+                change_flag = "NEW"
             else:
-                changed = (
-                    rec["curr_min"] != rec["prev_min"]
-                    or rec["curr_max"] != rec["prev_max"]
-                    or rec["curr_count"] != rec["prev_count"]
+                changed = bool(
+                    curr_min != prev_min
+                    or curr_max != prev_max
+                    or curr_count != prev_count
                 )
-                if not changed:
-                    continue
-                ctype = "UPDATED"
-            dmin = None
-            dmax = None
-            if rec["curr_min"] is not None and rec["prev_min"] is not None:
-                dmin = rec["curr_min"] - rec["prev_min"]
-            if rec["curr_max"] is not None and rec["prev_max"] is not None:
-                dmax = rec["curr_max"] - rec["prev_max"]
-            changes.append(
+                change_flag = "CHANGED" if changed else "NO_CHANGE"
+
+            flow_label, flow_order = _flow_from_route(route)
+            rows.append(
                 {
-                    "route": rec["route"],
-                    "airline": rec["airline"],
-                    "flight_date": rec["flight_date"],
-                    "previous_capture_label": rec["previous_capture_label"],
-                    "current_capture_label": rec["current_capture_label"],
-                    "change_type": ctype,
-                    "prev_range": _range_text(rec["prev_min"], rec["prev_max"]),
-                    "curr_range": _range_text(rec["curr_min"], rec["curr_max"]),
-                    "delta_min": dmin,
-                    "delta_max": dmax,
-                    "prev_count": rec["prev_count"],
-                    "curr_count": rec["curr_count"],
+                    "flow_label": flow_label,
+                    "flow_order": flow_order,
+                    "route": str(route or ""),
+                    "airline": str(airline or "").upper(),
+                    "flight_date": fdate,
+                    "current_capture_label": _first_text(grp["current_capture_label"]) or "Current snapshot",
+                    "current_tax_text": _tax_text(curr_min, curr_max),
+                    "curr_count": curr_count,
+                    "change_flag": change_flag,
                 }
             )
 
         row = 3
         headers = [
+            "Flow",
             "Route",
             "Airline",
             "Date",
-            "Previous Capture",
             "Current Capture",
-            "Change Type",
-            "Previous Tax Range",
-            "Current Tax Range",
-            "Delta Min",
-            "Delta Max",
-            "Prev Flights w/Tax",
-            "Curr Flights w/Tax",
+            "Current Tax",
+            "Flights w/Tax",
+            "Change Flag",
         ]
         for i, h in enumerate(headers):
             sheet.write(row, i, h, fmt_header)
         row += 1
 
-        if not changes:
-            sheet.write(row, 0, "No route+airline tax changes detected for selected scrapes.", fmt_note)
+        if not rows:
+            sheet.write(row, 0, "No current route+airline tax rows found for selected scrapes.", fmt_note)
             row += 1
         else:
-            for rec in sorted(changes, key=lambda x: (str(x["route"]), str(x["airline"]), str(x["flight_date"]))):
+            rows_sorted = sorted(
+                rows,
+                key=lambda x: (int(x["flow_order"]), str(x["route"]), str(x["airline"]), str(x["flight_date"])),
+            )
+            for rec in rows_sorted:
                 date_txt = pd.to_datetime(rec["flight_date"], errors="coerce")
                 date_str = date_txt.strftime("%Y-%m-%d") if pd.notna(date_txt) else "--"
-                sheet.write(row, 0, rec["route"], fmt_cell_left)
-                sheet.write(row, 1, rec["airline"], fmt_cell)
-                sheet.write(row, 2, date_str, fmt_cell)
-                sheet.write(row, 3, rec["previous_capture_label"], fmt_cell)
+                sheet.write(row, 0, rec["flow_label"], fmt_cell)
+                sheet.write(row, 1, rec["route"], fmt_cell_left)
+                sheet.write(row, 2, rec["airline"], fmt_cell)
+                sheet.write(row, 3, date_str, fmt_cell)
                 sheet.write(row, 4, rec["current_capture_label"], fmt_cell)
-                sheet.write(row, 5, rec["change_type"], fmt_cell)
-                sheet.write(row, 6, rec["prev_range"], fmt_cell_left)
-                sheet.write(row, 7, rec["curr_range"], fmt_cell_left)
-                sheet.write(row, 8, "--" if rec["delta_min"] is None else f"{rec['delta_min']:,.0f}", fmt_cell)
-                sheet.write(row, 9, "--" if rec["delta_max"] is None else f"{rec['delta_max']:,.0f}", fmt_cell)
-                sheet.write(row, 10, int(rec["prev_count"] or 0), fmt_cell)
-                sheet.write(row, 11, int(rec["curr_count"] or 0), fmt_cell)
+                sheet.write(row, 5, rec["current_tax_text"], fmt_cell_left)
+                sheet.write(row, 6, int(rec["curr_count"] or 0), fmt_cell)
+                sheet.write(row, 7, rec["change_flag"], fmt_cell)
                 row += 1
 
-        sheet.set_column(0, 0, 14)
-        sheet.set_column(1, 1, 9)
-        sheet.set_column(2, 2, 12)
-        sheet.set_column(3, 4, 19)
-        sheet.set_column(5, 5, 11)
-        sheet.set_column(6, 7, 22)
-        sheet.set_column(8, 9, 11)
-        sheet.set_column(10, 11, 16)
+        sheet.set_column(0, 0, 15)
+        sheet.set_column(1, 1, 14)
+        sheet.set_column(2, 2, 9)
+        sheet.set_column(3, 3, 12)
+        sheet.set_column(4, 4, 20)
+        sheet.set_column(5, 5, 18)
+        sheet.set_column(6, 6, 13)
+        sheet.set_column(7, 7, 12)
         sheet.freeze_panes(4, 0)
 
     def _write_route_filter_view(self, workbook, df: pd.DataFrame):

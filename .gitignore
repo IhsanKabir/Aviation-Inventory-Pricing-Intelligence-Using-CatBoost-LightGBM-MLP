@@ -24,6 +24,15 @@ playwright_profile/
 real_chrome_profile/
 biman_verified_profile_W11/
 
+# Source-control hygiene: runtime and operator-local automation artifacts
+output/latest/
+output/manual_sessions/
+output/reports/
+logs/
+*.har
+*cookies*.json
+n8n workflow.txt
+
 *.log
 
 # Local runtime/debug artifacts (non-source)
@@ -57,3 +66,13 @@ h_c_r_v5.py
 hourly_change_report_v*_stable.py
 /models.py
 run_all - *.py
+
+# Local scratch artifacts from airline reverse-engineering / capture sessions
+/tmp_*
+/tmp_*/
+/airastra.js
+/main.min.js
+
+# Local model/cache noise
+catboost_info/
+*.bak
