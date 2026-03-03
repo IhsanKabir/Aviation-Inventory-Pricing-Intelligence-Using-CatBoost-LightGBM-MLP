@@ -417,6 +417,237 @@ def _prepare_for_writer(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _build_full_capture_history_df(
+    engine,
+    scoped_df: pd.DataFrame,
+    *,
+    cabin=None,
+    route_scope: str = "all",
+    market_country: str = "BD",
+) -> pd.DataFrame:
+    history_cols = [
+        "route",
+        "airline",
+        "flight_number",
+        "flight_date",
+        "day_name",
+        "departure_time",
+        "scrape_id",
+        "captured_at_utc",
+        "capture_label",
+        "previous_capture_label",
+        "state_changed_flag",
+        "status",
+        "min_fare",
+        "max_fare",
+        "tax_amount",
+        "min_seats",
+        "max_seats",
+        "seat_capacity",
+        "load_pct",
+        "min_fare_delta",
+        "max_fare_delta",
+        "tax_amount_delta",
+        "min_seats_delta",
+        "max_seats_delta",
+        "load_pct_delta",
+        "offer_rows",
+    ]
+    if scoped_df is None or scoped_df.empty:
+        return pd.DataFrame(columns=history_cols)
+
+    required = {"airline", "origin", "destination", "flight_number", "flight_date", "departure_time"}
+    if not required.issubset(set(scoped_df.columns)):
+        return pd.DataFrame(columns=history_cols)
+
+    work = scoped_df.copy()
+    work["airline"] = work["airline"].astype(str).str.upper()
+    work["origin"] = work["origin"].astype(str).str.upper()
+    work["destination"] = work["destination"].astype(str).str.upper()
+    work["flight_number"] = work["flight_number"].astype(str)
+    work["flight_date"] = pd.to_datetime(work["flight_date"], errors="coerce").dt.date
+    work["departure_time"] = work["departure_time"].astype(str).str.strip().str.slice(0, 5)
+    work.loc[work["departure_time"].isin({"", "None", "nan", "NaT"}), "departure_time"] = pd.NA
+    work = work.dropna(subset=["flight_date", "departure_time"])
+    if work.empty:
+        return pd.DataFrame(columns=history_cols)
+
+    airlines = sorted([a for a in work["airline"].dropna().unique() if str(a).strip()])
+    route_pairs = sorted(
+        {
+            (str(r.origin).upper(), str(r.destination).upper())
+            for r in work[["origin", "destination"]].itertuples(index=False)
+            if str(r.origin).strip() and str(r.destination).strip()
+        }
+    )
+    if not airlines or not route_pairs:
+        return pd.DataFrame(columns=history_cols)
+
+    dep_min = work["flight_date"].min()
+    dep_max = work["flight_date"].max()
+    if pd.isna(dep_min) or pd.isna(dep_max):
+        return pd.DataFrame(columns=history_cols)
+
+    params = {
+        "airlines": airlines,
+        "dep_start": dep_min,
+        "dep_end": dep_max,
+    }
+    route_terms = []
+    for idx, (o, d) in enumerate(route_pairs):
+        params[f"o{idx}"] = o
+        params[f"d{idx}"] = d
+        route_terms.append(f"(fo.origin = :o{idx} AND fo.destination = :d{idx})")
+    route_clause = f" AND ({' OR '.join(route_terms)})" if route_terms else ""
+
+    cabin_clause = ""
+    if cabin:
+        params["cabin"] = str(cabin)
+        cabin_clause = " AND fo.cabin = :cabin"
+
+    sql = text(
+        f"""
+        SELECT
+            fo.scrape_id::text AS scrape_id,
+            MAX(fo.scraped_at) AS captured_at_utc,
+            fo.airline,
+            fo.origin,
+            fo.destination,
+            fo.flight_number,
+            fo.departure,
+            MIN(fo.price_total_bdt) AS min_fare,
+            MAX(fo.price_total_bdt) AS max_fare,
+            MIN(fo.seat_available) AS min_seats,
+            MAX(fo.seat_available) AS max_seats,
+            MAX(fo.seat_capacity) AS seat_capacity,
+            MIN(frm.tax_amount) AS tax_amount,
+            COUNT(*) AS offer_rows
+        FROM flight_offers fo
+        LEFT JOIN flight_offer_raw_meta frm
+          ON frm.flight_offer_id = fo.id
+        WHERE fo.airline = ANY(:airlines)
+          AND DATE(fo.departure) BETWEEN :dep_start AND :dep_end
+          {route_clause}
+          {cabin_clause}
+        GROUP BY
+            fo.scrape_id,
+            fo.airline,
+            fo.origin,
+            fo.destination,
+            fo.flight_number,
+            fo.departure
+        ORDER BY
+            MAX(fo.scraped_at) ASC,
+            fo.origin,
+            fo.destination,
+            fo.airline,
+            fo.flight_number,
+            fo.departure
+        """
+    )
+
+    with engine.connect() as conn:
+        hist = pd.read_sql(sql, conn, params=params)
+    if hist.empty:
+        return pd.DataFrame(columns=history_cols)
+
+    hist["airline"] = hist["airline"].astype(str).str.upper()
+    hist["origin"] = hist["origin"].astype(str).str.upper()
+    hist["destination"] = hist["destination"].astype(str).str.upper()
+    hist["route"] = hist["origin"] + "-" + hist["destination"]
+    hist["flight_number"] = hist["flight_number"].astype(str)
+    hist["captured_at_utc"] = pd.to_datetime(hist["captured_at_utc"], errors="coerce", utc=True)
+    hist["flight_date"] = pd.to_datetime(hist["departure"], errors="coerce").dt.date
+    hist["departure_time"] = pd.to_datetime(hist["departure"], errors="coerce").dt.strftime("%H:%M")
+    hist["day_name"] = pd.to_datetime(hist["flight_date"], errors="coerce").dt.day_name()
+    hist["capture_label"] = hist["captured_at_utc"].apply(_format_capture_label)
+
+    for c in ["min_fare", "max_fare", "tax_amount", "min_seats", "max_seats", "seat_capacity", "offer_rows"]:
+        hist[c] = pd.to_numeric(hist[c], errors="coerce")
+
+    hist["load_pct"] = pd.NA
+    valid = hist["seat_capacity"].notna() & (hist["seat_capacity"] > 0) & hist["min_seats"].notna()
+    hist.loc[valid, "load_pct"] = (
+        100.0 * (1.0 - (hist.loc[valid, "min_seats"] / hist.loc[valid, "seat_capacity"]))
+    ).round(1)
+
+    hist["status"] = "AVAILABLE"
+    hist.loc[hist["min_seats"].isna() & hist["min_fare"].isna(), "status"] = "UNKNOWN"
+    hist.loc[hist["min_seats"] == 0, "status"] = "SOLD OUT"
+
+    if route_scope != "all":
+        airport_countries = load_airport_countries()
+        hist = hist[
+            hist.apply(
+                lambda r: route_matches_scope(
+                    r.get("origin"),
+                    r.get("destination"),
+                    scope=route_scope,
+                    airport_countries=airport_countries,
+                    market_country=market_country,
+                ),
+                axis=1,
+            )
+        ]
+        if hist.empty:
+            return pd.DataFrame(columns=history_cols)
+
+    key_cols = ["route", "airline", "flight_number", "flight_date", "departure_time"]
+    scoped_keys = set(
+        work.assign(route=work["origin"] + "-" + work["destination"])[key_cols]
+        .itertuples(index=False, name=None)
+    )
+    hist_keys = list(hist[key_cols].itertuples(index=False, name=None))
+    hist = hist[[k in scoped_keys for k in hist_keys]].copy()
+    if hist.empty:
+        return pd.DataFrame(columns=history_cols)
+
+    group_cols = ["route", "airline", "flight_number", "flight_date", "departure_time"]
+    hist = hist.sort_values(group_cols + ["captured_at_utc"], na_position="last")
+    delta_cols = ["min_fare", "max_fare", "tax_amount", "min_seats", "max_seats", "load_pct"]
+    for c in delta_cols:
+        hist[f"{c}_delta"] = hist.groupby(group_cols, dropna=False)[c].diff()
+    hist["previous_capture_label"] = hist.groupby(group_cols, dropna=False)["capture_label"].shift(1).fillna("")
+    state_delta_cols = [f"{c}_delta" for c in delta_cols]
+    delta_view = hist[state_delta_cols].apply(pd.to_numeric, errors="coerce")
+    hist["state_changed"] = delta_view.ne(0).fillna(False).any(axis=1)
+    hist.loc[hist["previous_capture_label"] == "", "state_changed"] = True
+    hist["state_changed_flag"] = hist["state_changed"].map({True: "CHANGED/NEW", False: "NO_CHANGE"})
+
+    hist = hist[
+        [
+            "route",
+            "airline",
+            "flight_number",
+            "flight_date",
+            "day_name",
+            "departure_time",
+            "scrape_id",
+            "captured_at_utc",
+            "capture_label",
+            "previous_capture_label",
+            "state_changed_flag",
+            "status",
+            "min_fare",
+            "max_fare",
+            "tax_amount",
+            "min_seats",
+            "max_seats",
+            "seat_capacity",
+            "load_pct",
+            "min_fare_delta",
+            "max_fare_delta",
+            "tax_amount_delta",
+            "min_seats_delta",
+            "max_seats_delta",
+            "load_pct_delta",
+            "offer_rows",
+        ]
+    ].copy()
+
+    return hist
+
+
 def generate_route_flight_fare_monitor(
     output_dir="output/reports",
     run_dir=None,
@@ -503,6 +734,14 @@ def generate_route_flight_fare_monitor(
     if final_df.empty:
         raise RuntimeError("No rows available for route_flight_fare_monitor after filters.")
 
+    full_capture_history_df = _build_full_capture_history_df(
+        engine,
+        final_df,
+        cabin=cabin,
+        route_scope=route_scope,
+        market_country=market_country,
+    )
+
     base_output = Path(output_dir)
     if run_dir:
         target_dir = Path(run_dir)
@@ -524,6 +763,7 @@ def generate_route_flight_fare_monitor(
         OutputWriter(style=style).write_route_flight_fare_monitor(
             writer,
             final_df,
+            full_capture_history=full_capture_history_df,
             execution_plan_status=execution_plan_payload,
         )
 

@@ -1444,6 +1444,95 @@ class OutputWriter:
         sheet.set_column(0, max(6, len(chip_airlines)), 14)
         sheet.freeze_panes(header_row + 1, 0)
 
+    def _write_full_capture_history(self, workbook, history_df: pd.DataFrame):
+        sheet = workbook.add_worksheet("Full Capture History")
+        cfg = self._style_cfg()
+        sheet.set_zoom(cfg["zoom"])
+        sheet.set_default_row(cfg["default_row"])
+
+        fmt_title = workbook.add_format({"bold": True, "font_size": cfg["title"], "font_name": "Segoe UI", "font_color": "#1F4E78"})
+        fmt_note = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "font_color": "#555555"})
+        fmt_header = workbook.add_format({"bold": True, "font_size": cfg["header"], "font_name": "Segoe UI", "bg_color": "#D9E1F2", "border": 1, "align": "center"})
+        fmt_cell = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "center"})
+        fmt_left = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "left"})
+        fmt_changed = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "center", "bg_color": "#FFF2CC"})
+        fmt_nochange = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "center", "font_color": "#777777"})
+
+        sheet.write(0, 0, "Full Capture History", fmt_title)
+        sheet.write(
+            1,
+            0,
+            "All available capture timestamps for selected route/flight/date scope, with per-capture deltas.",
+            fmt_note,
+        )
+
+        columns = [
+            "route",
+            "airline",
+            "flight_number",
+            "flight_date",
+            "day_name",
+            "departure_time",
+            "scrape_id",
+            "captured_at_utc",
+            "capture_label",
+            "previous_capture_label",
+            "state_changed_flag",
+            "status",
+            "min_fare",
+            "max_fare",
+            "tax_amount",
+            "min_seats",
+            "max_seats",
+            "seat_capacity",
+            "load_pct",
+            "min_fare_delta",
+            "max_fare_delta",
+            "tax_amount_delta",
+            "min_seats_delta",
+            "max_seats_delta",
+            "load_pct_delta",
+            "offer_rows",
+        ]
+
+        row = 3
+        for i, c in enumerate(columns):
+            sheet.write(row, i, c, fmt_header)
+        row += 1
+
+        if history_df is None or history_df.empty:
+            sheet.write(row, 0, "No capture history rows found for selected scope.", fmt_note)
+            sheet.set_column(0, 0, 60)
+            return
+
+        work = history_df.copy()
+        for c in columns:
+            if c not in work.columns:
+                work[c] = pd.NA
+
+        work["flight_date"] = pd.to_datetime(work["flight_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        work["captured_at_utc"] = pd.to_datetime(work["captured_at_utc"], errors="coerce", utc=True).dt.strftime("%Y-%m-%d %H:%M:%S")
+        work = work.sort_values(
+            ["route", "airline", "flight_number", "flight_date", "departure_time", "captured_at_utc"],
+            na_position="last",
+        )
+
+        for rec in work[columns].itertuples(index=False):
+            changed_flag = str(rec[10] or "").upper()
+            flag_fmt = fmt_changed if changed_flag == "CHANGED/NEW" else fmt_nochange
+            for i, val in enumerate(rec):
+                cell_fmt = fmt_left if columns[i] in {"route"} else fmt_cell
+                if columns[i] == "state_changed_flag":
+                    cell_fmt = flag_fmt
+                sheet.write(row, i, "" if pd.isna(val) else val, cell_fmt)
+            row += 1
+
+        sheet.autofilter(3, 0, row - 1, len(columns) - 1)
+        widths = [14, 8, 12, 11, 10, 10, 14, 20, 17, 17, 14, 10, 10, 10, 10, 9, 9, 11, 9, 12, 12, 12, 12, 12, 11, 9]
+        for i, w in enumerate(widths):
+            sheet.set_column(i, i, w)
+        sheet.freeze_panes(4, 0)
+
     def _write_route_block_index(self, workbook, blocks):
         sheet = workbook.add_worksheet("Route Block Index")
         sheet.hide()
@@ -1580,7 +1669,13 @@ class OutputWriter:
         sheet.set_column(2, 2, 80)
         sheet.freeze_panes(4, 0)
 
-    def write_route_flight_fare_monitor(self, writer, df: pd.DataFrame, execution_plan_status=None):
+    def write_route_flight_fare_monitor(
+        self,
+        writer,
+        df: pd.DataFrame,
+        full_capture_history: pd.DataFrame | None = None,
+        execution_plan_status=None,
+    ):
         required_cols = [
             "min_seats",
             "max_seats",
@@ -2190,6 +2285,7 @@ class OutputWriter:
         self._write_fare_trend_sparklines(workbook, df)
         self._write_penalty_comparison(workbook, df)
         self._write_tax_comparison(workbook, df)
+        self._write_full_capture_history(workbook, full_capture_history)
         self._write_route_filter_view(workbook, df)
         self._write_route_block_index(workbook, route_blocks)
         self._write_route_row_index(workbook, route_row_entries)
