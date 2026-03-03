@@ -60,6 +60,15 @@ def parse_args():
         help="Also generate route_flight_fare_monitor workbook in same run folder",
     )
     parser.add_argument(
+        "--route-monitor-macro-xlsm",
+        action="store_true",
+        help="When --route-monitor is enabled, also export a macro-enabled .xlsm workbook.",
+    )
+    parser.add_argument(
+        "--route-monitor-macro-xlsm-path",
+        help="Optional explicit output path for route monitor macro workbook.",
+    )
+    parser.add_argument(
         "--style",
         choices=["compact", "presentation"],
         default="compact",
@@ -1039,7 +1048,10 @@ def export_reports(args):
         exported.append(("dashboard_workbook", workbook_path, len(report_payload)))
 
     if args.route_monitor:
-        from generate_route_flight_fare_monitor import generate_route_flight_fare_monitor
+        from generate_route_flight_fare_monitor import (
+            export_macro_xlsm,
+            generate_route_flight_fare_monitor,
+        )
 
         try:
             rm_path, rm_rows, cur_scrape, prev_scrape = generate_route_flight_fare_monitor(
@@ -1058,6 +1070,14 @@ def export_reports(args):
             exported.append(
                 ("route_flight_fare_monitor", rm_path, rm_rows)
             )
+            if getattr(args, "route_monitor_macro_xlsm", False):
+                macro_out = export_macro_xlsm(
+                    Path(rm_path),
+                    Path(args.route_monitor_macro_xlsm_path)
+                    if getattr(args, "route_monitor_macro_xlsm_path", None)
+                    else None,
+                )
+                exported.append(("route_flight_fare_monitor_macro", macro_out, rm_rows))
         except RuntimeError as exc:
             warnings.append(f"route_flight_fare_monitor skipped: {exc}")
 

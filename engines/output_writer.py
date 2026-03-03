@@ -1851,12 +1851,12 @@ class OutputWriter:
                     variants = [("previous", day_prev_cap), ("current", day_curr_cap)]
                 span = len(variants)
 
-                if span > 1:
-                    sheet.merge_range(row, 0, row + span - 1, 0, str(date), date_fmt)
-                    sheet.merge_range(row, 1, row + span - 1, 1, day, date_fmt)
-                else:
-                    sheet.write(row, 0, str(date), date_fmt)
-                    sheet.write(row, 1, day, date_fmt)
+                # Keep Date/Day unmerged on data rows so interactive row hiding in XLSM
+                # mode can safely hide a single variant row without merged-cell errors.
+                for vidx in range(span):
+                    row_i = row + vidx
+                    sheet.write(row_i, 0, str(date), date_fmt)
+                    sheet.write(row_i, 1, day, date_fmt)
 
                 for vidx, (vkey, vlabel) in enumerate(variants):
                     row_i = row + vidx

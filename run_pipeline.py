@@ -70,6 +70,15 @@ def parse_args():
     parser.add_argument("--report-output-dir", default="output/reports")
     parser.add_argument("--report-timestamp-tz", choices=["local", "utc"], default="local")
     parser.add_argument("--route-monitor", action="store_true", help="Also generate route_flight_fare_monitor workbook")
+    parser.add_argument(
+        "--route-monitor-macro-xlsm",
+        action="store_true",
+        help="When --route-monitor is enabled, also export macro-enabled .xlsm workbook.",
+    )
+    parser.add_argument(
+        "--route-monitor-macro-xlsm-path",
+        help="Optional explicit output path for route monitor macro workbook.",
+    )
 
     # prediction
     parser.add_argument("--run-prediction", action="store_true")
@@ -797,6 +806,9 @@ def build_report_cmd(args):
     _add_arg(cmd, "--market-country", args.market_country)
     if args.route_monitor:
         cmd.append("--route-monitor")
+    if args.route_monitor_macro_xlsm:
+        cmd.append("--route-monitor-macro-xlsm")
+    _add_arg(cmd, "--route-monitor-macro-xlsm-path", args.route_monitor_macro_xlsm_path)
     return cmd
 
 
