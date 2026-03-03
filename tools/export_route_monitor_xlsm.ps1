@@ -333,7 +333,7 @@ NextPair:
     Next i
 End Function
 
-Private Sub ApplyStrictColumnMask(ByVal selAir As Collection, ByVal airFilterActive As Boolean, ByVal routeHasMatch As Object)
+Private Sub ApplyStrictColumnMask(ByVal selAir As Collection, ByVal airFilterActive As Boolean, ByVal routeHasMatch As Object, ByVal routeDataMin As Object, ByVal routeDataMax As Object)
     If Not airFilterActive Then Exit Sub
 
     Dim wsMain As Worksheet, wsCol As Worksheet
@@ -356,9 +356,11 @@ Private Sub ApplyStrictColumnMask(ByVal selAir As Collection, ByVal airFilterAct
         If Len(airline) = 0 Then GoTo NextCol
         If CollectionContains(selAir, airline) Then GoTo NextCol
 
+        If Not routeDataMin.Exists(routeKey) Or Not routeDataMax.Exists(routeKey) Then GoTo NextCol
+
         Dim startRow As Long, endRow As Long, startCol As Long, endCol As Long
-        startRow = CLng(Val(wsCol.Cells(r, 2).Value2))
-        endRow = CLng(Val(wsCol.Cells(r, 3).Value2))
+        startRow = CLng(routeDataMin(routeKey))
+        endRow = CLng(routeDataMax(routeKey))
         startCol = CLng(Val(wsCol.Cells(r, 5).Value2))
         endCol = CLng(Val(wsCol.Cells(r, 6).Value2))
         If startRow <= 0 Or endRow < startRow Or startCol <= 0 Or endCol < startCol Then GoTo NextCol
@@ -717,7 +719,7 @@ NextRouteFinalize:
     Next routeKeyIter
 
     If strictMode Then
-        ApplyStrictColumnMask selAir, airFilterActive, routeHasMatch
+        ApplyStrictColumnMask selAir, airFilterActive, routeHasMatch, routeDataMin, routeDataMax
     End If
 
     RefreshLegendSelectionStyling
