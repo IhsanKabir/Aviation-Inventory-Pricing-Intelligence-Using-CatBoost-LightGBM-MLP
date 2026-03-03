@@ -24,7 +24,7 @@ class OutputWriter:
                 "header": 12,
                 "body": 11,
                 "sub": 10,
-                "legend_row": 24,
+                "legend_row": 22,
                 "route_title_row": 28,
                 "default_row": 20,
                 "zoom": 115,
@@ -35,7 +35,7 @@ class OutputWriter:
             "header": 10,
             "body": 10,
             "sub": 9,
-            "legend_row": 20,
+            "legend_row": 18,
             "route_title_row": 22,
             "default_row": 18,
             "zoom": 100,
@@ -387,9 +387,9 @@ class OutputWriter:
         )
         # Avoid tall merged regions on the main monitor sheet because row hide/show
         # operations used by interactive XLSM filtering fail on merged-row intersections.
-        sheet.write(start_row + 1, start_col, note, fmt_box)
+        note_inline = note.replace("\n", " | ")
+        sheet.write(start_row + 1, start_col, note_inline, fmt_box)
         sheet.set_column(start_col, start_col + 4, 24)
-        sheet.set_row(start_row + 1, 112)
 
     def _write_changes_summary(self, workbook, df: pd.DataFrame):
         sheet = workbook.add_worksheet("What Changed Since Last Run")
@@ -1483,7 +1483,16 @@ class OutputWriter:
         sheet = workbook.add_worksheet("Route Column Index")
         sheet.hide()
 
-        headers = ["route", "start_row", "end_row", "airline", "start_col", "end_col"]
+        headers = [
+            "route",
+            "start_row",
+            "end_row",
+            "airline",
+            "start_col",
+            "end_col",
+            "data_start_row",
+            "data_end_row",
+        ]
         for c, h in enumerate(headers):
             sheet.write(0, c, h)
 
@@ -1495,6 +1504,8 @@ class OutputWriter:
             sheet.write(row, 3, str(rec.get("airline") or ""))
             sheet.write(row, 4, int(rec.get("start_col") or 0))
             sheet.write(row, 5, int(rec.get("end_col") or 0))
+            sheet.write(row, 6, int(rec.get("data_start_row") or 0))
+            sheet.write(row, 7, int(rec.get("data_end_row") or 0))
             row += 1
 
     def _write_execution_plan_status(self, workbook, execution_plan_status):
@@ -1613,6 +1624,32 @@ class OutputWriter:
         fmt_cell = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "border": 1, "align": "center"})
         fmt_gray = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "border": 1, "align": "center", "font_color": "#777777"})
         fmt_date_row = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "border": 1, "align": "center", "valign": "vcenter", "bg_color": "#FAFAFA"})
+        fmt_date_group_top = workbook.add_format(
+            {
+                "font_name": "Segoe UI",
+                "font_size": cfg["body"],
+                "align": "center",
+                "valign": "vcenter",
+                "bg_color": "#FAFAFA",
+                "left": 1,
+                "right": 1,
+                "top": block_border,
+                "bottom": 0,
+            }
+        )
+        fmt_date_group_bottom = workbook.add_format(
+            {
+                "font_name": "Segoe UI",
+                "font_size": cfg["body"],
+                "align": "center",
+                "valign": "vcenter",
+                "bg_color": "#FAFAFA",
+                "left": 1,
+                "right": 1,
+                "top": 0,
+                "bottom": block_border,
+            }
+        )
         fmt_legend_key = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["header"], "bold": True, "border": 1, "bg_color": "#F2F2F2", "align": "center"})
         fmt_tag_new = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "bold": True, "italic": True, "font_color": "#1F4BD8", "border": 1, "align": "center"})
         fmt_tag_soldout = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "bold": True, "italic": True, "font_color": "#777777", "border": 1, "align": "center"})
@@ -1691,12 +1728,6 @@ class OutputWriter:
             else:
                 fmt = fmt_cell
             sheet.write(2, col, token, fmt)
-
-        # Horizontal legend filter controls for quick visual filtering.
-        if legend_airline_end_col >= 1:
-            sheet.autofilter(1, 0, 1, legend_airline_end_col)
-        if legend_status_end_col >= 1:
-            sheet.autofilter(2, 0, 2, legend_status_end_col)
 
         sheet.set_row(1, cfg["legend_row"])
         sheet.set_row(2, cfg["legend_row"])
@@ -1857,14 +1888,22 @@ class OutputWriter:
 
                 # Keep Date/Day unmerged on data rows so interactive row hiding in XLSM
                 # mode can safely hide a single variant row without merged-cell errors.
+                variant_date_fmts = []
                 for vidx in range(span):
                     row_i = row + vidx
-                    sheet.write(row_i, 0, str(date), date_fmt)
-                    sheet.write(row_i, 1, day, date_fmt)
+                    if span > 1 and vidx == 0:
+                        date_group_fmt = fmt_date_group_top
+                    elif span > 1 and vidx == span - 1:
+                        date_group_fmt = fmt_date_group_bottom
+                    else:
+                        date_group_fmt = date_fmt
+                    variant_date_fmts.append(date_group_fmt)
+                    sheet.write(row_i, 0, str(date), date_group_fmt)
+                    sheet.write(row_i, 1, day, date_group_fmt)
 
                 for vidx, (vkey, vlabel) in enumerate(variants):
                     row_i = row + vidx
-                    sheet.write(row_i, 2, vlabel, date_fmt)
+                    sheet.write(row_i, 2, vlabel, variant_date_fmts[vidx])
 
                     row_airline_signals = {}
                     if str(vkey).lower() == "previous":
@@ -2128,15 +2167,20 @@ class OutputWriter:
                 }
             )
             route_end_row_excel = int(max(route_block_start + 1, row))
+            header_start_row_excel = int(route_block_start + 3)
+            header_end_row_excel = int(route_block_start + 5)
+            data_start_row_excel = int(route_block_start + 6)
             for grp in route_col_groups:
                 route_col_entries.append(
                     {
                         "route": str(route),
-                        "start_row": int(route_block_start + 1),
-                        "end_row": route_end_row_excel,
+                        "start_row": header_start_row_excel,
+                        "end_row": header_end_row_excel,
                         "airline": str(grp.get("airline") or ""),
                         "start_col": int(grp.get("start_col") or 0),
                         "end_col": int(grp.get("end_col") or 0),
+                        "data_start_row": data_start_row_excel,
+                        "data_end_row": route_end_row_excel,
                     }
                 )
 

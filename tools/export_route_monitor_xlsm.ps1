@@ -358,6 +358,10 @@ Private Sub ApplyStrictColumnMask(ByVal selAir As Collection, ByVal airFilterAct
 
         If Not routeDataMin.Exists(routeKey) Or Not routeDataMax.Exists(routeKey) Then GoTo NextCol
 
+        Dim headerStart As Long, headerEnd As Long
+        headerStart = CLng(Val(wsCol.Cells(r, 2).Value2))
+        headerEnd = CLng(Val(wsCol.Cells(r, 3).Value2))
+
         Dim startRow As Long, endRow As Long, startCol As Long, endCol As Long
         startRow = CLng(routeDataMin(routeKey))
         endRow = CLng(routeDataMax(routeKey))
@@ -365,6 +369,9 @@ Private Sub ApplyStrictColumnMask(ByVal selAir As Collection, ByVal airFilterAct
         endCol = CLng(Val(wsCol.Cells(r, 6).Value2))
         If startRow <= 0 Or endRow < startRow Or startCol <= 0 Or endCol < startCol Then GoTo NextCol
 
+        If headerStart > 0 And headerEnd >= headerStart Then
+            wsMain.Range(wsMain.Cells(headerStart, startCol), wsMain.Cells(headerEnd, endCol)).ClearContents
+        End If
         wsMain.Range(wsMain.Cells(startRow, startCol), wsMain.Cells(endRow, endCol)).ClearContents
 NextCol:
     Next r
@@ -876,30 +883,36 @@ End Sub
     $legendRange.Borders.Weight = 2
     $legendRange.HorizontalAlignment = -4108 # xlCenter
     $legendRange.VerticalAlignment = -4108   # xlCenter
+    $wsMain.Rows.Item(2).RowHeight = 20
+    $wsMain.Rows.Item(3).RowHeight = 20
     $wsMain.Range("A2:A3").Interior.Color = 15132390
     $wsMain.Range("A2:A3").Font.Bold = $true
 
-    $anchorCol = 28
+    $anchorCol = [int]([Math]::Max(1, $legendLastCol - 1))
     $baseLeft = [double]$wsMain.Cells.Item(1, $anchorCol).Left
     $baseTop = [double]$wsMain.Cells.Item(1, $anchorCol).Top
-    $wsMain.Cells.Item(1, $anchorCol).Value2 = "Interactive Actions (Click Legends)"
-    $wsMain.Cells.Item(2, $anchorCol).Value2 = "Click airline/signal legend cells to toggle selections."
-    $wsMain.Cells.Item(3, $anchorCol).Value2 = "Context keeps full route view; Strict shows selected airlines only."
+    $wsMain.Cells.Item(1, $anchorCol).Value2 = "Quick Controls"
+    $wsMain.Cells.Item(2, $anchorCol).Value2 = "Click legend cells to toggle airline/signal."
+    $wsMain.Cells.Item(3, $anchorCol).Value2 = "Context=route compare, Strict=selected airlines only."
+    $wsMain.Range($wsMain.Cells.Item(1, $anchorCol), $wsMain.Cells.Item(3, $anchorCol + 2)).Font.Bold = $true
 
     $btnModeContext = $wsMain.Shapes.AddShape(1, $baseLeft, $baseTop + 62, 95, 24)
     $btnModeContext.Name = "btnMainModeContext"
     $btnModeContext.TextFrame.Characters().Text = "Mode: Context"
     $btnModeContext.OnAction = "SetMainModeContext"
+    $btnModeContext.Line.ForeColor.RGB = 2039583
 
     $btnModeStrict = $wsMain.Shapes.AddShape(1, $baseLeft + 102, $baseTop + 62, 90, 24)
     $btnModeStrict.Name = "btnMainModeStrict"
     $btnModeStrict.TextFrame.Characters().Text = "Mode: Strict"
     $btnModeStrict.OnAction = "SetMainModeStrict"
+    $btnModeStrict.Line.ForeColor.RGB = 8388608
 
-    $btnMainB = $wsMain.Shapes.AddShape(1, $baseLeft, $baseTop + 90, 200, 24)
+    $btnMainB = $wsMain.Shapes.AddShape(1, $baseLeft, $baseTop + 90, 194, 24)
     $btnMainB.Name = "btnClearMainFilters"
     $btnMainB.TextFrame.Characters().Text = "Clear Main Sheet Filters"
     $btnMainB.OnAction = "ClearMainSheetFilters"
+    $btnMainB.Line.ForeColor.RGB = 3355443
 
     try { $excel.Run("ApplyMainSheetFilters") | Out-Null } catch {}
 
