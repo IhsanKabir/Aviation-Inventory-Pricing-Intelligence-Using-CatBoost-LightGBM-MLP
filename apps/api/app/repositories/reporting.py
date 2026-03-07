@@ -1,18 +1,26 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 ROUTES_CONFIG_PATH = REPO_ROOT / "config" / "routes.json"
 RUN_STATUS_LATEST_PATH = REPO_ROOT / "output" / "reports" / "run_all_status_latest.json"
+REPORTS_ROOT = REPO_ROOT / "output" / "reports"
+PREDICTION_EVAL_RE = re.compile(r"^prediction_eval_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
+PREDICTION_NEXT_RE = re.compile(r"^prediction_next_day_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
+PREDICTION_ROUTE_EVAL_RE = re.compile(r"^prediction_eval_by_route_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
+PREDICTION_BACKTEST_META_RE = re.compile(r"^prediction_backtest_meta_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.json$")
+PREDICTION_BACKTEST_EVAL_RE = re.compile(r"^prediction_backtest_eval_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
 
 
 def _normalize_codes(values: Sequence[str] | None, uppercase: bool = True) -> list[str]:
@@ -202,6 +210,122 @@ def get_cycle_health(session: Session) -> dict[str, Any]:
             "completed_at_utc": run_status.get("completed_at_utc"),
             "selected_dates": run_status.get("selected_dates"),
         } if run_status else None,
+    }
+
+
+def _read_prediction_csv(path: Path, limit: int | None = None) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    df = pd.read_csv(path)
+    if limit is not None and limit >= 0:
+        df = df.head(limit)
+    df = df.where(pd.notnull(df), None)
+    return df.to_dict(orient="records")
+
+
+def _read_prediction_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _find_prediction_bundles() -> list[dict[str, Any]]:
+    bundles: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for path in REPORTS_ROOT.rglob("prediction_*"):
+        if not path.is_file():
+            continue
+
+        file_name = path.name
+        match = (
+            PREDICTION_EVAL_RE.match(file_name)
+            or PREDICTION_NEXT_RE.match(file_name)
+            or PREDICTION_ROUTE_EVAL_RE.match(file_name)
+            or PREDICTION_BACKTEST_META_RE.match(file_name)
+            or PREDICTION_BACKTEST_EVAL_RE.match(file_name)
+        )
+        if not match:
+            continue
+
+        target = match.group("target")
+        stamp = match.group("stamp")
+        key = (str(path.parent), target, stamp)
+        bundle = bundles.setdefault(
+            key,
+            {
+                "bundle_dir": str(path.parent),
+                "bundle_name": path.parent.name,
+                "target": target,
+                "stamp": stamp,
+                "modified_at_utc": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat(),
+                "eval_path": None,
+                "route_eval_path": None,
+                "next_day_path": None,
+                "backtest_eval_path": None,
+                "backtest_meta_path": None,
+            },
+        )
+        bundle["modified_at_utc"] = datetime.fromtimestamp(
+            max(path.stat().st_mtime, Path(bundle["bundle_dir"]).stat().st_mtime),
+            tz=timezone.utc,
+        ).isoformat()
+        if file_name.startswith("prediction_eval_by_route_"):
+            bundle["route_eval_path"] = str(path)
+        elif file_name.startswith("prediction_eval_"):
+            bundle["eval_path"] = str(path)
+        elif file_name.startswith("prediction_next_day_"):
+            bundle["next_day_path"] = str(path)
+        elif file_name.startswith("prediction_backtest_eval_"):
+            bundle["backtest_eval_path"] = str(path)
+        elif file_name.startswith("prediction_backtest_meta_"):
+            bundle["backtest_meta_path"] = str(path)
+
+    return sorted(
+        bundles.values(),
+        key=lambda item: (
+            item["stamp"],
+            item["modified_at_utc"],
+            item["bundle_name"],
+        ),
+        reverse=True,
+    )
+
+
+def get_forecasting_payload(limit_routes: int = 25, limit_next_day: int = 40) -> dict[str, Any]:
+    bundles = _find_prediction_bundles()
+    latest_bundle = bundles[0] if bundles else None
+    latest_backtest_bundle = next(
+        (bundle for bundle in bundles if bundle.get("backtest_meta_path") and bundle.get("backtest_eval_path")),
+        None,
+    )
+
+    def materialize(bundle: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not bundle:
+            return None
+        eval_rows = _read_prediction_csv(Path(bundle["eval_path"]), limit=50) if bundle.get("eval_path") else []
+        route_eval_rows = _read_prediction_csv(Path(bundle["route_eval_path"]), limit=limit_routes) if bundle.get("route_eval_path") else []
+        next_day_rows = _read_prediction_csv(Path(bundle["next_day_path"]), limit=limit_next_day) if bundle.get("next_day_path") else []
+        backtest_eval_rows = _read_prediction_csv(Path(bundle["backtest_eval_path"]), limit=40) if bundle.get("backtest_eval_path") else []
+        backtest_meta = _read_prediction_json(Path(bundle["backtest_meta_path"])) if bundle.get("backtest_meta_path") else None
+        return {
+            "bundle_dir": bundle["bundle_dir"],
+            "bundle_name": bundle["bundle_name"],
+            "target": bundle["target"],
+            "stamp": bundle["stamp"],
+            "modified_at_utc": bundle["modified_at_utc"],
+            "overall_eval": eval_rows,
+            "route_eval": route_eval_rows,
+            "next_day": next_day_rows,
+            "backtest_eval": backtest_eval_rows,
+            "backtest_meta": backtest_meta,
+        }
+
+    return {
+        "latest_prediction_bundle": materialize(latest_bundle),
+        "latest_backtest_bundle": materialize(latest_backtest_bundle),
+        "bundle_count": len(bundles),
     }
 
 

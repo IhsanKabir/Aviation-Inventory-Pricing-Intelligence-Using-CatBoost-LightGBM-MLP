@@ -84,14 +84,14 @@ CREATE TABLE IF NOT EXISTS `aeropulseintelligence.aviation_intel.fact_change_eve
   change_type STRING,
   direction STRING,
   field_name STRING,
-  old_value JSON,
-  new_value JSON,
+  old_value STRING,
+  new_value STRING,
   magnitude NUMERIC,
   percent_change NUMERIC,
-  event_meta JSON
+  event_meta STRING
 )
 PARTITION BY report_day
-CLUSTER BY airline, origin, destination, domain, field_name;
+CLUSTER BY airline, route_key, domain, field_name;
 
 CREATE TABLE IF NOT EXISTS `aeropulseintelligence.aviation_intel.fact_penalty_snapshot` (
   cycle_id STRING NOT NULL,

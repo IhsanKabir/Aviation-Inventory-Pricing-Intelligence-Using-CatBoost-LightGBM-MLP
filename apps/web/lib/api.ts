@@ -165,6 +165,37 @@ export type ChangeEventsPayload = {
   items: ChangeEventRow[];
 };
 
+export type ForecastMetricRow = {
+  model?: string | null;
+  n?: number | null;
+  mae?: number | null;
+  rmse?: number | null;
+  mape_pct?: number | null;
+  smape_pct?: number | null;
+  directional_accuracy_pct?: number | null;
+  f1_macro?: number | null;
+  [key: string]: unknown;
+};
+
+export type ForecastBundle = {
+  bundle_dir: string;
+  bundle_name: string;
+  target: string;
+  stamp: string;
+  modified_at_utc?: string | null;
+  overall_eval: ForecastMetricRow[];
+  route_eval: ForecastMetricRow[];
+  next_day: Array<Record<string, unknown>>;
+  backtest_eval: ForecastMetricRow[];
+  backtest_meta?: Record<string, unknown> | null;
+};
+
+export type ForecastingPayload = {
+  latest_prediction_bundle: ForecastBundle | null;
+  latest_backtest_bundle: ForecastBundle | null;
+  bundle_count: number;
+};
+
 export type SnapshotQuery = {
   cycleId?: string;
   airlines?: string[];
@@ -336,4 +367,8 @@ export async function getChangeEventsPayload(query: {
       limit: query.limit
     })
   );
+}
+
+export async function getForecastingPayload() {
+  return fetchJson<ForecastingPayload>("/api/v1/reporting/forecasting/latest");
 }

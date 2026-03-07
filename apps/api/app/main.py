@@ -203,3 +203,8 @@ def taxes(
         destinations=destination,
         limit=_cap_limit(limit),
     )
+
+
+@app.get("/api/v1/reporting/forecasting/latest")
+def forecasting_latest() -> dict:
+    return reporting.get_forecasting_payload()

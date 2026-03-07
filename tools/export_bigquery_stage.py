@@ -233,6 +233,22 @@ def _read_query(engine, sql: str, params: dict[str, Any]) -> pd.DataFrame:
         return pd.read_sql_query(text(sql), conn, params=params)
 
 
+def _normalize_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    out = df.copy()
+    for column in out.columns:
+        if out[column].dtype != "object":
+            continue
+        out[column] = out[column].map(
+            lambda value: json.dumps(value, ensure_ascii=False)
+            if isinstance(value, (dict, list))
+            else value
+        )
+    return out
+
+
 def _load_bigquery(file_path: Path, table_name: str, project_id: str, dataset: str, replace: bool) -> dict[str, Any]:
     from google.cloud import bigquery
 
@@ -286,7 +302,7 @@ def main() -> int:
         if not sql:
             raise SystemExit(f"Unknown table export: {table_name}")
 
-        df = _read_query(engine, sql, params=params)
+        df = _normalize_for_parquet(_read_query(engine, sql, params=params))
         file_path = stage_root / f"{table_name}.parquet"
         df.to_parquet(file_path, index=False)
         exports.append({"table": table_name, "rows": int(len(df)), "file": str(file_path)})
