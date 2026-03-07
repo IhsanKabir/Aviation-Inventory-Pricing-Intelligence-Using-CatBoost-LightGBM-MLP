@@ -6,6 +6,7 @@ __pycache__/
 
 .venv/
 venv/
+.venv_broken_*/
 
 .env
 .env.*
@@ -76,3 +77,4 @@ run_all - *.py
 # Local model/cache noise
 catboost_info/
 *.bak
+query
