@@ -13,6 +13,31 @@ export type HealthPayload = {
   latest_cycle_completed_at_utc?: string | null;
 };
 
+export type CycleHealthPayload = {
+  database_ok: boolean;
+  cycle_id: string | null;
+  cycle_started_at_utc?: string | null;
+  cycle_completed_at_utc?: string | null;
+  cycle_age_minutes?: number | null;
+  stale: boolean;
+  offer_rows?: number | null;
+  airline_count?: number | null;
+  route_count?: number | null;
+  configured_route_pair_count: number;
+  observed_route_pair_count: number;
+  route_pair_coverage_pct: number;
+  missing_route_pairs: string[];
+  latest_run_status?: {
+    state?: string | null;
+    phase?: string | null;
+    overall_query_total?: number | null;
+    overall_query_completed?: number | null;
+    total_rows_accumulated?: number | null;
+    completed_at_utc?: string | null;
+    selected_dates?: string[] | null;
+  } | null;
+};
+
 export type AirlineItem = {
   airline: string;
   first_seen_at_utc?: string;
@@ -235,14 +260,19 @@ export async function getRoutes() {
 }
 
 export async function getDashboardPayload() {
-  const [health, latestCycle, airlines, routes] = await Promise.all([
+  const [health, latestCycle, airlines, routes, cycleHealth] = await Promise.all([
     fetchJson<HealthPayload>("/health"),
     getLatestCycle(),
     getAirlines(),
-    getRoutes()
+    getRoutes(),
+    getCycleHealth()
   ]);
 
-  return { health, latestCycle, airlines, routes };
+  return { health, latestCycle, airlines, routes, cycleHealth };
+}
+
+export async function getCycleHealth() {
+  return fetchJson<CycleHealthPayload>("/api/v1/reporting/cycle-health");
 }
 
 export async function getCurrentSnapshotPayload(query: SnapshotQuery) {

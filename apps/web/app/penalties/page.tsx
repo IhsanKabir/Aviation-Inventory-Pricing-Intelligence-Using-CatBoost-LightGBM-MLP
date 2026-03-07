@@ -2,7 +2,7 @@ import { LiveFilterControls } from "@/components/live-filter-controls";
 import { DataPanel } from "@/components/data-panel";
 import { MetricCard } from "@/components/metric-card";
 import { getAirlines, getLatestCycle, getPenaltyPayload, getRoutes } from "@/lib/api";
-import { formatBooleanFlag, formatDhakaDateTime, formatMoney, shortCycle } from "@/lib/format";
+import { formatBooleanFlag, formatDhakaDateTime, formatMoney, normalizeLongText, shortCycle, summarizePenaltyText } from "@/lib/format";
 import { firstParam, manyParams, parseLimit, type RawSearchParams } from "@/lib/query";
 
 type PageProps = {
@@ -148,7 +148,16 @@ export default async function PenaltiesPage({ searchParams }: PageProps) {
                           <span>{`Refundable: ${formatBooleanFlag(row.fare_refundable)}`}</span>
                         </div>
                       </td>
-                      <td className="long-text">{row.penalty_rule_text ?? "-"}</td>
+                      <td className="long-text">
+                        {row.penalty_rule_text ? (
+                          <details className="expand-text">
+                            <summary>{summarizePenaltyText(row.penalty_rule_text)}</summary>
+                            <pre>{normalizeLongText(row.penalty_rule_text)}</pre>
+                          </details>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

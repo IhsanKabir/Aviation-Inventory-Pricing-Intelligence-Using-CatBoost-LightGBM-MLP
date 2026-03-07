@@ -468,6 +468,42 @@ a {
   line-height: 1.5;
 }
 
+.expand-text {
+  min-width: 320px;
+}
+
+.expand-text summary {
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.expand-text pre {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.missing-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.missing-chip {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(183, 54, 50, 0.18);
+  background: rgba(183, 54, 50, 0.06);
+  color: var(--alert);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
 .empty-state {
   padding: 24px;
   border-radius: 18px;

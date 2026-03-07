@@ -17,6 +17,7 @@ export default async function HomePage() {
   const airlines = payload.airlines.data?.items ?? [];
   const routes = payload.routes.data?.items ?? [];
   const health = payload.health.data;
+  const cycleHealth = payload.cycleHealth.data;
 
   return (
     <>
@@ -71,11 +72,13 @@ export default async function HomePage() {
             </div>
             <div className="table-row">
               <div>
-                <strong>Docs</strong>
-                <span>Use `/docs` for interactive API inspection</span>
+                <strong>Coverage</strong>
+                <span>{(cycleHealth?.configured_route_pair_count ?? 0).toLocaleString()} configured route-airline pairs</span>
               </div>
-              <div className="pill good">Ready</div>
-              <span>FastAPI</span>
+              <div className={`pill ${cycleHealth?.stale ? "warn" : "good"}`}>
+                {cycleHealth?.route_pair_coverage_pct?.toFixed(1) ?? "0.0"}%
+              </div>
+              <span>{(cycleHealth?.observed_route_pair_count ?? 0).toLocaleString()} observed</span>
             </div>
           </div>
         </DataPanel>

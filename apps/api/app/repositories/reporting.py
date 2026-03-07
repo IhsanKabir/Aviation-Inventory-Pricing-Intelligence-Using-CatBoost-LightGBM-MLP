@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+ROUTES_CONFIG_PATH = REPO_ROOT / "config" / "routes.json"
+RUN_STATUS_LATEST_PATH = REPO_ROOT / "output" / "reports" / "run_all_status_latest.json"
 
 
 def _normalize_codes(values: Sequence[str] | None, uppercase: bool = True) -> list[str]:
@@ -102,6 +108,100 @@ def get_health(session: Session) -> dict[str, Any]:
         "database_ok": True,
         "latest_cycle_id": latest_cycle["cycle_id"] if latest_cycle else None,
         "latest_cycle_completed_at_utc": latest_cycle["cycle_completed_at_utc"] if latest_cycle else None,
+    }
+
+
+def _load_configured_route_pairs() -> list[str]:
+    try:
+        payload = json.loads(ROUTES_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    route_pairs: list[str] = []
+    for row in payload:
+        airline = str(row.get("airline", "")).strip().upper()
+        origin = str(row.get("origin", "")).strip().upper()
+        destination = str(row.get("destination", "")).strip().upper()
+        if airline and origin and destination:
+            route_pairs.append(f"{airline}:{origin}-{destination}")
+    return route_pairs
+
+
+def _load_latest_run_status() -> dict[str, Any] | None:
+    try:
+        return json.loads(RUN_STATUS_LATEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def get_cycle_health(session: Session) -> dict[str, Any]:
+    latest_cycle = get_latest_cycle(session)
+    if not latest_cycle:
+        return {
+            "database_ok": True,
+            "cycle_id": None,
+            "cycle_completed_at_utc": None,
+            "cycle_age_minutes": None,
+            "stale": True,
+            "configured_route_pair_count": 0,
+            "observed_route_pair_count": 0,
+            "route_pair_coverage_pct": 0.0,
+            "missing_route_pairs": [],
+            "latest_run_status": None,
+        }
+
+    cycle_id = str(latest_cycle["cycle_id"])
+    observed_rows = session.execute(
+        text(
+            """
+            SELECT DISTINCT (fo.airline || ':' || fo.origin || '-' || fo.destination) AS route_pair
+            FROM flight_offers fo
+            WHERE fo.scrape_id = CAST(:cycle_id AS uuid)
+            ORDER BY route_pair
+            """
+        ),
+        {"cycle_id": cycle_id},
+    ).scalars().all()
+    observed_route_pairs = [str(item) for item in observed_rows if item]
+    configured_route_pairs = _load_configured_route_pairs()
+    configured_set = set(configured_route_pairs)
+    observed_set = set(observed_route_pairs)
+    missing_route_pairs = sorted(configured_set - observed_set)
+
+    cycle_completed = latest_cycle.get("cycle_completed_at_utc")
+    cycle_age_minutes: float | None = None
+    stale = True
+    if isinstance(cycle_completed, datetime):
+        age = datetime.now(timezone.utc) - cycle_completed.replace(tzinfo=timezone.utc)
+        cycle_age_minutes = round(age.total_seconds() / 60.0, 2)
+        stale = cycle_age_minutes > 180
+
+    coverage_pct = round((len(observed_set) / len(configured_set) * 100.0), 2) if configured_set else 0.0
+    run_status = _load_latest_run_status()
+
+    return {
+        "database_ok": True,
+        "cycle_id": cycle_id,
+        "cycle_started_at_utc": latest_cycle.get("cycle_started_at_utc"),
+        "cycle_completed_at_utc": cycle_completed,
+        "cycle_age_minutes": cycle_age_minutes,
+        "stale": stale,
+        "offer_rows": latest_cycle.get("offer_rows"),
+        "airline_count": latest_cycle.get("airline_count"),
+        "route_count": latest_cycle.get("route_count"),
+        "configured_route_pair_count": len(configured_set),
+        "observed_route_pair_count": len(observed_set),
+        "route_pair_coverage_pct": coverage_pct,
+        "missing_route_pairs": missing_route_pairs[:60],
+        "latest_run_status": {
+            "state": run_status.get("state"),
+            "phase": run_status.get("phase"),
+            "overall_query_total": run_status.get("overall_query_total"),
+            "overall_query_completed": run_status.get("overall_query_completed"),
+            "total_rows_accumulated": run_status.get("total_rows_accumulated"),
+            "completed_at_utc": run_status.get("completed_at_utc"),
+            "selected_dates": run_status.get("selected_dates"),
+        } if run_status else None,
     }
 
 

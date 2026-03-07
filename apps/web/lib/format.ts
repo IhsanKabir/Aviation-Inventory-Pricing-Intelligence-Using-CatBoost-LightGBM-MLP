@@ -115,3 +115,37 @@ export function formatPublicValue(value: unknown) {
     return "[unserializable]";
   }
 }
+
+export function summarizePenaltyText(value?: string | null) {
+  if (!value) {
+    return "-";
+  }
+
+  const lines = value
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^[-/]{3,}$/.test(line));
+
+  if (!lines.length) {
+    return "-";
+  }
+
+  const preview = lines.slice(0, 4).join(" | ");
+  return preview.length > 220 ? `${preview.slice(0, 217)}...` : preview;
+}
+
+export function normalizeLongText(value?: string | null) {
+  if (!value) {
+    return "-";
+  }
+
+  const normalized = value
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+
+  return normalized || "-";
+}

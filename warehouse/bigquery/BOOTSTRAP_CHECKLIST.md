@@ -60,6 +60,12 @@ $env:BIGQUERY_DATASET="aviation_intel"
 $env:GOOGLE_APPLICATION_CREDENTIALS="C:\\path\\to\\aero-pulse-bq-loader.json"
 ```
 
+Or use the helper script:
+
+```powershell
+.\tools\load_bigquery_latest.ps1 -CredentialsJson "C:\path\to\aero-pulse-bq-loader.json" -StartDate 2026-03-01 -EndDate 2026-03-08
+```
+
 ## Step 6: Create the BigQuery tables
 
 Run in order:
@@ -105,6 +111,10 @@ Create initial dashboards:
 3. airline fare movement
 4. penalty and tax comparison
 5. ML/DL evaluation summaries later
+
+Detailed setup:
+
+- [warehouse/bigquery/LOOKER_STUDIO_SETUP.md](LOOKER_STUDIO_SETUP.md)
 
 ## Recommended order after bootstrap
 

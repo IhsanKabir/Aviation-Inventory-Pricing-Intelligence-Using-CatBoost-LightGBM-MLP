@@ -61,6 +61,11 @@ def health(db: Session = Depends(get_db)) -> dict:
     return reporting.get_health(db)
 
 
+@app.get("/api/v1/reporting/cycle-health")
+def cycle_health(db: Session = Depends(get_db)) -> dict:
+    return reporting.get_cycle_health(db)
+
+
 @app.get("/api/v1/meta/airlines")
 def meta_airlines(db: Session = Depends(get_db)) -> dict:
     return {"items": reporting.list_airlines(db)}
