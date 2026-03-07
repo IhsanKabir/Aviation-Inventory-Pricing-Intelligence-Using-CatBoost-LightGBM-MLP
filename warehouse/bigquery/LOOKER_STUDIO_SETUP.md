@@ -46,6 +46,10 @@ Use Looker Studio as the dashboard layer on top of the curated `aviation_intel` 
    - route-level error trend
    - model performance summary
 
+Detailed layout spec:
+
+- [warehouse/bigquery/FORECASTING_BACKTEST_DASHBOARD_SPEC.md](FORECASTING_BACKTEST_DASHBOARD_SPEC.md)
+
 ## Recommended dimensions and metrics
 
 - dimensions:
