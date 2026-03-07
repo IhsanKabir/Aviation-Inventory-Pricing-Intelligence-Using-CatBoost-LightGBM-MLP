@@ -40,6 +40,13 @@ from engines.route_scope import (
 )
 from modules.penalties import apply_penalty_inference
 
+ENABLE_STRATEGY_ENGINE = os.getenv("ENABLE_STRATEGY_ENGINE", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 def is_valid_core_offer(o: dict) -> bool:
     required = [
         "airline",
@@ -1104,7 +1111,7 @@ def main():
     scraped_at = now_utc.replace(tzinfo=None)
     init_db(create_tables=True)
     comparison_engine = ComparisonEngine()
-    strategy_engine = StrategyEngine()
+    strategy_engine = StrategyEngine() if ENABLE_STRATEGY_ENGINE else None
     airport_offsets = load_airport_offsets()
     airport_countries = load_airport_countries(AIRPORT_COUNTRY_FILE)
     if args.route_scope != "all" and not airport_countries:
@@ -1735,7 +1742,8 @@ def main():
                         events = comparison_engine.compare(previous, current)
                         if events:
                             save_change_events(events)
-                            strategy_engine.process(events)
+                            if strategy_engine is not None:
+                                strategy_engine.process(events)
                         column_events = comparison_engine.compare_column_changes(previous, current)
                         if column_events:
                             saved = save_column_change_events(column_events)

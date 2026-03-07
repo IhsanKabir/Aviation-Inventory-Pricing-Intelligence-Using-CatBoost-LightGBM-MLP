@@ -1,6 +1,6 @@
 ﻿# Airline Intelligence System Decisions (Thesis Track)
 
-Last updated: 2026-02-22
+Last updated: 2026-03-07
 
 ## 1) Program Vision
 
@@ -46,7 +46,7 @@ Target: implement as much as possible in parallel, but execute in phases when ne
 
 - Dynamic route + airline configuration (already in use)
 
-### Scrape Frequency
+### Collection Frequency
 
 - Target every 3-4 hours (adaptive by actual runtime/load)
 
@@ -186,7 +186,7 @@ throttling, retry policy, and source-specific compliance controls into each conn
 
 1. Stabilize canonical schema across airlines
 2. Implement connector contract for each airline (same output contract)
-3. Enable multi-airline scrape orchestration + quality checks
+3. Enable multi-airline capture orchestration + quality checks
 4. Make dynamic report pack stable (hourly/daily/on-demand)
 5. Add baseline forecasting pipeline (price then availability)
 6. Add benchmarking and thesis evaluation framework
@@ -198,7 +198,7 @@ throttling, retry policy, and source-specific compliance controls into each conn
 3. For multi-leg itineraries, do you want segment-level tracking, itinerary-level tracking, or both?
 4. Should all timestamps be stored in UTC + local airport timezone offset?
 5. Do you want one global currency (e.g., BDT/USD) for all analytics plus original currency retained?
-6. What maximum acceptable scrape latency per full cycle (all airlines/routes) do you want?
+6. What maximum acceptable collection latency per full cycle (all airlines/routes) do you want?
 7. For public users, which outputs are exposed: current cheapest fare only, trend chart, or predictions too?
 8. What confidence threshold should gate alerts/predictions shown to public users?
 9. Which report templates are mandatory for thesis submission (chapter-ready figures/tables)?
@@ -208,7 +208,7 @@ throttling, retry policy, and source-specific compliance controls into each conn
 
 Phase 1 is done when:
 
-- Multi-airline scrapes run reliably on schedule
+- Multi-airline collection cycles run reliably on schedule
 - All mandatory fields are populated or explicitly null-coded
 - Column-level change events are persisted and queryable
 - On-demand reports are generated correctly for all onboarded airlines
@@ -242,9 +242,9 @@ Use this section as the single source of truth for "what remains" and "what is d
 
 - [x] **P1-A: Final Data Quality Closure**
   - Target:
-    - `adt/chd/inf` nulls = 0 for new scrapes
-    - `inventory_confidence` nulls = 0 for new scrapes
-    - `source_endpoint` nulls = 0 for new scrapes
+    - `adt/chd/inf` nulls = 0 for new capture rows
+    - `inventory_confidence` nulls = 0 for new capture rows
+    - `source_endpoint` nulls = 0 for new capture rows
     - `departure_utc` nulls = 0 for all rows where airport TZ mapping exists
   - Notes:
     - Remaining `arrival_utc` nulls are acceptable only when source arrival local timestamp is missing.
@@ -439,7 +439,7 @@ Every week, run and record:
     - `output/reports/recover_missed_windows_latest.json`
     - `output/reports/operator_dashboard_latest.md`
     - `output/backups/db_restore_drill_latest.json`
-    - `output/reports/scrape_parallel_latest.json`
+    - latest parallel cycle manifest JSON under `output/reports/`
     - `output/reports/runtime_profile_latest.json`
 - `P2-A` baseline forecasting:
   - Upgraded `predict_next_day.py` with seasonal naive + EWMA baselines.
@@ -462,7 +462,7 @@ Every week, run and record:
 - Dynamic search-horizon prediction/trend enhancement:
   - `run_all.py` now accepts dynamic date windows:
     - `--dates`, `--date-offsets`, `--dates-file`
-  - `run_pipeline.py` now forwards dynamic scrape date-window args and dynamic
+  - `run_pipeline.py` now forwards dynamic collection date-window args and dynamic
     prediction args (`--prediction-series-mode`, departure bounds, optional
     backtest disable).
   - `predict_next_day.py` now supports `--series-mode search_dynamic` for search-day to search-day forecasting by `departure_day`.
@@ -488,12 +488,12 @@ Every week, run and record:
       - `--route-scope all|domestic|international`
       - `--market-country <ISO2 or country-name>` (e.g., `BD`, `IN`, `Bangladesh`, `India`)
     - `generate_reports.py` and `generate_route_flight_fare_monitor.py` now support the same route-scope filters.
-    - Multi-airline filters now accepted as comma-separated values in scrape/report flows (e.g., `--airline BG,VQ`).
+    - Multi-airline filters now accepted as comma-separated values in collection/report flows (e.g., `--airline BG,VQ`).
   - Dynamic date range selection (search horizon):
     - `run_all.py` now supports explicit departure-date range search:
       - `--date-start YYYY-MM-DD --date-end YYYY-MM-DD`
     - `config/dates.json` date config now supports explicit ranges in addition to lists and offsets.
-    - `run_pipeline.py` forwards `--date-start/--date-end` and route-scope flags into scrape + report steps.
+    - `run_pipeline.py` forwards `--date-start/--date-end` and route-scope flags into collection + report steps.
   - Route monitor visual refinement:
     - Route blocks remain boxed top-to-bottom with thicker bottom boundary.
     - Data cells are no longer globally bold; emphasis is now kept primarily on arrows and subscript annotations for cleaner readability.
@@ -524,17 +524,17 @@ Every week, run and record:
       flight/date intersections are now rendered as `N/O` (plus `—` in other
       metric cells), avoiding confusion with missing data.
   - CXB-DAC 22-Feb validation note:
-    - Validation against latest full scrape pair confirms fares exist on `2026-02-22` for:
+    - Validation against latest full cycle pair confirms fares exist on `2026-02-22` for:
       - `VQ-928` and `VQ-936` (min fare observed `4,999`).
     - If `VQ-922` appears blank on `2026-02-22`, it is treated as non-operating for that date (not missing-route data).
   - run_all runtime optimization:
     - Removed per-row DB lookup for `flight_offer_id` during raw-meta linking.
-    - Replaced with one bulk ID map load per search block (`scrape_id + airline + route + cabin`) and in-memory key matching.
+    - Replaced with one bulk ID map load per search block (legacy cycle UUID + airline + route + cabin) and in-memory key matching.
     - Added matched/unmatched diagnostics in logs:
       - `Persisted X core rows + Y raw-meta rows (matched=M unmatched=U)`
     - Added comparison prefetch cache per route+cabin:
       - Preloads latest prior snapshots for all selected dates in one DB query and reuses in-memory map during loop.
-      - Excludes current scrape from baseline snapshots to avoid self-comparison drift.
+      - Excludes current cycle from baseline snapshots to avoid self-comparison drift.
     - Normalized departure identity key between current parser rows and DB snapshots to improve match hit-rate in change comparison.
   - DB storage sustainability upgrades (no-delete / no-new-storage compliant):
     - Added read-only storage monitor: `tools/db_storage_health_check.py`
@@ -586,7 +586,7 @@ Therefore, storage strategy must focus on in-place efficiency and lossless prese
    - Requirement: reversible (lossless) for audit and model reproducibility.
 
 4. Partitioning for manageability (not retention deletion)
-   - Partition large fact/raw tables by scrape date/time to improve maintenance operations, targeted reindexing, and future scalability.
+   - Partition large fact/raw tables by capture date/time to improve maintenance operations, targeted reindexing, and future scalability.
    - Partitioning is adopted for operational control, not for deleting training history.
 
 5. Ingestion efficiency over unnecessary duplication
@@ -659,4 +659,39 @@ Implementation status (2026-02-23):
 
 - `run_all.py`, `run_pipeline.py`, `modules/biman.py`, `modules/novoair.py`, scheduler wrappers, and parallel runner support `--adt/--chd/--inf`.
 - `tools/watch_run_status.py` displays passenger mix from heartbeat.
-- `generate_route_flight_fare_monitor.py` warns when compared scrapes have mismatched passenger mix basis.
+- `generate_route_flight_fare_monitor.py` warns when compared cycles have mismatched passenger mix basis.
+
+## 14) Delivery Architecture Decision (2026-03-07)
+
+### Operational Application
+
+- Primary interactive product will move to:
+  - FastAPI reporting API
+  - Next.js frontend
+  - PostgreSQL as the operational source of truth
+
+### Analytics and BI
+
+- Historical analytics layer will move to:
+  - BigQuery sandbox dataset
+  - Looker Studio dashboards
+- Curated facts will be exported from PostgreSQL to BigQuery on a scheduled basis.
+
+### Public Repository Wording
+
+- Public-facing repository/docs should prefer:
+  - capture
+  - collection
+  - accumulation
+  - snapshot
+  - cycle
+- Keep low-level legacy field names local/internal when required for compatibility.
+
+### Optional Components
+
+- `strategy_engine.py` is currently optional and experimental.
+- It is not required for:
+  - current Excel reporting
+  - PostgreSQL reporting API
+  - BigQuery export pipeline
+- Keep it only as a future signal/intelligence hook unless a downstream consumer is added.

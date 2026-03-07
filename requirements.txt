@@ -16,3 +16,7 @@ catboost
 lightgbm
 # OTA/browser-assisted token/session tooling
 playwright
+fastapi
+uvicorn
+google-cloud-bigquery
+pyarrow

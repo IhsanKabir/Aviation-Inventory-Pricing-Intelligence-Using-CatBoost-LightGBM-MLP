@@ -187,7 +187,7 @@ Dry-run scan for stale routes/cabins:
 .\.venv\Scripts\python.exe tools\recover_missed_windows.py --dry-run --output-dir output\reports --timestamp-tz local
 ```
 
-Active recovery run (executes targeted scrapes):
+Active recovery run (executes targeted capture runs):
 
 ```powershell
 .\.venv\Scripts\python.exe tools\recover_missed_windows.py --output-dir output\reports --timestamp-tz local --max-routes 8
@@ -209,14 +209,14 @@ Safe parallel-by-airline run:
 
 Check outputs:
 - `output/reports/runtime_profile_latest.json`
-- `output/reports/scrape_parallel_latest.json`
+- latest parallel cycle manifest JSON under `output/reports/`
 
 Cycle-based parallel run (explicit shared snapshot id + timeout guard):
 
 ```powershell
 $cycle = [guid]::NewGuid().ToString()
 .\.venv\Scripts\python.exe tools\parallel_airline_runner.py --python-exe .\.venv\Scripts\python.exe --max-workers 2 --cycle-id $cycle --query-timeout-seconds 120 --quick --limit-routes 1 --limit-dates 1 --output-dir output\reports
-Get-Content output\reports\scrape_parallel_latest.json | findstr /I cycle_id
+Get-ChildItem output\reports\*.json | Sort-Object LastWriteTime -Descending | Select-Object -First 5
 ```
 
 Notes:
@@ -254,7 +254,7 @@ Verify:
 - `state` is not `STALE` for long intervals in the watcher
 
 Route monitor comparison basis check:
-- `generate_route_flight_fare_monitor.py` now warns if current/previous compared scrapes have mismatched passenger mix (`ADT/CHD/INF`).
+- `generate_route_flight_fare_monitor.py` now warns if current/previous compared cycles have mismatched passenger mix (`ADT/CHD/INF`).
 - If warning appears, regenerate using a like-for-like accumulation pair for valid change analysis.
 
 ## ML/DL Forecast Workflow (Daily)
