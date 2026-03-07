@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any
 
@@ -241,11 +241,37 @@ def _normalize_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
     for column in out.columns:
         if out[column].dtype != "object":
             continue
+        non_null = [value for value in out[column].tolist() if not pd.isna(value)]
+        if not non_null:
+            continue
+
+        if all(isinstance(value, bool) for value in non_null):
+            out[column] = out[column].astype("boolean")
+            continue
+
+        if all(isinstance(value, datetime) for value in non_null):
+            out[column] = pd.to_datetime(out[column], errors="coerce")
+            continue
+
+        if all(isinstance(value, date) and not isinstance(value, datetime) for value in non_null):
+            continue
+
+        if all(isinstance(value, time) for value in non_null):
+            continue
+
+        if all(isinstance(value, str) for value in non_null):
+            out[column] = out[column].astype("string")
+            continue
+
         out[column] = out[column].map(
-            lambda value: json.dumps(value, ensure_ascii=False)
-            if isinstance(value, (dict, list))
-            else value
-        )
+            lambda value: None
+            if pd.isna(value)
+            else (
+                json.dumps(value, ensure_ascii=False, default=str)
+                if isinstance(value, (dict, list, tuple, set))
+                else str(value)
+            )
+        ).astype("string")
     return out
 
 

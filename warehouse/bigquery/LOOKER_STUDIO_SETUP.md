@@ -15,12 +15,12 @@ Use Looker Studio as the dashboard layer on top of the curated `aviation_intel` 
 3. Choose `BigQuery`
 4. Select project `aeropulseintelligence`
 5. Select dataset `aviation_intel`
-6. Add these tables first:
-   - `fact_cycle_run`
-   - `fact_offer_snapshot`
-   - `fact_change_event`
-   - `fact_penalty_snapshot`
-   - `fact_tax_snapshot`
+6. Add these views first:
+   - `vw_cycle_health`
+   - `vw_route_daily_fare`
+   - `vw_change_activity_daily`
+   - `vw_penalty_reference`
+   - `vw_tax_reference`
 
 ## First dashboards to build
 
@@ -29,6 +29,7 @@ Use Looker Studio as the dashboard layer on top of the curated `aviation_intel` 
    - offer row count
    - airline count
    - route count
+   - cycle age in minutes
 
 2. Route movement
    - route-level fare movement by day

@@ -25,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--project-id", default=os.getenv("BIGQUERY_PROJECT_ID", "aeropulseintelligence"))
     parser.add_argument("--dataset", default=os.getenv("BIGQUERY_DATASET", "aviation_intel"))
     parser.add_argument("--run-table-ddl", action="store_true", help="Also create curated tables after dataset creation.")
+    parser.add_argument("--run-view-ddl", action="store_true", help="Also create Looker-facing views after table creation.")
     parser.add_argument("--replace-tables", action="store_true", help="Use CREATE OR REPLACE TABLE for curated tables.")
     return parser
 
@@ -35,10 +36,13 @@ def main() -> int:
 
     dataset_sql_path = SQL_DIR / "create_aviation_intel_dataset.sql"
     table_sql_path = SQL_DIR / "create_aviation_intel_tables.sql"
+    view_sql_path = SQL_DIR / "create_aviation_intel_looker_views.sql"
 
     statements = _read_sql(dataset_sql_path)
     if args.run_table_ddl:
         statements.extend(_read_sql(table_sql_path))
+    if args.run_view_ddl:
+        statements.extend(_read_sql(view_sql_path))
 
     for statement in statements:
         rendered = (

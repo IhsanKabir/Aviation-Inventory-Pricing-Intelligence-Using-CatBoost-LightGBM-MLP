@@ -66,12 +66,13 @@ Or use the helper script:
 .\tools\load_bigquery_latest.ps1 -CredentialsJson "C:\path\to\aero-pulse-bq-loader.json" -StartDate 2026-03-01 -EndDate 2026-03-08
 ```
 
-## Step 6: Create the BigQuery tables
+## Step 6: Create the BigQuery tables and views
 
 Run in order:
 
 1. [sql/bigquery/create_aviation_intel_dataset.sql](../../sql/bigquery/create_aviation_intel_dataset.sql)
 2. [sql/bigquery/create_aviation_intel_tables.sql](../../sql/bigquery/create_aviation_intel_tables.sql)
+3. [sql/bigquery/create_aviation_intel_looker_views.sql](../../sql/bigquery/create_aviation_intel_looker_views.sql)
 
 ## Step 7: Stage export files locally
 
@@ -101,6 +102,12 @@ Minimum checks:
 2. `fact_offer_snapshot` row counts roughly track PostgreSQL cycle exports
 3. `fact_change_event` contains route and field-level changes
 4. `fact_penalty_snapshot` and `fact_tax_snapshot` contain non-empty rows where expected
+5. Looker-facing views resolve without errors:
+   - `vw_cycle_health`
+   - `vw_route_daily_fare`
+   - `vw_change_activity_daily`
+   - `vw_penalty_reference`
+   - `vw_tax_reference`
 
 ## Step 10: Connect Looker Studio
 

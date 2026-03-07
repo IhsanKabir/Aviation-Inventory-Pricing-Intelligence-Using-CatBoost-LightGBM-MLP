@@ -31,8 +31,10 @@ This is the strongest free-to-start combination for:
 Source of truth for export layout:
 
 - [sql/bigquery/create_analytics_tables.sql](../../sql/bigquery/create_analytics_tables.sql)
+- [sql/bigquery/create_analytics_views.sql](../../sql/bigquery/create_analytics_views.sql)
 - [sql/bigquery/create_aviation_intel_dataset.sql](../../sql/bigquery/create_aviation_intel_dataset.sql)
 - [sql/bigquery/create_aviation_intel_tables.sql](../../sql/bigquery/create_aviation_intel_tables.sql)
+- [sql/bigquery/create_aviation_intel_looker_views.sql](../../sql/bigquery/create_aviation_intel_looker_views.sql)
 - [tools/export_bigquery_stage.py](../../tools/export_bigquery_stage.py)
 - [warehouse/bigquery/BOOTSTRAP_CHECKLIST.md](BOOTSTRAP_CHECKLIST.md)
 
@@ -46,7 +48,8 @@ Source of truth for export layout:
 6. Run the concrete dataset bootstrap SQL.
 7. Run the local export staging command.
 8. Load staged parquet files into BigQuery.
-9. Connect Looker Studio to the curated dataset.
+9. Create Looker-facing views.
+10. Connect Looker Studio to the curated dataset views.
 
 ## Local Export Example
 
