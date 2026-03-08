@@ -24,11 +24,6 @@ spec:
               value: aeropulseintelligence
             - name: BIGQUERY_DATASET
               value: aviation_intel
-            - name: AIRLINE_DB_URL
-              valueFrom:
-                secretKeyRef:
-                  name: airline-db-url
-                  key: latest
           resources:
             limits:
               cpu: "1"

@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .db import get_db
+from .db import get_optional_db
 from .repositories import reporting
 
 
@@ -57,27 +57,27 @@ def api_root() -> JSONResponse:
 
 
 @app.get("/health")
-def health(db: Session = Depends(get_db)) -> dict:
+def health(db: Session | None = Depends(get_optional_db)) -> dict:
     return reporting.get_health(db)
 
 
 @app.get("/api/v1/reporting/cycle-health")
-def cycle_health(db: Session = Depends(get_db)) -> dict:
+def cycle_health(db: Session | None = Depends(get_optional_db)) -> dict:
     return reporting.get_cycle_health(db)
 
 
 @app.get("/api/v1/meta/airlines")
-def meta_airlines(db: Session = Depends(get_db)) -> dict:
+def meta_airlines(db: Session | None = Depends(get_optional_db)) -> dict:
     return {"items": reporting.list_airlines(db)}
 
 
 @app.get("/api/v1/meta/routes")
-def meta_routes(db: Session = Depends(get_db)) -> dict:
+def meta_routes(db: Session | None = Depends(get_optional_db)) -> dict:
     return {"items": reporting.list_routes(db)}
 
 
 @app.get("/api/v1/reporting/cycles/latest")
-def latest_cycle(db: Session = Depends(get_db)) -> dict:
+def latest_cycle(db: Session | None = Depends(get_optional_db)) -> dict:
     payload = reporting.get_latest_cycle(db)
     if not payload:
         raise HTTPException(status_code=404, detail="No cycle data found")
@@ -87,7 +87,7 @@ def latest_cycle(db: Session = Depends(get_db)) -> dict:
 @app.get("/api/v1/reporting/cycles/recent")
 def recent_cycles(
     limit: int = Query(default=10, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: Session | None = Depends(get_optional_db),
 ) -> dict:
     return {"items": reporting.get_recent_cycles(db, limit=limit)}
 
@@ -100,7 +100,7 @@ def current_snapshot(
     destination: list[str] | None = Query(default=None),
     cabin: list[str] | None = Query(default=None),
     limit: int = Query(default=settings.default_limit, ge=1),
-    db: Session = Depends(get_db),
+    db: Session | None = Depends(get_optional_db),
 ) -> dict:
     return reporting.get_current_snapshot(
         db,
@@ -122,7 +122,7 @@ def route_monitor_matrix(
     cabin: list[str] | None = Query(default=None),
     route_limit: int = Query(default=8, ge=1, le=24),
     history_limit: int = Query(default=12, ge=1, le=48),
-    db: Session = Depends(get_db),
+    db: Session | None = Depends(get_optional_db),
 ) -> dict:
     return reporting.get_route_monitor_matrix(
         db,
@@ -145,7 +145,7 @@ def route_summary(
     destination: list[str] | None = Query(default=None),
     cabin: list[str] | None = Query(default=None),
     limit: int = Query(default=settings.default_limit, ge=1),
-    db: Session = Depends(get_db),
+    db: Session | None = Depends(get_optional_db),
 ) -> dict:
     return {
         "items": reporting.get_route_summary(
@@ -172,7 +172,7 @@ def change_events(
     change_type: list[str] | None = Query(default=None),
     direction: list[str] | None = Query(default=None),
     limit: int = Query(default=settings.default_limit, ge=1),
-    db: Session = Depends(get_db),
+    db: Session | None = Depends(get_optional_db),
 ) -> dict:
     return {
         "items": reporting.get_change_events(
@@ -197,7 +197,7 @@ def penalties(
     origin: list[str] | None = Query(default=None),
     destination: list[str] | None = Query(default=None),
     limit: int = Query(default=settings.default_limit, ge=1),
-    db: Session = Depends(get_db),
+    db: Session | None = Depends(get_optional_db),
 ) -> dict:
     return reporting.get_penalties(
         db,
@@ -216,7 +216,7 @@ def taxes(
     origin: list[str] | None = Query(default=None),
     destination: list[str] | None = Query(default=None),
     limit: int = Query(default=settings.default_limit, ge=1),
-    db: Session = Depends(get_db),
+    db: Session | None = Depends(get_optional_db),
 ) -> dict:
     return reporting.get_taxes(
         db,

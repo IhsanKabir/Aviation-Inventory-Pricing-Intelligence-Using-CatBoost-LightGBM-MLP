@@ -41,7 +41,7 @@ Core project decisions and operating policy live in:
   Forecasting layer for event and numeric target prediction.
 
 - [apps/api/README.md](apps/api/README.md)
-  Reporting API scaffold on top of PostgreSQL.
+  Reporting API scaffold with BigQuery-first hosted reads and optional PostgreSQL transitional endpoints.
 
 ## Data Flow
 
@@ -139,7 +139,7 @@ Run local CI checks:
   Comparison, reporting, route-scoping, and workbook rendering logic.
 
 - `apps/api/`
-  PostgreSQL-backed reporting API scaffold for the web application.
+  Reporting API scaffold for the web application, with BigQuery-first hosted reads and optional PostgreSQL transitional endpoints.
 
 - `apps/web/`
   Next.js application plan and route map.

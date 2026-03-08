@@ -4,7 +4,8 @@ This API is the operational backend for the planned web application.
 
 ## Scope
 
-- serve latest cycle snapshots from PostgreSQL
+- serve hosted reporting views from BigQuery-first warehouse queries
+- fall back to PostgreSQL only for local transitional endpoints where needed
 - serve change-event summaries and details
 - serve penalty and tax reporting views
 - provide route and airline filter metadata for the frontend
@@ -29,6 +30,24 @@ Run locally from the repository root:
 - `GET /api/v1/reporting/change-events`
 - `GET /api/v1/reporting/penalties`
 - `GET /api/v1/reporting/taxes`
+
+## Hosted Mode
+
+The preferred hosted deployment path is BigQuery-backed. These endpoints are
+designed to work without `AIRLINE_DB_URL` when BigQuery is configured:
+
+- `GET /health`
+- `GET /api/v1/reporting/cycle-health`
+- `GET /api/v1/meta/airlines`
+- `GET /api/v1/meta/routes`
+- `GET /api/v1/reporting/cycles/latest`
+- `GET /api/v1/reporting/cycles/recent`
+- `GET /api/v1/reporting/route-monitor-matrix`
+- `GET /api/v1/reporting/change-events`
+- `GET /api/v1/reporting/penalties`
+- `GET /api/v1/reporting/taxes`
+
+`current-snapshot` and `route-summary` remain transitional PostgreSQL-oriented endpoints.
 
 ## Naming Note
 

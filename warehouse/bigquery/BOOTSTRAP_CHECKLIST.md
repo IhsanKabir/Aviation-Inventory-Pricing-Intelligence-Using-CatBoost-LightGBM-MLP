@@ -149,3 +149,13 @@ Live forecast review report already created:
 2. validate schemas and row counts
 3. validate hosted API reads against BigQuery
 4. only then automate scheduled export/load
+
+## Hosted API note
+
+For the preferred zero-cost hosted deployment:
+
+- Cloud Run should be configured with:
+  - `API_FORECASTING_SOURCE=bigquery`
+  - `BIGQUERY_PROJECT_ID=aeropulseintelligence`
+  - `BIGQUERY_DATASET=aviation_intel`
+- `AIRLINE_DB_URL` should be omitted unless you intentionally keep transitional PostgreSQL-backed endpoints enabled.

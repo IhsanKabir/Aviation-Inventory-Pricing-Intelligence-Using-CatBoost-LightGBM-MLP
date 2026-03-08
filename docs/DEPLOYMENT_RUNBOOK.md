@@ -28,7 +28,7 @@ GitHub is source control and CI, not the runtime host.
   - `API_FORECASTING_SOURCE=bigquery`
   - `BIGQUERY_PROJECT_ID=aeropulseintelligence`
   - `BIGQUERY_DATASET=aviation_intel`
-  - `AIRLINE_DB_URL` only while any hosted endpoint still needs PostgreSQL
+  - `AIRLINE_DB_URL` only if you intentionally keep PostgreSQL-backed transitional endpoints enabled
 
 ### Database
 
@@ -68,7 +68,7 @@ Use Cloud Run with a dedicated service account.
 Important:
 - do not deploy the API with a downloaded Google JSON key
 - grant the Cloud Run service account BigQuery read access instead
-- keep `AIRLINE_DB_URL` in Secret Manager only if any hosted endpoint still depends on PostgreSQL
+- keep `AIRLINE_DB_URL` in Secret Manager only if you still need transitional PostgreSQL-backed endpoints
 
 ## Environment variable map
 
@@ -85,7 +85,7 @@ Important:
 - `API_FORECASTING_SOURCE=bigquery`
 - `BIGQUERY_PROJECT_ID=aeropulseintelligence`
 - `BIGQUERY_DATASET=aviation_intel`
-- `AIRLINE_DB_URL=postgresql+psycopg2://...` only during transition for endpoints not yet migrated to BigQuery
+- `AIRLINE_DB_URL=postgresql+psycopg2://...` only if you want PostgreSQL transitional endpoints enabled
 
 ## Vercel setup checklist
 
@@ -103,9 +103,15 @@ Important:
 4. Grant:
    - BigQuery Data Viewer
    - BigQuery Job User
-5. Put `AIRLINE_DB_URL` into Secret Manager only if any hosted endpoint still uses PostgreSQL
+5. Skip `AIRLINE_DB_URL` entirely for the preferred BigQuery-backed hosted deployment. Add it only if you want PostgreSQL transitional endpoints enabled.
 6. Deploy Cloud Run service using [apps/api/cloudrun.service.yaml](../apps/api/cloudrun.service.yaml)
 7. Set `API_CORS_ORIGINS` to the real Vercel domain
+
+Helper script:
+
+- [tools/deploy_api_cloud_run.ps1](../tools/deploy_api_cloud_run.ps1)
+  - default behavior: BigQuery-backed deployment without `AIRLINE_DB_URL`
+  - add `-UseDbSecret -DbSecretName airline-db-url` only if you intentionally enable PostgreSQL transitional endpoints
 
 ## Suggested first production rollout
 

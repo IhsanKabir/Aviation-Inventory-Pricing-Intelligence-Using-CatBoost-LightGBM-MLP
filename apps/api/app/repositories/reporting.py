@@ -72,7 +72,32 @@ def _rows_to_dicts(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     return payload
 
 
-def get_latest_cycle(session: Session) -> dict[str, Any] | None:
+def _get_latest_cycle_from_bigquery() -> dict[str, Any] | None:
+    rows = _run_bigquery_query(
+        f"""
+        SELECT
+          cycle_id,
+          cycle_started_at_utc,
+          cycle_completed_at_utc,
+          offer_rows,
+          airline_count,
+          route_count
+        FROM {_bq_table("fact_cycle_run")}
+        QUALIFY ROW_NUMBER() OVER (ORDER BY cycle_completed_at_utc DESC, cycle_id DESC) = 1
+        """
+    )
+    clean_rows = _serialize_warehouse_rows(rows)
+    return clean_rows[0] if clean_rows else None
+
+
+def get_latest_cycle(session: Session | None) -> dict[str, Any] | None:
+    if _bigquery_ready():
+        try:
+            return _get_latest_cycle_from_bigquery()
+        except (GoogleAPIError, RuntimeError, ValueError):
+            pass
+    if session is None:
+        return None
     row = session.execute(
         text(
             """
@@ -93,7 +118,29 @@ def get_latest_cycle(session: Session) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def get_recent_cycles(session: Session, limit: int = 10) -> list[dict[str, Any]]:
+def get_recent_cycles(session: Session | None, limit: int = 10) -> list[dict[str, Any]]:
+    if _bigquery_ready():
+        try:
+            rows = _run_bigquery_query(
+                f"""
+                SELECT
+                  cycle_id,
+                  cycle_started_at_utc,
+                  cycle_completed_at_utc,
+                  offer_rows,
+                  airline_count,
+                  route_count
+                FROM {_bq_table("fact_cycle_run")}
+                ORDER BY cycle_completed_at_utc DESC, cycle_id DESC
+                LIMIT @row_limit
+                """,
+                [bigquery.ScalarQueryParameter("row_limit", "INT64", limit)],
+            )
+            return _serialize_warehouse_rows(rows)
+        except (GoogleAPIError, RuntimeError, ValueError):
+            pass
+    if session is None:
+        return []
     rows = session.execute(
         text(
             """
@@ -115,11 +162,12 @@ def get_recent_cycles(session: Session, limit: int = 10) -> list[dict[str, Any]]
     return _rows_to_dicts([dict(row) for row in rows])
 
 
-def get_health(session: Session) -> dict[str, Any]:
-    session.execute(text("SELECT 1"))
+def get_health(session: Session | None) -> dict[str, Any]:
+    if session is not None:
+        session.execute(text("SELECT 1"))
     latest_cycle = get_latest_cycle(session)
     return {
-        "database_ok": True,
+        "database_ok": session is not None or _bigquery_ready(),
         "latest_cycle_id": latest_cycle["cycle_id"] if latest_cycle else None,
         "latest_cycle_completed_at_utc": latest_cycle["cycle_completed_at_utc"] if latest_cycle else None,
     }
@@ -148,11 +196,11 @@ def _load_latest_run_status() -> dict[str, Any] | None:
         return None
 
 
-def get_cycle_health(session: Session) -> dict[str, Any]:
+def get_cycle_health(session: Session | None) -> dict[str, Any]:
     latest_cycle = get_latest_cycle(session)
     if not latest_cycle:
         return {
-            "database_ok": True,
+            "database_ok": session is not None or _bigquery_ready(),
             "cycle_id": None,
             "cycle_completed_at_utc": None,
             "cycle_age_minutes": None,
@@ -165,18 +213,38 @@ def get_cycle_health(session: Session) -> dict[str, Any]:
         }
 
     cycle_id = str(latest_cycle["cycle_id"])
-    observed_rows = session.execute(
-        text(
-            """
-            SELECT DISTINCT (fo.airline || ':' || fo.origin || '-' || fo.destination) AS route_pair
-            FROM flight_offers fo
-            WHERE fo.scrape_id = CAST(:cycle_id AS uuid)
-            ORDER BY route_pair
-            """
-        ),
-        {"cycle_id": cycle_id},
-    ).scalars().all()
-    observed_route_pairs = [str(item) for item in observed_rows if item]
+    if _bigquery_ready():
+        try:
+            observed_route_pairs = [
+                str(item["route_pair"])
+                for item in _run_bigquery_query(
+                    f"""
+                    SELECT DISTINCT CONCAT(airline, ':', route_key) AS route_pair
+                    FROM {_bq_table("fact_offer_snapshot")}
+                    WHERE cycle_id = @cycle_id
+                    ORDER BY route_pair
+                    """,
+                    [bigquery.ScalarQueryParameter("cycle_id", "STRING", cycle_id)],
+                )
+                if item.get("route_pair")
+            ]
+        except (GoogleAPIError, RuntimeError, ValueError):
+            observed_route_pairs = []
+    elif session is not None:
+        observed_rows = session.execute(
+            text(
+                """
+                SELECT DISTINCT (fo.airline || ':' || fo.origin || '-' || fo.destination) AS route_pair
+                FROM flight_offers fo
+                WHERE fo.scrape_id = CAST(:cycle_id AS uuid)
+                ORDER BY route_pair
+                """
+            ),
+            {"cycle_id": cycle_id},
+        ).scalars().all()
+        observed_route_pairs = [str(item) for item in observed_rows if item]
+    else:
+        observed_route_pairs = []
     configured_route_pairs = _load_configured_route_pairs()
     configured_set = set(configured_route_pairs)
     observed_set = set(observed_route_pairs)
@@ -194,7 +262,7 @@ def get_cycle_health(session: Session) -> dict[str, Any]:
     run_status = _load_latest_run_status()
 
     return {
-        "database_ok": True,
+        "database_ok": session is not None or _bigquery_ready(),
         "cycle_id": cycle_id,
         "cycle_started_at_utc": latest_cycle.get("cycle_started_at_utc"),
         "cycle_completed_at_utc": cycle_completed,
@@ -712,7 +780,25 @@ def get_forecasting_payload(limit_routes: int = 25, limit_next_day: int = 40) ->
     return _get_forecasting_payload_from_files(limit_routes=limit_routes, limit_next_day=limit_next_day)
 
 
-def list_airlines(session: Session) -> list[dict[str, Any]]:
+def list_airlines(session: Session | None) -> list[dict[str, Any]]:
+    if _bigquery_ready():
+        try:
+            rows = _run_bigquery_query(
+                f"""
+                SELECT
+                  airline,
+                  first_seen_at_utc,
+                  last_seen_at_utc,
+                  offer_rows
+                FROM {_bq_table("dim_airline")}
+                ORDER BY airline
+                """
+            )
+            return _serialize_warehouse_rows(rows)
+        except (GoogleAPIError, RuntimeError, ValueError):
+            pass
+    if session is None:
+        return []
     rows = session.execute(
         text(
             """
@@ -730,7 +816,28 @@ def list_airlines(session: Session) -> list[dict[str, Any]]:
     return _rows_to_dicts([dict(row) for row in rows])
 
 
-def list_routes(session: Session) -> list[dict[str, Any]]:
+def list_routes(session: Session | None) -> list[dict[str, Any]]:
+    if _bigquery_ready():
+        try:
+            rows = _run_bigquery_query(
+                f"""
+                SELECT
+                  origin,
+                  destination,
+                  route_key,
+                  offer_rows,
+                  airlines_present,
+                  first_seen_at_utc,
+                  last_seen_at_utc
+                FROM {_bq_table("dim_route")}
+                ORDER BY origin, destination
+                """
+            )
+            return _serialize_warehouse_rows(rows)
+        except (GoogleAPIError, RuntimeError, ValueError):
+            pass
+    if session is None:
+        return []
     rows = session.execute(
         text(
             """
@@ -1439,7 +1546,7 @@ def get_route_summary(
 
 
 def get_change_events(
-    session: Session,
+    session: Session | None,
     start_date: date | None = None,
     end_date: date | None = None,
     airlines: Sequence[str] | None = None,
@@ -1450,6 +1557,73 @@ def get_change_events(
     directions: Sequence[str] | None = None,
     limit: int = 1000,
 ) -> list[dict[str, Any]]:
+    if _bigquery_ready():
+        try:
+            filters = ["1=1"]
+            params: list[bigquery.ScalarQueryParameter] = [bigquery.ScalarQueryParameter("row_limit", "INT64", limit)]
+            if start_date:
+                filters.append("report_day >= @start_date")
+                params.append(bigquery.ScalarQueryParameter("start_date", "DATE", start_date))
+            if end_date:
+                filters.append("report_day <= @end_date")
+                params.append(bigquery.ScalarQueryParameter("end_date", "DATE", end_date))
+            if airlines:
+                filters.append("airline IN UNNEST(@airlines)")
+                params.append(bigquery.ArrayQueryParameter("airlines", "STRING", _normalize_codes(airlines)))
+            if origins:
+                filters.append("origin IN UNNEST(@origins)")
+                params.append(bigquery.ArrayQueryParameter("origins", "STRING", _normalize_codes(origins)))
+            if destinations:
+                filters.append("destination IN UNNEST(@destinations)")
+                params.append(bigquery.ArrayQueryParameter("destinations", "STRING", _normalize_codes(destinations)))
+            if domains:
+                filters.append("domain IN UNNEST(@domains)")
+                params.append(bigquery.ArrayQueryParameter("domains", "STRING", _normalize_codes(domains, uppercase=False)))
+            if change_types:
+                filters.append("change_type IN UNNEST(@change_types)")
+                params.append(bigquery.ArrayQueryParameter("change_types", "STRING", _normalize_codes(change_types, uppercase=False)))
+            if directions:
+                filters.append("direction IN UNNEST(@directions)")
+                params.append(bigquery.ArrayQueryParameter("directions", "STRING", _normalize_codes(directions, uppercase=False)))
+
+            rows = _run_bigquery_query(
+                f"""
+                SELECT
+                  ROW_NUMBER() OVER (ORDER BY detected_at_utc DESC, airline, route_key, field_name) AS id,
+                  cycle_id,
+                  previous_cycle_id,
+                  detected_at_utc,
+                  airline,
+                  origin,
+                  destination,
+                  route_key,
+                  flight_number,
+                  departure_day,
+                  departure_time,
+                  cabin,
+                  fare_basis,
+                  brand,
+                  domain,
+                  change_type,
+                  direction,
+                  field_name,
+                  old_value,
+                  new_value,
+                  magnitude,
+                  percent_change,
+                  event_meta
+                FROM {_bq_table("fact_change_event")}
+                WHERE {' AND '.join(filters)}
+                ORDER BY detected_at_utc DESC, airline, route_key, field_name
+                LIMIT @row_limit
+                """,
+                params,
+            )
+            return _serialize_warehouse_rows(rows)
+        except (GoogleAPIError, RuntimeError, ValueError):
+            pass
+    if session is None:
+        return []
     clauses = ["1=1"]
     params: dict[str, Any] = {"limit": limit}
     if start_date:
@@ -1504,15 +1678,82 @@ def get_change_events(
 
 
 def get_penalties(
-    session: Session,
+    session: Session | None,
     cycle_id: str | None = None,
     airlines: Sequence[str] | None = None,
     origins: Sequence[str] | None = None,
     destinations: Sequence[str] | None = None,
     limit: int = 500,
 ) -> dict[str, Any]:
+    if _bigquery_ready():
+        try:
+            resolved_cycle_id = _resolve_cycle_id_bigquery(cycle_id)
+            if not resolved_cycle_id:
+                return {"cycle_id": None, "rows": []}
+            filters = [
+                "cycle_id = @cycle_id",
+                """(
+                  penalty_rule_text IS NOT NULL
+                  OR fare_change_fee_before_24h IS NOT NULL
+                  OR fare_change_fee_within_24h IS NOT NULL
+                  OR fare_change_fee_no_show IS NOT NULL
+                  OR fare_cancel_fee_before_24h IS NOT NULL
+                  OR fare_cancel_fee_within_24h IS NOT NULL
+                  OR fare_cancel_fee_no_show IS NOT NULL
+                )""",
+            ]
+            params: list[bigquery.ScalarQueryParameter] = [
+                bigquery.ScalarQueryParameter("cycle_id", "STRING", resolved_cycle_id),
+                bigquery.ScalarQueryParameter("row_limit", "INT64", limit),
+            ]
+            if airlines:
+                filters.append("airline IN UNNEST(@airlines)")
+                params.append(bigquery.ArrayQueryParameter("airlines", "STRING", _normalize_codes(airlines)))
+            if origins:
+                filters.append("origin IN UNNEST(@origins)")
+                params.append(bigquery.ArrayQueryParameter("origins", "STRING", _normalize_codes(origins)))
+            if destinations:
+                filters.append("destination IN UNNEST(@destinations)")
+                params.append(bigquery.ArrayQueryParameter("destinations", "STRING", _normalize_codes(destinations)))
+
+            rows = _run_bigquery_query(
+                f"""
+                SELECT
+                  cycle_id,
+                  captured_at_utc,
+                  airline,
+                  origin,
+                  destination,
+                  route_key,
+                  flight_number,
+                  departure_utc,
+                  cabin,
+                  fare_basis,
+                  penalty_source,
+                  penalty_currency,
+                  fare_change_fee_before_24h,
+                  fare_change_fee_within_24h,
+                  fare_change_fee_no_show,
+                  fare_cancel_fee_before_24h,
+                  fare_cancel_fee_within_24h,
+                  fare_cancel_fee_no_show,
+                  fare_changeable,
+                  fare_refundable,
+                  penalty_rule_text
+                FROM {_bq_table("fact_penalty_snapshot")}
+                WHERE {' AND '.join(filters)}
+                ORDER BY origin, destination, departure_utc, airline, flight_number
+                LIMIT @row_limit
+                """,
+                params,
+            )
+            return {"cycle_id": resolved_cycle_id, "rows": _serialize_warehouse_rows(rows)}
+        except (GoogleAPIError, RuntimeError, ValueError):
+            pass
     resolved_cycle_id = _resolve_cycle_id(session, cycle_id)
     if not resolved_cycle_id:
+        return {"cycle_id": None, "rows": []}
+    if session is None:
         return {"cycle_id": None, "rows": []}
 
     clauses = [
@@ -1571,15 +1812,62 @@ def get_penalties(
 
 
 def get_taxes(
-    session: Session,
+    session: Session | None,
     cycle_id: str | None = None,
     airlines: Sequence[str] | None = None,
     origins: Sequence[str] | None = None,
     destinations: Sequence[str] | None = None,
     limit: int = 500,
 ) -> dict[str, Any]:
+    if _bigquery_ready():
+        try:
+            resolved_cycle_id = _resolve_cycle_id_bigquery(cycle_id)
+            if not resolved_cycle_id:
+                return {"cycle_id": None, "rows": []}
+            filters = ["cycle_id = @cycle_id", "tax_amount IS NOT NULL"]
+            params: list[bigquery.ScalarQueryParameter] = [
+                bigquery.ScalarQueryParameter("cycle_id", "STRING", resolved_cycle_id),
+                bigquery.ScalarQueryParameter("row_limit", "INT64", limit),
+            ]
+            if airlines:
+                filters.append("airline IN UNNEST(@airlines)")
+                params.append(bigquery.ArrayQueryParameter("airlines", "STRING", _normalize_codes(airlines)))
+            if origins:
+                filters.append("origin IN UNNEST(@origins)")
+                params.append(bigquery.ArrayQueryParameter("origins", "STRING", _normalize_codes(origins)))
+            if destinations:
+                filters.append("destination IN UNNEST(@destinations)")
+                params.append(bigquery.ArrayQueryParameter("destinations", "STRING", _normalize_codes(destinations)))
+
+            rows = _run_bigquery_query(
+                f"""
+                SELECT
+                  cycle_id,
+                  captured_at_utc,
+                  airline,
+                  origin,
+                  destination,
+                  route_key,
+                  flight_number,
+                  departure_utc,
+                  cabin,
+                  fare_basis,
+                  tax_amount,
+                  currency
+                FROM {_bq_table("fact_tax_snapshot")}
+                WHERE {' AND '.join(filters)}
+                ORDER BY origin, destination, departure_utc, airline, flight_number
+                LIMIT @row_limit
+                """,
+                params,
+            )
+            return {"cycle_id": resolved_cycle_id, "rows": _serialize_warehouse_rows(rows)}
+        except (GoogleAPIError, RuntimeError, ValueError):
+            pass
     resolved_cycle_id = _resolve_cycle_id(session, cycle_id)
     if not resolved_cycle_id:
+        return {"cycle_id": None, "rows": []}
+    if session is None:
         return {"cycle_id": None, "rows": []}
 
     clauses = ["fo.scrape_id = CAST(:cycle_id AS uuid)", "frm.tax_amount IS NOT NULL"]

@@ -7,7 +7,8 @@ param(
     [string]$ApiCorsOrigins = "https://YOUR_VERCEL_DOMAIN.vercel.app",
     [string]$BigQueryDataset = "aviation_intel",
     [string]$ServiceAccount = "aero-pulse-api@aeropulseintelligence.iam.gserviceaccount.com",
-    [string]$DbSecretName = "airline-db-url"
+    [string]$DbSecretName = "",
+    [switch]$UseDbSecret
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,13 +23,23 @@ gcloud builds submit `
   .
 
 Write-Host "Deploying Cloud Run service: $ServiceName"
-gcloud run deploy $ServiceName `
-  --project $ProjectId `
-  --region $Region `
-  --image $image `
-  --service-account $ServiceAccount `
-  --allow-unauthenticated `
-  --set-env-vars "API_CORS_ORIGINS=$ApiCorsOrigins,API_FORECASTING_SOURCE=bigquery,BIGQUERY_PROJECT_ID=$ProjectId,BIGQUERY_DATASET=$BigQueryDataset" `
-  --set-secrets "AIRLINE_DB_URL=$DbSecretName:latest"
+$deployArgs = @(
+  "run", "deploy", $ServiceName,
+  "--project", $ProjectId,
+  "--region", $Region,
+  "--image", $image,
+  "--service-account", $ServiceAccount,
+  "--allow-unauthenticated",
+  "--set-env-vars", "API_CORS_ORIGINS=$ApiCorsOrigins,API_FORECASTING_SOURCE=bigquery,BIGQUERY_PROJECT_ID=$ProjectId,BIGQUERY_DATASET=$BigQueryDataset"
+)
+
+if ($UseDbSecret) {
+    if (-not $DbSecretName) {
+        throw "When -UseDbSecret is set, provide -DbSecretName."
+    }
+    $deployArgs += @("--set-secrets", "AIRLINE_DB_URL=$DbSecretName:latest")
+}
+
+& gcloud @deployArgs
 
 Write-Host "Done."
