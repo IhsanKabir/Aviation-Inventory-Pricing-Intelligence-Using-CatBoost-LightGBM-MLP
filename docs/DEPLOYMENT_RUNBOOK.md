@@ -9,6 +9,12 @@ This system should be deployed as a split stack:
 
 GitHub is source control and CI, not the runtime host.
 
+For repository-driven deployments, see:
+
+- [docs/GITHUB_DEPLOY_SECRETS.md](GITHUB_DEPLOY_SECRETS.md)
+- [.github/workflows/deploy-api-cloud-run.yml](../.github/workflows/deploy-api-cloud-run.yml)
+- [.github/workflows/deploy-web-vercel.yml](../.github/workflows/deploy-web-vercel.yml)
+
 ## Recommended target architecture
 
 ### Frontend
@@ -113,6 +119,11 @@ Helper script:
   - default behavior: BigQuery-backed deployment without `AIRLINE_DB_URL`
   - add `-UseDbSecret -DbSecretName airline-db-url` only if you intentionally enable PostgreSQL transitional endpoints
 
+GitHub Actions alternative:
+
+- use `.github/workflows/deploy-api-cloud-run.yml`
+- supply the required secrets from [docs/GITHUB_DEPLOY_SECRETS.md](GITHUB_DEPLOY_SECRETS.md)
+
 ## Suggested first production rollout
 
 1. Deploy API first
@@ -123,6 +134,11 @@ Helper script:
    - `/health`
    - `/routes`
    - `/forecasting`
+
+GitHub Actions alternative:
+
+- use `.github/workflows/deploy-web-vercel.yml`
+- supply `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`
 
 ## Database migration
 

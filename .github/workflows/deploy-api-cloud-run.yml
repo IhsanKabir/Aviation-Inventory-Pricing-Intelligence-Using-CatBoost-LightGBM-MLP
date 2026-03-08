@@ -1,0 +1,66 @@
+name: deploy-api-cloud-run
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+    paths:
+      - "apps/api/**"
+      - "requirements.txt"
+      - ".github/workflows/deploy-api-cloud-run.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      GCP_PROJECT_ID: aeropulseintelligence
+      GCP_REGION: asia-south1
+      ARTIFACT_REPOSITORY: aero-pulse
+      CLOUD_RUN_SERVICE: aero-pulse-api
+      BIGQUERY_DATASET: aviation_intel
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push API image
+        run: |
+          IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/api:${GITHUB_SHA}"
+          gcloud builds submit \
+            --project "${GCP_PROJECT_ID}" \
+            --tag "${IMAGE_URI}" \
+            --file apps/api/Dockerfile \
+            .
+          echo "IMAGE_URI=${IMAGE_URI}" >> "$GITHUB_ENV"
+
+      - name: Deploy Cloud Run service
+        run: |
+          gcloud run deploy "${CLOUD_RUN_SERVICE}" \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${GCP_REGION}" \
+            --image "${IMAGE_URI}" \
+            --service-account "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}" \
+            --allow-unauthenticated \
+            --set-env-vars "API_CORS_ORIGINS=${{ secrets.API_CORS_ORIGINS }},API_FORECASTING_SOURCE=bigquery,BIGQUERY_PROJECT_ID=${GCP_PROJECT_ID},BIGQUERY_DATASET=${BIGQUERY_DATASET}"
+
+      - name: Output service URL
+        run: |
+          gcloud run services describe "${CLOUD_RUN_SERVICE}" \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${GCP_REGION}" \
+            --format="value(status.url)"
