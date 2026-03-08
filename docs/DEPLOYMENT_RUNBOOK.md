@@ -120,3 +120,11 @@ Important:
    - `/health`
    - `/routes`
    - `/forecasting`
+
+## Database migration
+
+If the app still uses local PostgreSQL, migrate first.
+
+Preferred first path:
+
+- [NEON_MIGRATION_RUNBOOK.md](NEON_MIGRATION_RUNBOOK.md)
