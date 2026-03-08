@@ -1,6 +1,6 @@
 # Aero Pulse Web Application Plan
 
-This directory now contains the first Next.js shell for the operational monitor.
+This directory contains the Next.js web application for the hosted operational monitor.
 
 ## Stack
 
@@ -35,7 +35,7 @@ See:
 ## Current Pages
 
 - `/`
-  Executive shell with API health, latest cycle, airline, and route cards.
+  Executive overview with cycle health, platform status, airline coverage, and route coverage cards.
 
 - `/routes`
   Live route monitor with API-backed filters for route, airline, and cabin scope.
@@ -47,14 +47,14 @@ See:
   Tax comparison screen against the reporting API.
 
 - `/changes`
-  Change-event browser plan surface.
+  Change-event browser for hosted review of route and airline movements.
 
 - `/forecasting`
   Warehouse-backed ML/DL forecast and backtest review surface.
 
 ## Why Vercel May Help
 
-Vercel is useful for the Next.js frontend only. It is not required to build the shell locally.
+Vercel is useful for the Next.js frontend only. It is not required to build the web app locally.
 
 Recommended split later:
 

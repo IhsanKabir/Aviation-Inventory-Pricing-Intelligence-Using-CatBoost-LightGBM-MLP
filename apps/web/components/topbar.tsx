@@ -19,7 +19,7 @@ export function Topbar({ pathname }: { pathname: string }) {
           <div>
             <div className="brand-title">Aero Pulse Intelligence Monitor</div>
             <div className="brand-subtitle">
-              FastAPI + Next.js operational shell
+              Hosted route, change, tax, penalty, and forecasting monitor
             </div>
           </div>
         </div>

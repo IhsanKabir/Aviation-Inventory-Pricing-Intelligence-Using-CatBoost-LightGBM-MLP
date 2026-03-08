@@ -57,7 +57,7 @@ The web app should support:
 ## Step-by-Step Delivery Order
 
 1. Stabilize the FastAPI reporting contract.
-2. Build the Next.js route monitor shell.
+2. Build the Next.js route monitor application.
 3. Replace Excel-only filtering with API-driven filtering.
 4. Move hosted read paths from PostgreSQL to BigQuery.
 5. Add change-history drilldown.

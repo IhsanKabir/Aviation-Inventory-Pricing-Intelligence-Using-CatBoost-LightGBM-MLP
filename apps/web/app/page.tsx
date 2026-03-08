@@ -22,12 +22,13 @@ export default async function HomePage() {
   return (
     <>
       <section className="hero">
-        <div className="eyebrow">Operational Shell</div>
-        <h1>PostgreSQL-backed monitoring, ready for the web.</h1>
+        <div className="eyebrow">Live Platform</div>
+        <h1>Warehouse-backed airline intelligence, now operating on the web.</h1>
         <p>
-          This shell replaces the heavy workbook as the main interactive surface.
-          It reads current cycle state, route coverage, and change summaries from
-          the reporting API while BigQuery remains the historical analytics layer.
+          The web monitor is now the primary interactive surface for route
+          monitoring, change review, penalties, taxes, and forecasting. Local
+          collection and training still write first to PostgreSQL, then the
+          curated analytics layer is synchronized into BigQuery for hosted use.
         </p>
       </section>
 
@@ -57,7 +58,7 @@ export default async function HomePage() {
       <div className="section-grid">
         <DataPanel
           title="Platform health"
-          copy="Root API and reporting endpoints should be the primary interaction layer going forward."
+          copy="Hosted API, warehouse-backed views, and cycle coverage are the main operational checkpoints."
         >
           <div className="table-list">
             <div className="table-row">
@@ -84,15 +85,15 @@ export default async function HomePage() {
         </DataPanel>
 
         <DataPanel
-          title="Immediate build order"
-          copy="These are the next engineering moves for replacing workbook interactivity."
+          title="Current delivery state"
+          copy="Core web surfaces are already live. The remaining work is refinement, consistency, and model quality."
         >
           <div className="stack">
             {[
-              "Route-first monitor with API-driven airline/signal toggles",
-              "Detailed change-history drawer from column_change_events",
-              "Penalty and tax tabs",
-              "Forecasting and backtest visibility"
+              "Route monitor matrix is live with airline/signal toggles and capture-history expansion",
+              "Hosted reporting reads are BigQuery-first for routes, changes, penalties, taxes, and forecasting",
+              "Looker Studio forecasting and backtest review is already connected to curated warehouse views",
+              "Next major focus after UI fixes is ML/DL improvement and route-level model quality"
             ].map((step, idx) => (
               <div className="card roadmap-step" key={step}>
                 <div className="roadmap-step-header">
@@ -108,7 +109,7 @@ export default async function HomePage() {
       <div className="section-grid">
         <DataPanel
           title="Top airlines"
-          copy="Carrier-level presence from PostgreSQL metadata."
+          copy="Carrier-level presence in the latest synchronized operational cycle."
         >
           <div className="table-list">
             {airlines.slice(0, 8).map((item) => (
@@ -126,7 +127,7 @@ export default async function HomePage() {
 
         <DataPanel
           title="Top routes"
-          copy="Route metadata for the route-first UI shell."
+          copy="Current route coverage for the web route-monitor surface."
         >
           <div className="table-list">
             {routes.slice(0, 8).map((item) => (

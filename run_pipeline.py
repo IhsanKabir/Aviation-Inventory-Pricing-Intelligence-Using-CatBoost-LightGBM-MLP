@@ -87,7 +87,19 @@ def parse_args():
     )
 
     # prediction
-    parser.add_argument("--run-prediction", action="store_true")
+    parser.add_argument(
+        "--run-prediction",
+        dest="run_prediction",
+        action="store_true",
+        help="Run the ML+DL prediction step (default: enabled).",
+    )
+    parser.add_argument(
+        "--skip-prediction",
+        dest="run_prediction",
+        action="store_false",
+        help="Skip the ML+DL prediction step.",
+    )
+    parser.set_defaults(run_prediction=True)
     parser.add_argument(
         "--prediction-target",
         choices=[
