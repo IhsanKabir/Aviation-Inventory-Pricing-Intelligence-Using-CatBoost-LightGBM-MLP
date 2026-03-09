@@ -23,9 +23,10 @@ export function formatMoney(value?: number | null, currency = "BDT") {
   if (value === null || value === undefined) {
     return "-";
   }
+  const hasDecimals = Math.abs(value % 1) > Number.EPSILON;
   return `${currency} ${value.toLocaleString("en-US", {
-    maximumFractionDigits: 0,
-    minimumFractionDigits: value % 1 === 0 ? 0 : 2
+    maximumFractionDigits: hasDecimals ? 2 : 0,
+    minimumFractionDigits: hasDecimals ? 2 : 0
   })}`;
 }
 
