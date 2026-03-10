@@ -28,6 +28,7 @@ export type CycleHealthPayload = {
   route_pair_coverage_pct: number;
   missing_route_pairs: string[];
   latest_run_status?: {
+    cycle_id?: string | null;
     state?: string | null;
     phase?: string | null;
     overall_query_total?: number | null;
@@ -35,6 +36,7 @@ export type CycleHealthPayload = {
     total_rows_accumulated?: number | null;
     completed_at_utc?: string | null;
     selected_dates?: string[] | null;
+    matches_latest_cycle?: boolean | null;
   } | null;
 };
 

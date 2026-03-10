@@ -7,6 +7,20 @@ export default async function HealthPage() {
   const result = await getCycleHealth();
   const data = result.data;
   const runStatus = data?.latest_run_status;
+  const runMatchesLatestCycle = runStatus?.matches_latest_cycle !== false;
+  const latestRunRows = runStatus?.total_rows_accumulated;
+  const showRunRowsAsReported =
+    runMatchesLatestCycle &&
+    latestRunRows !== null &&
+    latestRunRows !== undefined &&
+    !((latestRunRows ?? 0) === 0 && (data?.offer_rows ?? 0) > 0);
+  const runRowsLabel = showRunRowsAsReported ? formatNumber(latestRunRows ?? 0) : "Not reported";
+  const runRowsTone = showRunRowsAsReported ? "good" : "warn";
+  const runRowsContext = !runStatus
+    ? "No latest run status file"
+    : !runMatchesLatestCycle
+      ? `Status file belongs to ${shortCycle(runStatus.cycle_id ?? null)}, not the latest cycle`
+      : "Accumulated row count from latest aligned run status";
 
   return (
     <>
@@ -62,9 +76,9 @@ export default async function HealthPage() {
             <div className="table-row">
               <div>
                 <strong>Latest run rows</strong>
-                <span>Accumulated row count from latest run status</span>
+                <span>{runRowsContext}</span>
               </div>
-              <div className="pill good">{formatNumber(runStatus?.total_rows_accumulated ?? 0)}</div>
+              <div className={`pill ${runRowsTone}`}>{runRowsLabel}</div>
               <span>{runStatus?.completed_at_utc ? formatDhakaDateTime(runStatus.completed_at_utc) : "-"}</span>
             </div>
             <div className="table-row">

@@ -3,6 +3,20 @@ import { MetricCard } from "@/components/metric-card";
 import { getApiBaseUrl, getDashboardPayload } from "@/lib/api";
 import { formatRouteGeo, formatRouteType } from "@/lib/format";
 
+function uniqueByKey<T>(items: T[], keyFn: (item: T) => string) {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+  for (const item of items) {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(item);
+  }
+  return unique;
+}
+
 function formatDate(value?: string | null) {
   if (!value) return "Not available";
   return new Intl.DateTimeFormat("en-GB", {
@@ -15,8 +29,10 @@ function formatDate(value?: string | null) {
 export default async function HomePage() {
   const payload = await getDashboardPayload();
   const latestCycle = payload.latestCycle.data;
-  const airlines = payload.airlines.data?.items ?? [];
-  const routes = payload.routes.data?.items ?? [];
+  const airlines = uniqueByKey(payload.airlines.data?.items ?? [], (item) => item.airline)
+    .sort((left, right) => (right.offer_rows ?? 0) - (left.offer_rows ?? 0) || left.airline.localeCompare(right.airline));
+  const routes = uniqueByKey(payload.routes.data?.items ?? [], (item) => item.route_key)
+    .sort((left, right) => (right.offer_rows ?? 0) - (left.offer_rows ?? 0) || left.route_key.localeCompare(right.route_key));
   const health = payload.health.data;
   const cycleHealth = payload.cycleHealth.data;
 

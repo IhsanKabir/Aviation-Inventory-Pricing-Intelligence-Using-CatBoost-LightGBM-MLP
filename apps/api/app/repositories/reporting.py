@@ -353,6 +353,20 @@ def get_recent_cycles(session: Session | None, limit: int = 10) -> list[dict[str
         try:
             rows = _run_bigquery_query(
                 f"""
+                WITH ranked_cycles AS (
+                  SELECT
+                    cycle_id,
+                    cycle_started_at_utc,
+                    cycle_completed_at_utc,
+                    offer_rows,
+                    airline_count,
+                    route_count,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY cycle_id
+                      ORDER BY cycle_completed_at_utc DESC, cycle_started_at_utc DESC, offer_rows DESC
+                    ) AS row_rank
+                  FROM {_bq_table("fact_cycle_run")}
+                )
                 SELECT
                   cycle_id,
                   cycle_started_at_utc,
@@ -360,7 +374,8 @@ def get_recent_cycles(session: Session | None, limit: int = 10) -> list[dict[str
                   offer_rows,
                   airline_count,
                   route_count
-                FROM {_bq_table("fact_cycle_run")}
+                FROM ranked_cycles
+                WHERE row_rank = 1
                 ORDER BY cycle_completed_at_utc DESC, cycle_id DESC
                 LIMIT @row_limit
                 """,
@@ -506,6 +521,7 @@ def get_cycle_health(session: Session | None) -> dict[str, Any]:
         "route_pair_coverage_pct": coverage_pct,
         "missing_route_pairs": missing_route_pairs[:60],
         "latest_run_status": {
+            "cycle_id": run_status.get("cycle_id") or run_status.get("scrape_id"),
             "state": run_status.get("state"),
             "phase": run_status.get("phase"),
             "overall_query_total": run_status.get("overall_query_total"),
@@ -513,6 +529,7 @@ def get_cycle_health(session: Session | None) -> dict[str, Any]:
             "total_rows_accumulated": run_status.get("total_rows_accumulated"),
             "completed_at_utc": run_status.get("completed_at_utc"),
             "selected_dates": run_status.get("selected_dates"),
+            "matches_latest_cycle": str(run_status.get("cycle_id") or run_status.get("scrape_id") or "") == cycle_id,
         } if run_status else None,
     }
 
@@ -1015,13 +1032,26 @@ def list_airlines(session: Session | None) -> list[dict[str, Any]]:
         try:
             rows = _run_bigquery_query(
                 f"""
+                WITH ranked_airlines AS (
+                  SELECT
+                    airline,
+                    first_seen_at_utc,
+                    last_seen_at_utc,
+                    offer_rows,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY airline
+                      ORDER BY last_seen_at_utc DESC, first_seen_at_utc DESC, offer_rows DESC
+                    ) AS row_rank
+                  FROM {_bq_table("dim_airline")}
+                )
                 SELECT
                   airline,
                   first_seen_at_utc,
                   last_seen_at_utc,
                   offer_rows
-                FROM {_bq_table("dim_airline")}
-                ORDER BY airline
+                FROM ranked_airlines
+                WHERE row_rank = 1
+                ORDER BY offer_rows DESC NULLS LAST, airline
                 """
             )
             return _serialize_warehouse_rows(rows)
@@ -1039,7 +1069,7 @@ def list_airlines(session: Session | None) -> list[dict[str, Any]]:
                 COUNT(*) AS offer_rows
             FROM flight_offers fo
             GROUP BY fo.airline
-            ORDER BY fo.airline
+            ORDER BY offer_rows DESC, fo.airline
             """
         )
     ).mappings().all()
@@ -1051,6 +1081,21 @@ def list_routes(session: Session | None) -> list[dict[str, Any]]:
         try:
             rows = _run_bigquery_query(
                 f"""
+                WITH ranked_routes AS (
+                  SELECT
+                    origin,
+                    destination,
+                    route_key,
+                    offer_rows,
+                    airlines_present,
+                    first_seen_at_utc,
+                    last_seen_at_utc,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY route_key
+                      ORDER BY last_seen_at_utc DESC, offer_rows DESC, airlines_present DESC
+                    ) AS row_rank
+                  FROM {_bq_table("dim_route")}
+                )
                 SELECT
                   origin,
                   destination,
@@ -1059,8 +1104,9 @@ def list_routes(session: Session | None) -> list[dict[str, Any]]:
                   airlines_present,
                   first_seen_at_utc,
                   last_seen_at_utc
-                FROM {_bq_table("dim_route")}
-                ORDER BY origin, destination
+                FROM ranked_routes
+                WHERE row_rank = 1
+                ORDER BY offer_rows DESC NULLS LAST, route_key
                 """
             )
             return _annotate_route_records(_serialize_warehouse_rows(rows))
@@ -1081,7 +1127,7 @@ def list_routes(session: Session | None) -> list[dict[str, Any]]:
                 MAX(fo.scraped_at) AS last_seen_at_utc
             FROM flight_offers fo
             GROUP BY fo.origin, fo.destination
-            ORDER BY fo.origin, fo.destination
+            ORDER BY offer_rows DESC, route_key
             """
         )
     ).mappings().all()

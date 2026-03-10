@@ -84,6 +84,40 @@ function buildNextDayWatchlist(rows: NextDayRow[] | undefined) {
     .sort((left, right) => right.absDelta - left.absDelta);
 }
 
+function assessForecastConfidence(mae: number | null, directionalAccuracy: number | null) {
+  if (directionalAccuracy !== null && directionalAccuracy >= 65 && (mae === null || mae <= 800)) {
+    return { label: "High confidence", tone: "good" as const };
+  }
+  if (directionalAccuracy !== null && directionalAccuracy >= 58 && (mae === null || mae <= 1500)) {
+    return { label: "Moderate confidence", tone: "warn" as const };
+  }
+  return { label: "Low confidence", tone: "warn" as const };
+}
+
+function describeVolatility(mae: number | null, directionalAccuracy: number | null) {
+  if ((mae !== null && mae >= 1500) || (directionalAccuracy !== null && directionalAccuracy < 55)) {
+    return "High-volatility route";
+  }
+  if ((mae !== null && mae <= 600) && (directionalAccuracy !== null && directionalAccuracy >= 65)) {
+    return "Stable market";
+  }
+  return "Mixed signal";
+}
+
+function recommendAction(delta: number | null, confidenceLabel: string) {
+  const absDelta = Math.abs(delta ?? 0);
+  if (absDelta >= 1500) {
+    return "Watch closely";
+  }
+  if (absDelta >= 700) {
+    return "Review pricing";
+  }
+  if (confidenceLabel === "Low confidence") {
+    return "Monitor only";
+  }
+  return "Stable market";
+}
+
 export default async function ForecastingPage() {
   const payload = await getForecastingPayload();
   const latestPrediction = payload.data?.latest_prediction_bundle ?? null;
@@ -109,6 +143,37 @@ export default async function ForecastingPage() {
   const backtestLeaderboard = rankByMetric(latestBacktest?.backtest_eval, "mae", "asc").slice(0, 10);
   const backtestMeta = latestBacktest?.backtest_meta as Record<string, unknown> | null | undefined;
   const backtestSummary = (backtestMeta?.backtest ?? null) as Record<string, unknown> | null;
+  const overallConfidence = assessForecastConfidence(
+    toNumber(bestPredictionMae?.mae),
+    toNumber(bestDirectional?.directional_accuracy_pct)
+  );
+  const operationalPosture =
+    overallConfidence.label === "Low confidence"
+      ? "Use this as an early warning screen, not an automated pricing signal."
+      : overallConfidence.label === "Moderate confidence"
+        ? "Use forecast direction as a decision aid, then confirm against route movement and tax context."
+        : "Forecast direction is strong enough to support active pricing review on prioritized routes.";
+  const routeWinnerMap = new Map(
+    routeWinners.map((row) => [
+      `${String(row.route_key ?? `${String(row.origin ?? "-")}-${String(row.destination ?? "-")}`)}|${String(row.airline ?? "-")}|${String(row.cabin ?? "-")}`,
+      row
+    ])
+  );
+  const actionWatchlist = nextDayWatchlist.map((item) => {
+    const routeKey = `${String(item.row.origin ?? "-")}-${String(item.row.destination ?? "-")}`;
+    const winner = routeWinnerMap.get(`${routeKey}|${String(item.row.airline ?? "-")}|${String(item.row.cabin ?? "-")}`);
+    const confidence = assessForecastConfidence(
+      toNumber(winner?.winner_mae),
+      toNumber(winner?.winner_directional_accuracy_pct)
+    );
+    return {
+      ...item,
+      routeKey,
+      confidence,
+      recommendation: recommendAction(item.delta, confidence.label),
+      volatility: describeVolatility(toNumber(winner?.winner_mae), toNumber(winner?.winner_directional_accuracy_pct))
+    };
+  });
 
   return (
     <>
@@ -170,6 +235,32 @@ export default async function ForecastingPage() {
 
       <div className="section-grid forecast-grid">
         <DataPanel
+          title="Decision frame"
+          copy="Operational interpretation of the current bundle. This answers whether the forecast is ready for action or only for monitoring."
+        >
+          <div className="table-list">
+            <div className="table-row">
+              <div>
+                <strong>Model confidence</strong>
+                <span>{operationalPosture}</span>
+              </div>
+              <div className={`pill ${overallConfidence.tone}`}>{overallConfidence.label}</div>
+              <span>
+                Best directional {formatPercent(toNumber(bestDirectional?.directional_accuracy_pct))} · MAE {formatNumber(toNumber(bestPredictionMae?.mae))}
+              </span>
+            </div>
+            <div className="table-row">
+              <div>
+                <strong>Action posture</strong>
+                <span>Highest-signal rows from the current next-day watchlist.</span>
+              </div>
+              <div className={`pill ${actionWatchlist.length ? "warn" : "good"}`}>{Math.min(actionWatchlist.length, 6)} routes</div>
+              <span>{actionWatchlist[0]?.recommendation ?? "No active route recommendation"}</span>
+            </div>
+          </div>
+        </DataPanel>
+
+        <DataPanel
           title="Prediction bundle"
           copy="Operational prediction bundle currently backing the web and BI surfaces."
         >
@@ -227,6 +318,33 @@ export default async function ForecastingPage() {
       </div>
 
       <div className="stack">
+        <DataPanel
+          title="Action watchlist"
+          copy="Decision-oriented shortlist combining next-day forecast gap, route-level confidence, and volatility framing."
+        >
+          {!actionWatchlist.length ? (
+            <div className="empty-state">No decision watchlist rows qualified from the latest bundle.</div>
+          ) : (
+            <div className="table-list compact-list">
+              {actionWatchlist.slice(0, 6).map((item, index) => (
+                <div
+                  className="table-row"
+                  key={`${String(item.row.airline)}-${item.routeKey}-${String(item.row.predicted_for_day)}-action-${index}`}
+                >
+                  <div>
+                    <strong>{item.routeKey}</strong>
+                    <span>{`${String(item.row.airline ?? "-")} · ${String(item.row.cabin ?? "-")} · ${item.volatility}`}</span>
+                  </div>
+                  <div className={`pill ${item.confidence.tone}`}>{item.recommendation}</div>
+                  <span>
+                    {item.delta !== null ? `${item.delta > 0 ? "+" : ""}${formatNumber(item.delta)}` : "-"} · {item.confidence.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </DataPanel>
+
         <DataPanel
           title="Model leaderboard"
           copy="Lowest-error models from the latest prediction bundle. This is the page to check before trusting the next-day outputs."
@@ -410,10 +528,12 @@ export default async function ForecastingPage() {
                     <th>Preferred forecast</th>
                     <th>Forecast model</th>
                     <th>Delta</th>
+                    <th>Confidence</th>
+                    <th>Recommendation</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {nextDayWatchlist.map((item, index) => (
+                  {actionWatchlist.map((item, index) => (
                     <tr key={`${String(item.row.airline)}-${String(item.row.origin)}-${String(item.row.destination)}-${String(item.row.predicted_for_day)}-${index}`}>
                       <td>{String(item.row.predicted_for_day ?? "-")}</td>
                       <td>{`${String(item.row.origin ?? "-")}-${String(item.row.destination ?? "-")}`}</td>
@@ -425,6 +545,8 @@ export default async function ForecastingPage() {
                       <td className={item.delta !== null && item.delta < 0 ? "forecast-delta-down" : "forecast-delta-up"}>
                         {item.delta !== null ? `${item.delta > 0 ? "+" : ""}${formatNumber(item.delta)}` : "-"}
                       </td>
+                      <td>{item.confidence.label}</td>
+                      <td>{item.recommendation}</td>
                     </tr>
                   ))}
                 </tbody>

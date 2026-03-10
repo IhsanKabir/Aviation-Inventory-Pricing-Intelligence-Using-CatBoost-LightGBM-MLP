@@ -1,0 +1,393 @@
+{
+  "profiles": {
+    "ow_default": {
+      "trip_type": "OW",
+      "description": "Safe default while connector-specific round-trip support is still limited."
+    },
+    "bg_domestic_rt": {
+      "trip_type": "RT",
+      "return_date_offsets": [
+        1,
+        2,
+        3
+      ],
+      "description": "Bangladesh domestic same-market returns for Biman."
+    },
+    "bg_shorthaul_rt": {
+      "trip_type": "RT",
+      "return_date_offsets": [
+        3,
+        5,
+        7
+      ],
+      "description": "Nearby regional return pattern for Biman."
+    },
+    "bg_mediumhaul_rt": {
+      "trip_type": "RT",
+      "return_date_offsets": [
+        5,
+        7,
+        10
+      ],
+      "description": "Medium-haul international return pattern for Biman."
+    },
+    "bg_longhaul_rt": {
+      "trip_type": "RT",
+      "return_date_offsets": [
+        7,
+        14,
+        21
+      ],
+      "description": "Long-haul international return pattern for Biman."
+    }
+  },
+  "airlines": {
+    "2A": {
+      "default_profile": "ow_default",
+      "routes": {
+        "BZL-DAC": {},
+        "CGP-DAC": {},
+        "CXB-DAC": {},
+        "DAC-BZL": {},
+        "DAC-CGP": {},
+        "DAC-CXB": {},
+        "DAC-JSR": {},
+        "DAC-RJH": {},
+        "DAC-SPD": {},
+        "DAC-ZYL": {},
+        "JSR-DAC": {},
+        "RJH-DAC": {},
+        "SPD-DAC": {},
+        "ZYL-DAC": {}
+      }
+    },
+    "3L": {
+      "default_profile": "ow_default",
+      "routes": {
+        "AUH-DAC": {},
+        "DAC-AUH": {}
+      }
+    },
+    "6E": {
+      "default_profile": "ow_default",
+      "routes": {
+        "CCU-DAC": {},
+        "DAC-CCU": {},
+        "DAC-MAA": {},
+        "MAA-DAC": {}
+      }
+    },
+    "8D": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-MLE": {},
+        "MLE-DAC": {}
+      }
+    },
+    "AK": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-KUL": {},
+        "KUL-DAC": {}
+      }
+    },
+    "BG": {
+      "default_profile": "bg_mediumhaul_rt",
+      "routes": {
+        "AUH-CGP": {},
+        "AUH-DAC": {},
+        "BAH-CXB": {},
+        "BKK-DAC": {
+          "profile": "bg_shorthaul_rt"
+        },
+        "BZL-DAC": {
+          "profile": "bg_domestic_rt"
+        },
+        "CAN-DAC": {},
+        "CCU-CGP": {
+          "profile": "bg_shorthaul_rt"
+        },
+        "CCU-DAC": {
+          "profile": "bg_shorthaul_rt"
+        },
+        "CGP-DAC": {
+          "profile": "bg_domestic_rt"
+        },
+        "CMB-CXB": {
+          "profile": "bg_shorthaul_rt"
+        },
+        "CXB-DAC": {
+          "profile": "bg_domestic_rt"
+        },
+        "DAC-AUH": {},
+        "DAC-BKK": {
+          "profile": "bg_shorthaul_rt"
+        },
+        "DAC-BZL": {
+          "profile": "bg_domestic_rt"
+        },
+        "DAC-CAN": {},
+        "DAC-CCU": {
+          "profile": "bg_shorthaul_rt"
+        },
+        "DAC-CGP": {
+          "profile": "bg_domestic_rt"
+        },
+        "DAC-CXB": {
+          "profile": "bg_domestic_rt"
+        },
+        "DAC-DOH": {},
+        "DAC-DXB": {},
+        "DAC-JED": {},
+        "DAC-JSR": {
+          "profile": "bg_domestic_rt"
+        },
+        "DAC-KUL": {},
+        "DAC-MAA": {
+          "profile": "bg_shorthaul_rt"
+        },
+        "DAC-MCT": {},
+        "DAC-MLE": {
+          "profile": "bg_shorthaul_rt"
+        },
+        "DAC-RJH": {
+          "profile": "bg_domestic_rt"
+        },
+        "DAC-SHJ": {},
+        "DAC-SIN": {},
+        "DAC-SPD": {
+          "profile": "bg_domestic_rt"
+        },
+        "DAC-ZYL": {
+          "profile": "bg_domestic_rt"
+        },
+        "DOH-CGP": {},
+        "DOH-DAC": {},
+        "DOH-ZYL": {},
+        "DXB-CXB": {},
+        "DXB-DAC": {},
+        "DXB-ZYL": {},
+        "JED-CGP": {},
+        "JED-CXB": {},
+        "JED-DAC": {},
+        "JED-ZYL": {},
+        "JSR-DAC": {
+          "profile": "bg_domestic_rt"
+        },
+        "KUL-CGP": {},
+        "KUL-DAC": {},
+        "KWI-CXB": {},
+        "LHR-ZYL": {
+          "profile": "bg_longhaul_rt"
+        },
+        "MAA-DAC": {
+          "profile": "bg_shorthaul_rt"
+        },
+        "MAN-ZYL": {
+          "profile": "bg_longhaul_rt"
+        },
+        "MCT-CGP": {},
+        "MCT-CXB": {},
+        "MCT-DAC": {},
+        "MED-CGP": {},
+        "MED-ZYL": {},
+        "MLE-DAC": {
+          "profile": "bg_shorthaul_rt"
+        },
+        "RJH-DAC": {
+          "profile": "bg_domestic_rt"
+        },
+        "SHJ-CXB": {},
+        "SHJ-DAC": {},
+        "SHJ-ZYL": {},
+        "SIN-CGP": {},
+        "SIN-DAC": {},
+        "SPD-DAC": {
+          "profile": "bg_domestic_rt"
+        },
+        "ZYL-DAC": {
+          "profile": "bg_domestic_rt"
+        }
+      }
+    },
+    "BS": {
+      "default_profile": "ow_default",
+      "routes": {
+        "AUH-CGP": {},
+        "AUH-DAC": {},
+        "BAH-CXB": {},
+        "BKK-DAC": {},
+        "BZL-DAC": {},
+        "CAN-DAC": {},
+        "CCU-CGP": {},
+        "CCU-DAC": {},
+        "CGP-DAC": {},
+        "CMB-CXB": {},
+        "CXB-DAC": {},
+        "DAC-AUH": {},
+        "DAC-BKK": {},
+        "DAC-BZL": {},
+        "DAC-CAN": {},
+        "DAC-CCU": {},
+        "DAC-CGP": {},
+        "DAC-CXB": {},
+        "DAC-DOH": {},
+        "DAC-DXB": {},
+        "DAC-JED": {},
+        "DAC-JSR": {},
+        "DAC-KUL": {},
+        "DAC-MAA": {},
+        "DAC-MCT": {},
+        "DAC-MLE": {},
+        "DAC-RJH": {},
+        "DAC-SHJ": {},
+        "DAC-SIN": {},
+        "DAC-SPD": {},
+        "DAC-ZYL": {},
+        "DOH-CGP": {},
+        "DOH-DAC": {},
+        "DOH-ZYL": {},
+        "DXB-CXB": {},
+        "DXB-DAC": {},
+        "DXB-ZYL": {},
+        "JED-CGP": {},
+        "JED-CXB": {},
+        "JED-DAC": {},
+        "JED-ZYL": {},
+        "JSR-DAC": {},
+        "KUL-CGP": {},
+        "KUL-DAC": {},
+        "KWI-CXB": {},
+        "LHR-ZYL": {},
+        "MAA-DAC": {},
+        "MAN-ZYL": {},
+        "MCT-CGP": {},
+        "MCT-CXB": {},
+        "MCT-DAC": {},
+        "MED-CGP": {},
+        "MED-ZYL": {},
+        "MLE-DAC": {},
+        "RJH-DAC": {},
+        "SHJ-CXB": {},
+        "SHJ-DAC": {},
+        "SHJ-ZYL": {},
+        "SIN-CGP": {},
+        "SIN-DAC": {},
+        "SPD-DAC": {},
+        "ZYL-DAC": {}
+      }
+    },
+    "CZ": {
+      "default_profile": "ow_default",
+      "routes": {
+        "CAN-DAC": {},
+        "DAC-CAN": {}
+      }
+    },
+    "EK": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-DXB": {},
+        "DXB-DAC": {}
+      }
+    },
+    "FZ": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-DXB": {},
+        "DXB-DAC": {}
+      }
+    },
+    "G9": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-SHJ": {},
+        "SHJ-DAC": {}
+      }
+    },
+    "MH": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-KUL": {},
+        "KUL-DAC": {}
+      }
+    },
+    "OD": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-KUL": {},
+        "KUL-DAC": {}
+      }
+    },
+    "Q2": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-MLE": {},
+        "MLE-DAC": {}
+      }
+    },
+    "QR": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-DOH": {},
+        "DOH-DAC": {}
+      }
+    },
+    "SQ": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-SIN": {},
+        "SIN-DAC": {}
+      }
+    },
+    "SV": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-JED": {},
+        "DAC-RUH": {},
+        "JED-DAC": {},
+        "RUH-DAC": {}
+      }
+    },
+    "TG": {
+      "default_profile": "ow_default",
+      "routes": {
+        "BKK-DAC": {},
+        "DAC-BKK": {}
+      }
+    },
+    "UL": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-MLE": {},
+        "MLE-DAC": {}
+      }
+    },
+    "VQ": {
+      "default_profile": "ow_default",
+      "routes": {
+        "BZL-DAC": {},
+        "CGP-DAC": {},
+        "CXB-DAC": {},
+        "DAC-BZL": {},
+        "DAC-CGP": {},
+        "DAC-CXB": {},
+        "DAC-JSR": {},
+        "DAC-RJH": {},
+        "DAC-SPD": {},
+        "DAC-ZYL": {},
+        "JSR-DAC": {},
+        "RJH-DAC": {},
+        "SPD-DAC": {},
+        "ZYL-DAC": {}
+      }
+    },
+    "WY": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-MCT": {},
+        "MCT-DAC": {}
+      }
+    }
+  }
+}

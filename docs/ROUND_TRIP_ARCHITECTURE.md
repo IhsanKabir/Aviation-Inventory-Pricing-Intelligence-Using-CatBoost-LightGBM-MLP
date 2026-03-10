@@ -76,6 +76,171 @@ Still next:
 - itinerary-level ranking and pricing comparison
 - warehouse-side round-trip exposure for hosted-only reads
 
+## Search Configuration
+
+Round-trip search dates are configured at collection time in `run_all.py`.
+
+Outbound date selectors:
+
+- `--date`
+- `--dates`
+- `--date-start` / `--date-end`
+- `--date-offsets`
+- `config/dates.json`
+
+Return-date selectors:
+
+- `--return-date`
+- `--return-dates`
+- `--return-date-start` / `--return-date-end`
+- `--return-date-offsets`
+- `--return-date-offset-start` / `--return-date-offset-end`
+- `config/dates.json`
+- `config/route_trip_windows.json`
+
+Supported patterns:
+
+1. Single outbound + single return:
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py --airline BG --origin DAC --destination CXB --date 2026-03-12 --trip-type RT --return-date 2026-03-15
+```
+
+2. Multiple outbound dates + one shared return-date range:
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py --airline BG --origin DAC --destination CXB --dates 2026-03-12,2026-03-13 --trip-type RT --return-date-start 2026-03-15 --return-date-end 2026-03-18
+```
+
+3. Offset-based return logic from each outbound date:
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py --airline BG --origin DAC --destination CXB --date-start 2026-03-12 --date-end 2026-03-14 --trip-type RT --return-date-offsets 2,3,5
+```
+
+4. Offset range from each outbound date:
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py --airline BG --origin DAC --destination CXB --date-start 2026-03-12 --date-end 2026-03-14 --trip-type RT --return-date-offset-start 2 --return-date-offset-end 5
+```
+
+5. Config-file driven return selectors in `config/dates.json`:
+
+```json
+{
+  "dates": ["2026-03-12", "2026-03-13"],
+  "return_date_offsets": [2, 3, 5]
+}
+```
+
+Or absolute return-date ranges:
+
+```json
+{
+  "date_start": "2026-03-12",
+  "date_end": "2026-03-14",
+  "return_date_ranges": [
+    { "start": "2026-03-15", "end": "2026-03-17" },
+    { "start": "2026-03-20", "end": "2026-03-22" }
+  ]
+}
+```
+
+## Route-Wise Trip Configuration
+
+If you want different trip behavior per route, keep that in [`config/route_trip_windows.json`](../config/route_trip_windows.json).
+
+Purpose:
+
+- keep the route universe in [`config/routes.json`](../config/routes.json)
+- keep global outbound-date defaults in `config/dates.json`
+- keep route-specific `OW` / `RT` and return-date logic in one separate file
+
+Preferred structure:
+
+- `profiles` for reusable trip policies
+- `airlines` for grouped airline blocks
+- `default_profile` inside each airline block
+- `routes` map inside each airline block for route-specific overrides
+
+Backward compatibility:
+
+- the loader still accepts the older flat `routes` list
+- the preferred human-editable shape is now grouped `airlines`
+
+Supported entry fields:
+
+- `airline`
+- `origin` and `destination`
+- or `route` as `DAC-CXB`
+- `profile`
+- `trip_type`
+- `dates`, `date_start` / `date_end`, `date_ranges`, `day_offsets`
+- `return_date`
+- `return_dates`
+- `return_date_start` / `return_date_end`
+- `return_date_ranges`
+- `return_date_offsets`
+- `return_date_offset_start` / `return_date_offset_end`
+
+Example:
+
+```json
+{
+  "profiles": {
+    "bg_domestic_rt": {
+      "trip_type": "RT",
+      "return_date_offsets": [1, 2, 3]
+    },
+    "ow_default": {
+      "trip_type": "OW"
+    }
+  },
+  "airlines": {
+    "BG": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-CXB": {
+          "profile": "bg_domestic_rt"
+        },
+        "DAC-CGP": {
+          "profile": "bg_domestic_rt",
+          "return_date_start": "2026-03-15",
+          "return_date_end": "2026-03-18"
+        }
+      }
+    },
+    "VQ": {
+      "default_profile": "ow_default",
+      "routes": {
+        "DAC-SPD": {}
+      }
+    }
+  }
+}
+```
+
+Behavior:
+
+- airline `default_profile` applies to every route in that airline block unless the route overrides it
+- route-level config overrides the global trip mode for that route
+- named `profile` values let you reuse one rule set across many routes
+- route-level outbound dates override the global outbound dates for that route
+- route-level return selectors override the global return selectors for that route
+- if a route is forced to `OW`, return selectors are ignored for that route
+- if no route override matches, `run_all.py` uses the normal global CLI / `config/dates.json` settings
+
+Matching rule:
+
+- exact `airline + origin + destination` match wins first
+- if no airline-specific row matches, a row without `airline` acts as a wildcard for that route
+
+CLI:
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py --route-trip-config config/route_trip_windows.json
+```
+
 ## Next Implementation Steps
 
 1. Upgrade OTA connectors with explicit round-trip payload builders.

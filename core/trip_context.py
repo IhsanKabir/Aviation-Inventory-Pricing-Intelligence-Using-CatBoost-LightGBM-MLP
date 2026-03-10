@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import date
+from datetime import timedelta
 from typing import Any
 
 
@@ -22,6 +23,90 @@ def normalize_iso_date(value: Any) -> str | None:
     if not raw:
         return None
     return date.fromisoformat(raw).isoformat()
+
+
+def expand_iso_date_range(start_raw: Any, end_raw: Any) -> list[str]:
+    start = normalize_iso_date(start_raw)
+    end = normalize_iso_date(end_raw)
+    if not start or not end:
+        return []
+    start_date = date.fromisoformat(start)
+    end_date = date.fromisoformat(end)
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+    span = (end_date - start_date).days
+    return [(start_date + timedelta(days=offset)).isoformat() for offset in range(span + 1)]
+
+
+def build_trip_search_windows(
+    *,
+    outbound_dates: list[str],
+    trip_type: str = TRIP_TYPE_ONE_WAY,
+    return_dates: list[str] | None = None,
+    return_offsets: list[int] | None = None,
+) -> list[dict[str, str | None]]:
+    normalized_trip_type = normalize_trip_type(trip_type)
+    normalized_outbounds: list[str] = []
+    seen_outbounds: set[str] = set()
+    for value in outbound_dates:
+        normalized = normalize_iso_date(value)
+        if not normalized or normalized in seen_outbounds:
+            continue
+        seen_outbounds.add(normalized)
+        normalized_outbounds.append(normalized)
+
+    if normalized_trip_type == TRIP_TYPE_ONE_WAY:
+        return [{"departure_date": outbound, "return_date": None} for outbound in normalized_outbounds]
+
+    normalized_returns: list[str] = []
+    seen_returns: set[str] = set()
+    for value in return_dates or []:
+        normalized = normalize_iso_date(value)
+        if not normalized or normalized in seen_returns:
+            continue
+        seen_returns.add(normalized)
+        normalized_returns.append(normalized)
+
+    normalized_offsets: list[int] = []
+    seen_offsets: set[int] = set()
+    for value in return_offsets or []:
+        offset = int(value)
+        if offset < 0:
+            raise ValueError("return_date offsets cannot be negative")
+        if offset in seen_offsets:
+            continue
+        seen_offsets.add(offset)
+        normalized_offsets.append(offset)
+
+    if not normalized_returns and not normalized_offsets:
+        raise ValueError("return_date is required for round-trip searches")
+
+    windows: list[dict[str, str | None]] = []
+    seen_windows: set[tuple[str, str]] = set()
+    for outbound in normalized_outbounds:
+        outbound_date = date.fromisoformat(outbound)
+        candidate_returns: list[str] = []
+
+        for inbound in normalized_returns:
+            if inbound >= outbound and inbound not in candidate_returns:
+                candidate_returns.append(inbound)
+
+        for offset in normalized_offsets:
+            inbound = (outbound_date + timedelta(days=offset)).isoformat()
+            if inbound not in candidate_returns:
+                candidate_returns.append(inbound)
+
+        for inbound in candidate_returns:
+            key = (outbound, inbound)
+            if key in seen_windows:
+                continue
+            seen_windows.add(key)
+            windows.append({"departure_date": outbound, "return_date": inbound})
+
+    if not windows:
+        raise ValueError("No valid round-trip search windows resolved")
+
+    return windows
 
 
 def build_trip_context(

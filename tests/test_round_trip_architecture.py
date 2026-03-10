@@ -5,6 +5,8 @@ from core.trip_context import (
     TRIP_TYPE_ROUND_TRIP,
     apply_trip_context,
     build_trip_context,
+    build_trip_search_windows,
+    expand_iso_date_range,
     normalize_trip_type,
 )
 from modules import biman
@@ -48,6 +50,48 @@ class RoundTripArchitectureTests(unittest.TestCase):
         self.assertEqual("2026-03-15", context["requested_return_date"])
         self.assertEqual(5, context["trip_duration_days"])
         self.assertEqual(24, len(context["trip_request_id"]))
+
+    def test_expand_iso_date_range_is_inclusive(self):
+        self.assertEqual(
+            ["2026-03-10", "2026-03-11", "2026-03-12"],
+            expand_iso_date_range("2026-03-10", "2026-03-12"),
+        )
+
+    def test_build_trip_search_windows_supports_return_offsets(self):
+        windows = build_trip_search_windows(
+            outbound_dates=["2026-03-10", "2026-03-11"],
+            trip_type="RT",
+            return_offsets=[2, 4],
+        )
+
+        self.assertEqual(
+            [
+                {"departure_date": "2026-03-10", "return_date": "2026-03-12"},
+                {"departure_date": "2026-03-10", "return_date": "2026-03-14"},
+                {"departure_date": "2026-03-11", "return_date": "2026-03-13"},
+                {"departure_date": "2026-03-11", "return_date": "2026-03-15"},
+            ],
+            windows,
+        )
+
+    def test_build_trip_search_windows_supports_absolute_return_ranges(self):
+        windows = build_trip_search_windows(
+            outbound_dates=["2026-03-10", "2026-03-12"],
+            trip_type="RT",
+            return_dates=["2026-03-09", "2026-03-12", "2026-03-13", "2026-03-15"],
+        )
+
+        self.assertEqual(
+            [
+                {"departure_date": "2026-03-10", "return_date": "2026-03-12"},
+                {"departure_date": "2026-03-10", "return_date": "2026-03-13"},
+                {"departure_date": "2026-03-10", "return_date": "2026-03-15"},
+                {"departure_date": "2026-03-12", "return_date": "2026-03-12"},
+                {"departure_date": "2026-03-12", "return_date": "2026-03-13"},
+                {"departure_date": "2026-03-12", "return_date": "2026-03-15"},
+            ],
+            windows,
+        )
 
     def test_apply_trip_context_defaults_outbound_leg_shape(self):
         context = build_trip_context(

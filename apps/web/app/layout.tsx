@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, IBM_Plex_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 
 import "./globals.css";
 
@@ -33,6 +34,7 @@ export default async function RootLayout({
         <Topbar />
         <main className="page shell">{children}</main>
         <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

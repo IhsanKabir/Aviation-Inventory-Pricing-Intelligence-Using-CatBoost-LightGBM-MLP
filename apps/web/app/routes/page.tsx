@@ -4,15 +4,158 @@ import { RouteMonitorMatrix } from "@/components/route-monitor-matrix";
 import {
   getRecentCycles,
   getRouteMonitorMatrixPayload,
-  getRoutes
+  getRoutes,
+  type RouteMonitorMatrixRoute
 } from "@/lib/api";
 import { buildReportingExportUrl } from "@/lib/export";
-import { formatDhakaDateTime, shortCycle } from "@/lib/format";
+import { formatDhakaDateTime, formatMoney, shortCycle } from "@/lib/format";
 import { buildHref, firstParam, manyParams, parseLimit, setParam, type RawSearchParams } from "@/lib/query";
 
 type PageProps = {
   searchParams?: Promise<RawSearchParams>;
 };
+
+function uniqueByKey<T>(items: T[], keyFn: (item: T) => string) {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+  for (const item of items) {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(item);
+  }
+  return unique;
+}
+
+function buildRoutePriorityBoard(routes: RouteMonitorMatrixRoute[]) {
+  return routes
+    .map((route) => {
+      let cheapest:
+        | {
+            airline: string;
+            flightNumber: string;
+            amount: number;
+          }
+        | undefined;
+      let strongestMove:
+        | {
+            delta: number;
+            airline: string;
+            flightNumber: string;
+            departureDate: string;
+          }
+        | undefined;
+      let minTax: number | null = null;
+      let maxTax: number | null = null;
+      let soldOutCount = 0;
+      let lowSeatCount = 0;
+      let highLoadCount = 0;
+      let latestCaptureAt: string | null = null;
+
+      const flightById = new Map(route.flight_groups.map((flight) => [flight.flight_group_id, flight]));
+
+      for (const dateGroup of route.date_groups) {
+        const latestCapture = dateGroup.captures[0];
+        if (!latestCapture) {
+          continue;
+        }
+        const captureTimestamp = latestCapture.captured_at_utc ?? null;
+        if (captureTimestamp && (!latestCaptureAt || captureTimestamp > latestCaptureAt)) {
+          latestCaptureAt = captureTimestamp;
+        }
+
+        for (const cell of latestCapture.cells) {
+          const flight = flightById.get(cell.flight_group_id);
+          if (!flight) {
+            continue;
+          }
+          if (cell.min_total_price_bdt != null && (!cheapest || Number(cell.min_total_price_bdt) < cheapest.amount)) {
+            cheapest = {
+              airline: flight.airline,
+              flightNumber: flight.flight_number,
+              amount: Number(cell.min_total_price_bdt)
+            };
+          }
+          if (cell.tax_amount != null) {
+            const tax = Number(cell.tax_amount);
+            minTax = minTax === null ? tax : Math.min(minTax, tax);
+            maxTax = maxTax === null ? tax : Math.max(maxTax, tax);
+          }
+          if (cell.soldout) {
+            soldOutCount += 1;
+          }
+          if (cell.seat_available != null && Number(cell.seat_available) <= 5) {
+            lowSeatCount += 1;
+          }
+          if (cell.load_factor_pct != null && Number(cell.load_factor_pct) >= 85) {
+            highLoadCount += 1;
+          }
+        }
+
+        const previousCapture = dateGroup.captures[1];
+        if (!previousCapture) {
+          continue;
+        }
+        const previousByFlight = new Map(previousCapture.cells.map((cell) => [cell.flight_group_id, cell]));
+        for (const cell of latestCapture.cells) {
+          const previous = previousByFlight.get(cell.flight_group_id);
+          if (!previous || cell.min_total_price_bdt == null || previous.min_total_price_bdt == null) {
+            continue;
+          }
+          const delta = Number(cell.min_total_price_bdt) - Number(previous.min_total_price_bdt);
+          if (!strongestMove || Math.abs(delta) > Math.abs(strongestMove.delta)) {
+            const flight = flightById.get(cell.flight_group_id);
+            if (!flight) {
+              continue;
+            }
+            strongestMove = {
+              delta,
+              airline: flight.airline,
+              flightNumber: flight.flight_number,
+              departureDate: dateGroup.departure_date
+            };
+          }
+        }
+      }
+
+      const taxSpread = minTax !== null && maxTax !== null ? maxTax - minTax : null;
+      const inventoryLabel =
+        soldOutCount > 0
+          ? "Sold-out pressure"
+          : highLoadCount > 0 || lowSeatCount > 0
+            ? "Tight inventory"
+            : minTax !== null || latestCaptureAt
+              ? "Stable inventory"
+              : "No inventory signal";
+      const priorityScore =
+        Math.abs(strongestMove?.delta ?? 0) +
+        (taxSpread ?? 0) +
+        soldOutCount * 2000 +
+        highLoadCount * 600 +
+        lowSeatCount * 300;
+      const statusLabel =
+        soldOutCount > 0 || Math.abs(strongestMove?.delta ?? 0) >= 1500
+          ? "Watch closely"
+          : highLoadCount > 0 || (taxSpread ?? 0) >= 500
+            ? "Needs review"
+            : "Stable";
+
+      return {
+        routeKey: route.route_key,
+        cheapest,
+        strongestMove,
+        taxSpread,
+        inventoryLabel,
+        latestCaptureAt,
+        priorityScore,
+        statusLabel
+      };
+    })
+    .sort((left, right) => right.priorityScore - left.priorityScore || left.routeKey.localeCompare(right.routeKey))
+    .slice(0, 8);
+}
 
 export default async function RoutesPage({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {};
@@ -42,8 +185,9 @@ export default async function RoutesPage({ searchParams }: PageProps) {
   ]);
 
   const routeBlocks = matrix.data?.routes ?? [];
-  const recentCycleOptions = recentCycles.data?.items ?? [];
-  const routeOptions = [...(routes.data?.items ?? [])]
+  const routePriorityBoard = buildRoutePriorityBoard(routeBlocks);
+  const recentCycleOptions = uniqueByKey(recentCycles.data?.items ?? [], (item) => item.cycle_id ?? "");
+  const routeOptions = uniqueByKey(routes.data?.items ?? [], (item) => item.route_key)
     .sort((left, right) => (right.offer_rows ?? 0) - (left.offer_rows ?? 0) || left.route_key.localeCompare(right.route_key))
     .slice(0, 16)
     .map((item) => ({ routeKey: item.route_key, origin: item.origin, destination: item.destination }));
@@ -172,6 +316,31 @@ export default async function RoutesPage({ searchParams }: PageProps) {
           title="Route flight fare monitor"
           copy="Latest captures are shown first. Use the capture column to expand older observations for the same departure date."
         >
+          {matrix.ok && routePriorityBoard.length ? (
+            <div className="table-list compact-list">
+              {routePriorityBoard.map((item) => (
+                <div className="table-row" key={item.routeKey}>
+                  <div>
+                    <strong>{item.routeKey}</strong>
+                    <span>
+                      {item.statusLabel}
+                      {item.cheapest
+                        ? ` · Cheapest ${item.cheapest.airline}${item.cheapest.flightNumber} @ ${formatMoney(item.cheapest.amount, "BDT")}`
+                        : " · No fare leader"}
+                    </span>
+                  </div>
+                  <div className={`pill ${item.statusLabel === "Stable" ? "good" : "warn"}`}>{item.inventoryLabel}</div>
+                  <span>
+                    {item.strongestMove
+                      ? `Move ${item.strongestMove.delta > 0 ? "+" : ""}${formatMoney(item.strongestMove.delta, "BDT")} · ${item.strongestMove.departureDate}`
+                      : "No capture-to-capture move"}
+                    {item.taxSpread != null ? ` · Tax spread ${formatMoney(item.taxSpread, "BDT")}` : ""}
+                    {item.latestCaptureAt ? ` · Fresh ${formatDhakaDateTime(item.latestCaptureAt)}` : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
           {!matrix.ok ? (
             <div className="empty-state error-state">API error: {matrix.error ?? "Unable to load route monitor matrix."}</div>
           ) : routeBlocks.length === 0 ? (
