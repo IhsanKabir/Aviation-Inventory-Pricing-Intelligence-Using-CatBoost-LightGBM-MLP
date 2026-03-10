@@ -1502,7 +1502,7 @@ def _get_route_monitor_matrix_from_bigquery(
               MIN(total_price_bdt) AS min_total_price_bdt,
               MAX(total_price_bdt) AS max_total_price_bdt,
               MAX(tax_amount) AS tax_amount,
-              ARRAY_AGG(booking_class IGNORE NULLS ORDER BY total_price_bdt ASC, seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS booking_class,
+              ARRAY_AGG(COALESCE(booking_class, fare_basis) IGNORE NULLS ORDER BY total_price_bdt ASC, seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS booking_class,
               MIN(seat_available) AS seat_available,
               MAX(seat_capacity) AS seat_capacity,
               MAX(load_factor_pct) AS load_factor_pct,
@@ -1580,7 +1580,7 @@ def _get_route_monitor_matrix_from_bigquery(
               MIN(total_price_bdt) AS min_total_price_bdt,
               MAX(total_price_bdt) AS max_total_price_bdt,
               MAX(tax_amount) AS tax_amount,
-              ARRAY_AGG(booking_class IGNORE NULLS ORDER BY total_price_bdt ASC, seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS booking_class,
+              ARRAY_AGG(COALESCE(booking_class, fare_basis) IGNORE NULLS ORDER BY total_price_bdt ASC, seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS booking_class,
               MIN(seat_available) AS seat_available,
               MAX(seat_capacity) AS seat_capacity,
               MAX(load_factor_pct) AS load_factor_pct,
@@ -1781,8 +1781,8 @@ def get_route_monitor_matrix(
                 CAST(MIN(fo.price_total_bdt) AS NUMERIC(12, 2)) AS min_total_price_bdt,
                 CAST(MAX(fo.price_total_bdt) AS NUMERIC(12, 2)) AS max_total_price_bdt,
                 CAST(MAX(frm.tax_amount) AS NUMERIC(12, 2)) AS tax_amount,
-                (ARRAY_AGG(frm.booking_class ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE frm.booking_class IS NOT NULL))[1] AS booking_class,
+                (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
+                  FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS booking_class,
                 MIN(fo.seat_available) AS seat_available,
                 MAX(fo.seat_capacity) AS seat_capacity,
                 CAST(MAX(frm.estimated_load_factor_pct) AS NUMERIC(6, 2)) AS load_factor_pct,
@@ -1800,7 +1800,17 @@ def get_route_monitor_matrix(
                 fo.flight_number,
                 fo.departure,
                 fo.cabin,
-                COALESCE(frm.aircraft, '')
+                COALESCE(frm.aircraft, ''),
+                COALESCE(frm.search_trip_type, 'OW'),
+                frm.trip_request_id,
+                frm.requested_outbound_date,
+                frm.requested_return_date,
+                frm.trip_duration_days,
+                COALESCE(frm.trip_origin, fo.origin),
+                COALESCE(frm.trip_destination, fo.destination),
+                COALESCE(frm.leg_direction, 'outbound'),
+                frm.leg_sequence,
+                frm.itinerary_leg_count
             ORDER BY route_key, departure_date, departure_time, fo.airline, fo.flight_number
             """
         ),
@@ -1863,8 +1873,8 @@ def get_route_monitor_matrix(
                 CAST(MIN(fo.price_total_bdt) AS NUMERIC(12, 2)) AS min_total_price_bdt,
                 CAST(MAX(fo.price_total_bdt) AS NUMERIC(12, 2)) AS max_total_price_bdt,
                 CAST(MAX(frm.tax_amount) AS NUMERIC(12, 2)) AS tax_amount,
-                (ARRAY_AGG(frm.booking_class ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE frm.booking_class IS NOT NULL))[1] AS booking_class,
+                (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
+                  FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS booking_class,
                 MIN(fo.seat_available) AS seat_available,
                 MAX(fo.seat_capacity) AS seat_capacity,
                 CAST(MAX(frm.estimated_load_factor_pct) AS NUMERIC(6, 2)) AS load_factor_pct,
@@ -1882,7 +1892,17 @@ def get_route_monitor_matrix(
                 fo.flight_number,
                 fo.departure,
                 fo.cabin,
-                COALESCE(frm.aircraft, '')
+                COALESCE(frm.aircraft, ''),
+                COALESCE(frm.search_trip_type, 'OW'),
+                frm.trip_request_id,
+                frm.requested_outbound_date,
+                frm.requested_return_date,
+                frm.trip_duration_days,
+                COALESCE(frm.trip_origin, fo.origin),
+                COALESCE(frm.trip_destination, fo.destination),
+                COALESCE(frm.leg_direction, 'outbound'),
+                frm.leg_sequence,
+                frm.itinerary_leg_count
             ORDER BY fo.scraped_at DESC, route_key, departure_date, departure_time, fo.airline, fo.flight_number
             """
         ),

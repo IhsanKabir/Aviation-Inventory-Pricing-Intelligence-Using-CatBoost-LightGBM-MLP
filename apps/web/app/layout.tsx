@@ -34,7 +34,6 @@ export default async function RootLayout({
         <Topbar />
         <main className="page shell">{children}</main>
         <Analytics />
-        <SpeedInsights />
       </body>
     </html>
   );
