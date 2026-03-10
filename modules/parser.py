@@ -376,6 +376,14 @@ def pick_price(offer: Dict) -> Tuple[Optional[float], Optional[float], Optional[
         except Exception:
             pass
 
+    # Some Biman/Sabre responses omit explicit tax breakdown while still returning
+    # total + base fare. In that case derive tax conservatively.
+    if tax is None and total is not None and fare is not None:
+        try:
+            tax = max(float(total) - float(fare), 0.0)
+        except Exception:
+            pass
+
     return fare, tax, total, currency, tax_components
 
 

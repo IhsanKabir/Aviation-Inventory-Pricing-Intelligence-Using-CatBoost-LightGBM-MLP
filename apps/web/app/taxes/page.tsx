@@ -141,7 +141,7 @@ export default async function TaxesPage({ searchParams }: PageProps) {
                 ? [
                     {
                       key: "cycle_id",
-                      label: "Recent cycles",
+                      label: "Comparable cycles",
                       selected: cycleId ? [cycleId] : [],
                       options: cycleOptions,
                       multi: false,

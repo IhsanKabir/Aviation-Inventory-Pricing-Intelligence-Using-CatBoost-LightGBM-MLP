@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 from google.api_core.exceptions import GoogleAPIError
@@ -41,6 +41,9 @@ WEEKDAY_ORDER = [
     "Saturday",
     "Sunday",
 ]
+COMPARABLE_CYCLE_MIN_OFFER_ROWS = 500
+COMPARABLE_CYCLE_MIN_AIRLINES = 5
+COMPARABLE_CYCLE_MIN_ROUTES = 10
 
 
 def _normalize_codes(values: Sequence[str] | None, uppercase: bool = True) -> list[str]:
@@ -84,6 +87,28 @@ def _rows_to_dicts(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
             clean[key] = float(value) if isinstance(value, Decimal) else value
         payload.append(clean)
     return payload
+
+
+def _is_cycle_comparable(row: Mapping[str, Any] | None) -> bool:
+    if not row:
+        return False
+    try:
+        offer_rows = int(row.get("offer_rows") or 0)
+    except (TypeError, ValueError):
+        offer_rows = 0
+    try:
+        airline_count = int(row.get("airline_count") or 0)
+    except (TypeError, ValueError):
+        airline_count = 0
+    try:
+        route_count = int(row.get("route_count") or 0)
+    except (TypeError, ValueError):
+        route_count = 0
+    return (
+        offer_rows >= COMPARABLE_CYCLE_MIN_OFFER_ROWS
+        and airline_count >= COMPARABLE_CYCLE_MIN_AIRLINES
+        and route_count >= COMPARABLE_CYCLE_MIN_ROUTES
+    )
 
 
 @lru_cache(maxsize=1)
@@ -320,7 +345,14 @@ def _build_change_dashboard_payload(
     }
 
 
-def _get_latest_cycle_from_bigquery() -> dict[str, Any] | None:
+def _get_latest_cycle_from_bigquery(comparable_only: bool = True) -> dict[str, Any] | None:
+    comparable_filter = ""
+    if comparable_only:
+        comparable_filter = (
+            f"WHERE offer_rows >= {COMPARABLE_CYCLE_MIN_OFFER_ROWS} "
+            f"AND airline_count >= {COMPARABLE_CYCLE_MIN_AIRLINES} "
+            f"AND route_count >= {COMPARABLE_CYCLE_MIN_ROUTES}"
+        )
     rows = _run_bigquery_query(
         f"""
         SELECT
@@ -331,6 +363,7 @@ def _get_latest_cycle_from_bigquery() -> dict[str, Any] | None:
           airline_count,
           route_count
         FROM {_bq_table("fact_cycle_run")}
+        {comparable_filter}
         QUALIFY ROW_NUMBER() OVER (ORDER BY cycle_completed_at_utc DESC, cycle_id DESC) = 1
         """
     )
@@ -338,10 +371,10 @@ def _get_latest_cycle_from_bigquery() -> dict[str, Any] | None:
     return clean_rows[0] if clean_rows else None
 
 
-def get_latest_cycle(session: Session | None) -> dict[str, Any] | None:
+def get_latest_cycle(session: Session | None, comparable_only: bool = True) -> dict[str, Any] | None:
     if _bigquery_ready():
         try:
-            return _get_latest_cycle_from_bigquery()
+            return _get_latest_cycle_from_bigquery(comparable_only=comparable_only)
         except (GoogleAPIError, RuntimeError, ValueError):
             pass
     if session is None:
@@ -358,17 +391,38 @@ def get_latest_cycle(session: Session | None) -> dict[str, Any] | None:
                 COUNT(DISTINCT (fo.origin || '-' || fo.destination)) AS route_count
             FROM flight_offers fo
             GROUP BY fo.scrape_id
+            HAVING (
+                :comparable_only = FALSE
+                OR (
+                    COUNT(*) >= :min_offer_rows
+                    AND COUNT(DISTINCT fo.airline) >= :min_airlines
+                    AND COUNT(DISTINCT (fo.origin || '-' || fo.destination)) >= :min_routes
+                )
+            )
             ORDER BY MAX(fo.scraped_at) DESC
             LIMIT 1
             """
-        )
+        ),
+        {
+            "comparable_only": comparable_only,
+            "min_offer_rows": COMPARABLE_CYCLE_MIN_OFFER_ROWS,
+            "min_airlines": COMPARABLE_CYCLE_MIN_AIRLINES,
+            "min_routes": COMPARABLE_CYCLE_MIN_ROUTES,
+        },
     ).mappings().first()
     return dict(row) if row else None
 
 
-def get_recent_cycles(session: Session | None, limit: int = 10) -> list[dict[str, Any]]:
+def get_recent_cycles(session: Session | None, limit: int = 10, comparable_only: bool = True) -> list[dict[str, Any]]:
     if _bigquery_ready():
         try:
+            comparable_filter = ""
+            if comparable_only:
+                comparable_filter = (
+                    f"WHERE offer_rows >= {COMPARABLE_CYCLE_MIN_OFFER_ROWS} "
+                    f"AND airline_count >= {COMPARABLE_CYCLE_MIN_AIRLINES} "
+                    f"AND route_count >= {COMPARABLE_CYCLE_MIN_ROUTES}"
+                )
             rows = _run_bigquery_query(
                 f"""
                 WITH ranked_cycles AS (
@@ -384,6 +438,7 @@ def get_recent_cycles(session: Session | None, limit: int = 10) -> list[dict[str
                       ORDER BY cycle_completed_at_utc DESC, cycle_started_at_utc DESC, offer_rows DESC
                     ) AS row_rank
                   FROM {_bq_table("fact_cycle_run")}
+                  {comparable_filter}
                 )
                 SELECT
                   cycle_id,
@@ -416,11 +471,25 @@ def get_recent_cycles(session: Session | None, limit: int = 10) -> list[dict[str
                 COUNT(DISTINCT (fo.origin || '-' || fo.destination)) AS route_count
             FROM flight_offers fo
             GROUP BY fo.scrape_id
+            HAVING (
+                :comparable_only = FALSE
+                OR (
+                    COUNT(*) >= :min_offer_rows
+                    AND COUNT(DISTINCT fo.airline) >= :min_airlines
+                    AND COUNT(DISTINCT (fo.origin || '-' || fo.destination)) >= :min_routes
+                )
+            )
             ORDER BY MAX(fo.scraped_at) DESC
             LIMIT :limit
             """
         ),
-        {"limit": limit},
+        {
+            "limit": limit,
+            "comparable_only": comparable_only,
+            "min_offer_rows": COMPARABLE_CYCLE_MIN_OFFER_ROWS,
+            "min_airlines": COMPARABLE_CYCLE_MIN_AIRLINES,
+            "min_routes": COMPARABLE_CYCLE_MIN_ROUTES,
+        },
     ).mappings().all()
     return _rows_to_dicts([dict(row) for row in rows])
 
@@ -1398,14 +1467,8 @@ def _build_route_monitor_matrix_from_aggregates(
 def _resolve_cycle_id_bigquery(cycle_id: str | None) -> str | None:
     if cycle_id:
         return cycle_id.strip()
-    rows = _run_bigquery_query(
-        f"""
-        SELECT cycle_id
-        FROM {_bq_table("fact_cycle_run")}
-        QUALIFY ROW_NUMBER() OVER (ORDER BY cycle_completed_at_utc DESC, cycle_id DESC) = 1
-        """
-    )
-    return str(rows[0]["cycle_id"]) if rows else None
+    latest_cycle = _get_latest_cycle_from_bigquery(comparable_only=True)
+    return str(latest_cycle["cycle_id"]) if latest_cycle else None
 
 
 def _get_route_monitor_matrix_from_bigquery(
@@ -1523,7 +1586,7 @@ def _get_route_monitor_matrix_from_bigquery(
               itinerary_leg_count,
               MIN(total_price_bdt) AS min_total_price_bdt,
               MAX(total_price_bdt) AS max_total_price_bdt,
-              MAX(tax_amount) AS tax_amount,
+              MAX(COALESCE(tax_amount, GREATEST(total_price_bdt - base_fare_amount, 0))) AS tax_amount,
               ARRAY_AGG(COALESCE(booking_class, fare_basis) IGNORE NULLS ORDER BY total_price_bdt ASC, seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS booking_class,
               ARRAY_AGG(COALESCE(booking_class, fare_basis) IGNORE NULLS ORDER BY total_price_bdt ASC, seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS min_booking_class,
               ARRAY_AGG(COALESCE(booking_class, fare_basis) IGNORE NULLS ORDER BY total_price_bdt DESC, seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS max_booking_class,
@@ -1605,7 +1668,7 @@ def _get_route_monitor_matrix_from_bigquery(
               itinerary_leg_count,
               MIN(total_price_bdt) AS min_total_price_bdt,
               MAX(total_price_bdt) AS max_total_price_bdt,
-              MAX(tax_amount) AS tax_amount,
+              MAX(COALESCE(tax_amount, GREATEST(total_price_bdt - base_fare_amount, 0))) AS tax_amount,
               ARRAY_AGG(COALESCE(booking_class, fare_basis) IGNORE NULLS ORDER BY total_price_bdt ASC, seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS booking_class,
               ARRAY_AGG(COALESCE(booking_class, fare_basis) IGNORE NULLS ORDER BY total_price_bdt ASC, seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS min_booking_class,
               ARRAY_AGG(COALESCE(booking_class, fare_basis) IGNORE NULLS ORDER BY total_price_bdt DESC, seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS max_booking_class,
@@ -1810,7 +1873,7 @@ def get_route_monitor_matrix(
                 frm.itinerary_leg_count,
                 CAST(MIN(fo.price_total_bdt) AS NUMERIC(12, 2)) AS min_total_price_bdt,
                 CAST(MAX(fo.price_total_bdt) AS NUMERIC(12, 2)) AS max_total_price_bdt,
-                CAST(MAX(frm.tax_amount) AS NUMERIC(12, 2)) AS tax_amount,
+                CAST(MAX(COALESCE(frm.tax_amount, GREATEST(fo.price_total_bdt - frm.fare_amount, 0))) AS NUMERIC(12, 2)) AS tax_amount,
                 (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
                   FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS booking_class,
                 (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
@@ -1911,7 +1974,7 @@ def get_route_monitor_matrix(
                 frm.itinerary_leg_count,
                 CAST(MIN(fo.price_total_bdt) AS NUMERIC(12, 2)) AS min_total_price_bdt,
                 CAST(MAX(fo.price_total_bdt) AS NUMERIC(12, 2)) AS max_total_price_bdt,
-                CAST(MAX(frm.tax_amount) AS NUMERIC(12, 2)) AS tax_amount,
+                CAST(MAX(COALESCE(frm.tax_amount, GREATEST(fo.price_total_bdt - frm.fare_amount, 0))) AS NUMERIC(12, 2)) AS tax_amount,
                 (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
                   FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS booking_class,
                 (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)

@@ -199,14 +199,14 @@ def _query_fact_tax_snapshot() -> str:
             fo.departure AS departure_utc,
             fo.cabin,
             fo.fare_basis,
-            CAST(frm.tax_amount AS NUMERIC(12, 2)) AS tax_amount,
+            CAST(COALESCE(frm.tax_amount, GREATEST(fo.price_total_bdt - frm.fare_amount, 0)) AS NUMERIC(12, 2)) AS tax_amount,
             frm.currency
         FROM flight_offers fo
         JOIN flight_offer_raw_meta frm
             ON frm.flight_offer_id = fo.id
         WHERE fo.scraped_at >= :start_ts
           AND fo.scraped_at < :end_ts
-          AND frm.tax_amount IS NOT NULL
+          AND COALESCE(frm.tax_amount, GREATEST(fo.price_total_bdt - frm.fare_amount, 0)) IS NOT NULL
     """
 
 

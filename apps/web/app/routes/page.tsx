@@ -235,7 +235,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
         >
           {recentCycleOptions.length ? (
             <div className="filter-group">
-              <div className="filter-label">Recent cycles</div>
+              <div className="filter-label">Comparable cycles</div>
               <div className="chip-row">
                 {recentCycleOptions.map((item) => (
                   <a

@@ -52,6 +52,27 @@ function summarizeAirportList(values: string[], maxVisible = 3) {
   return `${unique.slice(0, maxVisible).join(", ")} +${unique.length - maxVisible}`;
 }
 
+function normalizeOperationsRoutes(routes: OperationsRoute[]): OperationsRoute[] {
+  return routes.map((route) => ({
+    ...route,
+    departure_times: route.departure_times ?? [],
+    service_patterns: route.service_patterns ?? [],
+    via_airports: route.via_airports ?? [],
+    departure_days: route.departure_days ?? [],
+    weekday_profile: route.weekday_profile ?? [],
+    timeline: route.timeline ?? [],
+    airlines: (route.airlines ?? []).map((airline) => ({
+      ...airline,
+      departure_times: airline.departure_times ?? [],
+      flight_numbers: airline.flight_numbers ?? [],
+      service_patterns: airline.service_patterns ?? [],
+      via_airports: airline.via_airports ?? [],
+      weekday_profile: airline.weekday_profile ?? [],
+      timeline: airline.timeline ?? [],
+    })),
+  }));
+}
+
 export default async function OperationsPage({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {};
   const selectedAirlines = manyParams(params, "airline");
@@ -85,7 +106,7 @@ export default async function OperationsPage({ searchParams }: PageProps) {
     }),
   ]);
 
-  const routeBlocks = operations.data?.routes ?? [];
+  const routeBlocks = normalizeOperationsRoutes(operations.data?.routes ?? []);
   const airlineOptions = [...(airlines.data?.items ?? [])]
     .sort((left, right) => (right.offer_rows ?? 0) - (left.offer_rows ?? 0) || left.airline.localeCompare(right.airline))
     .slice(0, 20)
@@ -153,7 +174,7 @@ export default async function OperationsPage({ searchParams }: PageProps) {
                 ? [
                     {
                       key: "cycle_id",
-                      label: "Recent cycles",
+                      label: "Comparable cycles",
                       selected: cycleId ? [cycleId] : [],
                       options: cycleOptions,
                       multi: false,
