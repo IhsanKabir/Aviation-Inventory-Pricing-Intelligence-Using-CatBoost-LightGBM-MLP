@@ -2,7 +2,12 @@
   "description": "Global default outbound search windows for run_all.py when no explicit date/date-range/date-offset arguments are passed.",
   "day_offsets": [0, 3, 5, 7, 15],
   "date_ranges": [],
-  "day_offset_ranges": [],
+  "day_offset_ranges": [
+    {
+    "start": "2026-03-11",
+    "end": "2026-03-20"
+  }
+],
   "return_date_offsets": [],
   "return_date_ranges": [],
   "return_date_offset_ranges": []
