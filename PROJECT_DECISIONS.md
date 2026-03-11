@@ -52,7 +52,7 @@ Target: implement as much as possible in parallel, but execute in phases when ne
 - Scheduler launch policy is sequential, not overlapping:
   - do not start a new ingestion cycle while an active/fresh accumulation exists
   - enforce a configurable completion buffer after a completed accumulation before the next launch
-  - current recommended default: `180` minutes on the always-on scheduler host
+  - current recommended default: `72` minutes on the always-on scheduler host
 - Collection is now split into two planning modes:
   - `operational`: comparison-safe baseline for web freshness and cycle-to-cycle monitoring
   - `training`: fuller candidate profile set for forecasting/model enrichment, including holiday overlays where configured

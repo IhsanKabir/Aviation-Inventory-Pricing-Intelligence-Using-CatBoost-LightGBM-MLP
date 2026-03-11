@@ -23,7 +23,7 @@ if exist "%ENVFILE%" (
   )
 )
 
-if not defined ACCUMULATION_COMPLETION_BUFFER_MINUTES set "ACCUMULATION_COMPLETION_BUFFER_MINUTES=180"
+if not defined ACCUMULATION_COMPLETION_BUFFER_MINUTES set "ACCUMULATION_COMPLETION_BUFFER_MINUTES=72"
 
 if not defined BIGQUERY_PROJECT_ID (
   echo [%date% %time%] warning: BIGQUERY_PROJECT_ID not set; automatic BigQuery sync will be skipped>> "%LOGFILE%"
@@ -36,19 +36,19 @@ if defined BIGQUERY_PROJECT_ID if defined BIGQUERY_DATASET if not defined GOOGLE
 )
 
 if exist "%RECOVERY_HELPER%" (
-  "%PYEXE%" "%RECOVERY_HELPER%" --mode preflight --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%ACCUMULATION_COMPLETION_BUFFER_MINUTES%" >> "%LOGFILE%" 2>&1
-  set "PRE_RC=%ERRORLEVEL%"
-  if "!PRE_RC!"=="10" (
-    echo [%date% %time%] ingestion cycle skipped: active or fresh accumulation already present>> "%LOGFILE%"
+  echo [%date% %time%] starting ingestion cycle>> "%LOGFILE%"
+  "%PYEXE%" "%RECOVERY_HELPER%" --mode guarded-run --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%ACCUMULATION_COMPLETION_BUFFER_MINUTES%" -- "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --skip-reports --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local >> "%LOGFILE%" 2>&1
+  set "RC=%ERRORLEVEL%"
+  if "!RC!"=="10" (
+    echo [%date% %time%] ingestion cycle skipped: wrapper lock or active accumulation already present>> "%LOGFILE%"
     exit /b 0
   )
-  if "!PRE_RC!"=="11" (
+  if "!RC!"=="11" (
     echo [%date% %time%] ingestion cycle skipped: %ACCUMULATION_COMPLETION_BUFFER_MINUTES% minute post-completion buffer is active>> "%LOGFILE%"
     exit /b 0
   )
-  if not "!PRE_RC!"=="0" (
-    echo [%date% %time%] ingestion preflight warning rc=!PRE_RC! (continuing)>> "%LOGFILE%"
-  )
+  echo [%date% %time%] ingestion cycle finished rc=!RC!>> "%LOGFILE%"
+  exit /b !RC!
 )
 
 echo [%date% %time%] starting ingestion cycle>> "%LOGFILE%"

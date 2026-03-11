@@ -34,7 +34,7 @@
 - Current default ingestion cadence is every 6 hours (`RepeatMinutes=360`).
 - Ingestion launch policy is sequential: never start a new cycle while an active/fresh accumulation exists, and enforce a configurable completion buffer after the last completed accumulation.
 - Current configured completion buffer is controlled by `ACCUMULATION_COMPLETION_BUFFER_MINUTES`.
-- Recommended home-laptop setting: `180` minutes.
+- Recommended home-laptop setting: `72` minutes.
 
 ## Exact Verification Commands
 
@@ -205,7 +205,7 @@ Use a frequent lightweight launcher plus the preflight lock/buffer. That is more
 Suggested settings:
 
 - `.env`
-  - `ACCUMULATION_COMPLETION_BUFFER_MINUTES=180`
+  - `ACCUMULATION_COMPLETION_BUFFER_MINUTES=72`
   - `TRAINING_PREDICTION_ML_MODELS=catboost,lightgbm`
   - `TRAINING_PREDICTION_DL_MODELS=mlp`
   - `TRAINING_SKIP_BIGQUERY_SYNC=0`

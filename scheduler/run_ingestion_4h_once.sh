@@ -30,7 +30,7 @@ if [[ -f "$ENVFILE" ]]; then
   done < "$ENVFILE"
 fi
 
-export ACCUMULATION_COMPLETION_BUFFER_MINUTES="${ACCUMULATION_COMPLETION_BUFFER_MINUTES:-180}"
+export ACCUMULATION_COMPLETION_BUFFER_MINUTES="${ACCUMULATION_COMPLETION_BUFFER_MINUTES:-72}"
 
 if [[ -z "${BIGQUERY_PROJECT_ID:-}" ]]; then
   echo "[$(timestamp)] warning: BIGQUERY_PROJECT_ID not set; automatic BigQuery sync will be skipped" >> "$LOGFILE"
@@ -43,27 +43,33 @@ if [[ -n "${BIGQUERY_PROJECT_ID:-}" && -n "${BIGQUERY_DATASET:-}" && -z "${GOOGL
 fi
 
 if [[ -f "$RECOVERY_HELPER" ]]; then
+  echo "[$(timestamp)] starting ingestion cycle" >> "$LOGFILE"
   set +e
   "$PYEXE" "$RECOVERY_HELPER" \
-    --mode preflight \
+    --mode guarded-run \
     --python-exe "$PYEXE" \
     --root "$ROOT" \
     --reports-dir "$ROOT/output/reports" \
-    --min-completed-gap-minutes "$ACCUMULATION_COMPLETION_BUFFER_MINUTES" >> "$LOGFILE" 2>&1
-  PRE_RC=$?
+    --min-completed-gap-minutes "$ACCUMULATION_COMPLETION_BUFFER_MINUTES" \
+    -- \
+    "$PYEXE" "$ROOT/run_pipeline.py" \
+    --python-exe "$PYEXE" \
+    --skip-reports \
+    --report-output-dir "$ROOT/output/reports" \
+    --report-timestamp-tz local >> "$LOGFILE" 2>&1
+  RC=$?
   set -e
 
-  if [[ "$PRE_RC" -eq 10 ]]; then
-    echo "[$(timestamp)] ingestion cycle skipped: active or fresh accumulation already present" >> "$LOGFILE"
+  if [[ "$RC" -eq 10 ]]; then
+    echo "[$(timestamp)] ingestion cycle skipped: wrapper lock or active accumulation already present" >> "$LOGFILE"
     exit 0
   fi
-  if [[ "$PRE_RC" -eq 11 ]]; then
+  if [[ "$RC" -eq 11 ]]; then
     echo "[$(timestamp)] ingestion cycle skipped: ${ACCUMULATION_COMPLETION_BUFFER_MINUTES} minute post-completion buffer is active" >> "$LOGFILE"
     exit 0
   fi
-  if [[ "$PRE_RC" -ne 0 ]]; then
-    echo "[$(timestamp)] ingestion preflight warning rc=$PRE_RC (continuing)" >> "$LOGFILE"
-  fi
+  echo "[$(timestamp)] ingestion cycle finished rc=$RC" >> "$LOGFILE"
+  exit "$RC"
 fi
 
 echo "[$(timestamp)] starting ingestion cycle" >> "$LOGFILE"

@@ -16,7 +16,7 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="Detect stale/interrupted accumulation runs and optionally relaunch safely."
     )
-    p.add_argument("--mode", choices=["preflight", "recover"], required=True)
+    p.add_argument("--mode", choices=["preflight", "recover", "guarded-run"], required=True)
     p.add_argument("--python-exe", default=sys.executable)
     p.add_argument("--root", default=None, help="Repo root (defaults to project root inferred from this file)")
     p.add_argument("--reports-dir", default="output/reports")
@@ -34,6 +34,11 @@ def parse_args():
         "--output-json",
         default=None,
         help="Latest recovery status JSON (defaults to reports-dir/accumulation_recovery_latest.json)",
+    )
+    p.add_argument(
+        "--lock-file",
+        default=None,
+        help="Wrapper lock JSON (defaults to reports-dir/accumulation_wrapper_lock.json)",
     )
     p.add_argument(
         "--stale-minutes",
@@ -56,10 +61,17 @@ def parse_args():
     p.add_argument(
         "--min-completed-gap-minutes",
         type=float,
-        default=float(os.getenv("ACCUMULATION_COMPLETION_BUFFER_MINUTES", "180")),
+        default=float(os.getenv("ACCUMULATION_COMPLETION_BUFFER_MINUTES", "72")),
         help="Minimum buffer after a completed accumulation before another cycle may start",
     )
+    p.add_argument(
+        "--lock-stale-minutes",
+        type=float,
+        default=10.0,
+        help="Minimum lock age before a wrapper lock may be treated as stale if no active pipeline exists",
+    )
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("command", nargs=argparse.REMAINDER)
     return p.parse_args()
 
 
@@ -97,6 +109,13 @@ def _output_path(args, reports_dir: Path) -> Path:
     return reports_dir / "accumulation_recovery_latest.json"
 
 
+def _lock_path(args, reports_dir: Path) -> Path:
+    if args.lock_file:
+        p = Path(args.lock_file)
+        return p if p.is_absolute() else (Path.cwd() / p).resolve()
+    return reports_dir / "accumulation_wrapper_lock.json"
+
+
 def _read_json(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -123,6 +142,16 @@ def _parse_iso(ts: str | None):
 
 def _now_utc() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
+
+
+def _file_age_minutes(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    try:
+        mtime = dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc)
+    except Exception:
+        return None
+    return max(0.0, (_now_utc() - mtime).total_seconds() / 60.0)
 
 
 def _heartbeat_ts(payload: dict):
@@ -225,6 +254,72 @@ def _active_pipeline_processes() -> list[dict]:
     return [p for p in _list_relevant_processes() if _is_active_pipeline_process(p)]
 
 
+def _lock_age_minutes(lock_file: Path, payload: dict | None = None) -> float | None:
+    payload = payload or {}
+    ts = _parse_iso(payload.get("created_at_utc"))
+    if ts is not None:
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=dt.timezone.utc)
+        return max(0.0, (_now_utc() - ts.astimezone(dt.timezone.utc)).total_seconds() / 60.0)
+    return _file_age_minutes(lock_file)
+
+
+def _lock_can_be_cleared(lock_file: Path, payload: dict, active_procs: list[dict], heartbeat: dict, args) -> tuple[bool, str]:
+    if not lock_file.exists():
+        return False, "lock_missing"
+    lock_age = _lock_age_minutes(lock_file, payload)
+    if active_procs:
+        return False, "active_pipeline_process_detected"
+    if _heartbeat_running_recent(heartbeat, stale_minutes=args.stale_minutes):
+        return False, "fresh_running_heartbeat"
+    if lock_age is None or lock_age < float(args.lock_stale_minutes):
+        return False, "lock_too_fresh"
+    hb_state = _heartbeat_state(heartbeat)
+    if hb_state in {"completed", "failed", "error", "interrupted", "recovered", "skipped"}:
+        return True, f"terminal_heartbeat_state:{hb_state}"
+    if not heartbeat:
+        return True, "no_heartbeat_found"
+    return True, "stale_lock_no_active_pipeline"
+
+
+def _try_remove_stale_lock(lock_file: Path, active_procs: list[dict], heartbeat: dict, args) -> tuple[bool, str]:
+    payload = _read_json(lock_file)
+    ok, reason = _lock_can_be_cleared(lock_file, payload, active_procs, heartbeat, args)
+    if not ok:
+        return False, reason
+    try:
+        lock_file.unlink(missing_ok=True)
+    except Exception as exc:
+        return False, f"lock_unlink_failed:{exc}"
+    return True, f"stale_lock_cleared:{reason}"
+
+
+def _acquire_lock(lock_file: Path, payload: dict) -> tuple[bool, str]:
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    try:
+        fd = os.open(str(lock_file), flags)
+    except FileExistsError:
+        return False, "lock_exists"
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+    except Exception as exc:
+        try:
+            lock_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False, f"lock_write_failed:{exc}"
+    return True, "lock_acquired"
+
+
+def _release_lock(lock_file: Path):
+    try:
+        lock_file.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def _launch_ingestion_batch(root: Path, dry_run: bool) -> tuple[bool, str]:
     if os.name == "nt":
         batch = root / "scheduler" / "run_ingestion_4h_once.bat"
@@ -302,8 +397,11 @@ def _build_status(
     action: str,
     reason: str,
     launched: bool = False,
+    lock_file: Path | None = None,
 ) -> dict:
     hb_age = _heartbeat_age_minutes(heartbeat) if heartbeat else None
+    lock_payload = _read_json(lock_file) if lock_file and lock_file.exists() else {}
+    lock_age = _lock_age_minutes(lock_file, lock_payload) if lock_file else None
     return {
         "mode": mode,
         "root": str(root),
@@ -322,6 +420,10 @@ def _build_status(
         "heartbeat_state": heartbeat.get("state") if heartbeat else None,
         "heartbeat_accumulation_run_id": (heartbeat or {}).get("accumulation_run_id") or (heartbeat or {}).get("scrape_id"),
         "heartbeat_age_minutes": hb_age,
+        "lock_file": str(lock_file) if lock_file else None,
+        "lock_present": bool(lock_file and lock_file.exists()),
+        "lock_age_minutes": lock_age,
+        "lock_created_at_utc": lock_payload.get("created_at_utc") if lock_payload else None,
         "action": action,
         "reason": reason,
         "launched": bool(launched),
@@ -329,9 +431,27 @@ def _build_status(
     }
 
 
-def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, state_file: Path, output_file: Path) -> int:
+def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, state_file: Path, output_file: Path, lock_file: Path) -> int:
     active = _active_pipeline_processes()
     heartbeat = _read_json(status_file)
+    if lock_file.exists():
+        cleared, reason = _try_remove_stale_lock(lock_file, active, heartbeat, args)
+        if not cleared:
+            payload = _build_status(
+                mode="preflight",
+                root=root,
+                reports_dir=reports_dir,
+                status_file=status_file,
+                state_file=state_file,
+                active_procs=active,
+                heartbeat=heartbeat,
+                action="skip",
+                reason=f"wrapper_lock_present:{reason}",
+                lock_file=lock_file,
+            )
+            _write_json(output_file, payload)
+            print(json.dumps(payload, ensure_ascii=False))
+            return 10
     if active:
         payload = _build_status(
             mode="preflight",
@@ -343,6 +463,7 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
             heartbeat=heartbeat,
             action="skip",
             reason="active_pipeline_process_detected",
+            lock_file=lock_file,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -358,6 +479,7 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
             heartbeat=heartbeat,
             action="skip",
             reason="fresh_running_heartbeat",
+            lock_file=lock_file,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -373,6 +495,7 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
             heartbeat=heartbeat,
             action="skip",
             reason="completed_buffer_active",
+            lock_file=lock_file,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -387,13 +510,14 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
         heartbeat=heartbeat,
         action="ok",
         reason="no_active_pipeline_process",
+        lock_file=lock_file,
     )
     _write_json(output_file, payload)
     print(json.dumps(payload, ensure_ascii=False))
     return 0
 
 
-def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, state_file: Path, output_file: Path) -> int:
+def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, state_file: Path, output_file: Path, lock_file: Path) -> int:
     active = _active_pipeline_processes()
     heartbeat = _read_json(status_file)
     state = _read_json(state_file)
@@ -409,6 +533,7 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             heartbeat=heartbeat,
             action="none",
             reason="active_pipeline_process_detected",
+            lock_file=lock_file,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -427,6 +552,7 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             heartbeat=heartbeat,
             action="none",
             reason="fresh_running_heartbeat",
+            lock_file=lock_file,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -442,6 +568,7 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             heartbeat=heartbeat,
             action="none",
             reason="completed_buffer_active",
+            lock_file=lock_file,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -480,6 +607,7 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             heartbeat=heartbeat,
             action="none",
             reason=reason,
+            lock_file=lock_file,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -505,10 +633,155 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
         action="launch" if ok else "error",
         reason=f"{launch_reason}: {msg}",
         launched=ok and not args.dry_run,
+        lock_file=lock_file,
     )
     _write_json(output_file, payload)
     print(json.dumps(payload, ensure_ascii=False))
     return 0 if ok else 1
+
+
+def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, state_file: Path, output_file: Path, lock_file: Path) -> int:
+    active = _active_pipeline_processes()
+    heartbeat = _read_json(status_file)
+    if lock_file.exists():
+        cleared, reason = _try_remove_stale_lock(lock_file, active, heartbeat, args)
+        if not cleared:
+            payload = _build_status(
+                mode="guarded-run",
+                root=root,
+                reports_dir=reports_dir,
+                status_file=status_file,
+                state_file=state_file,
+                active_procs=active,
+                heartbeat=heartbeat,
+                action="skip",
+                reason=f"wrapper_lock_present:{reason}",
+                lock_file=lock_file,
+            )
+            _write_json(output_file, payload)
+            print(json.dumps(payload, ensure_ascii=False))
+            return 10
+
+    if active:
+        payload = _build_status(
+            mode="guarded-run",
+            root=root,
+            reports_dir=reports_dir,
+            status_file=status_file,
+            state_file=state_file,
+            active_procs=active,
+            heartbeat=heartbeat,
+            action="skip",
+            reason="active_pipeline_process_detected",
+            lock_file=lock_file,
+        )
+        _write_json(output_file, payload)
+        print(json.dumps(payload, ensure_ascii=False))
+        return 10
+
+    if _heartbeat_running_recent(heartbeat, stale_minutes=args.stale_minutes):
+        payload = _build_status(
+            mode="guarded-run",
+            root=root,
+            reports_dir=reports_dir,
+            status_file=status_file,
+            state_file=state_file,
+            active_procs=[],
+            heartbeat=heartbeat,
+            action="skip",
+            reason="fresh_running_heartbeat",
+            lock_file=lock_file,
+        )
+        _write_json(output_file, payload)
+        print(json.dumps(payload, ensure_ascii=False))
+        return 10
+
+    if _heartbeat_completed_recent(heartbeat, min_completed_gap_minutes=args.min_completed_gap_minutes):
+        payload = _build_status(
+            mode="guarded-run",
+            root=root,
+            reports_dir=reports_dir,
+            status_file=status_file,
+            state_file=state_file,
+            active_procs=[],
+            heartbeat=heartbeat,
+            action="skip",
+            reason="completed_buffer_active",
+            lock_file=lock_file,
+        )
+        _write_json(output_file, payload)
+        print(json.dumps(payload, ensure_ascii=False))
+        return 11
+
+    command = list(args.command or [])
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        payload = _build_status(
+            mode="guarded-run",
+            root=root,
+            reports_dir=reports_dir,
+            status_file=status_file,
+            state_file=state_file,
+            active_procs=[],
+            heartbeat=heartbeat,
+            action="error",
+            reason="missing_command",
+            lock_file=lock_file,
+        )
+        _write_json(output_file, payload)
+        print(json.dumps(payload, ensure_ascii=False))
+        return 2
+
+    lock_payload = {
+        "created_at_utc": _now_utc().isoformat(),
+        "mode": "guarded-run",
+        "root": str(root),
+        "command": command,
+    }
+    acquired, reason = _acquire_lock(lock_file, lock_payload)
+    if not acquired:
+        payload = _build_status(
+            mode="guarded-run",
+            root=root,
+            reports_dir=reports_dir,
+            status_file=status_file,
+            state_file=state_file,
+            active_procs=[],
+            heartbeat=heartbeat,
+            action="skip",
+            reason=f"lock_acquire_failed:{reason}",
+            lock_file=lock_file,
+        )
+        _write_json(output_file, payload)
+        print(json.dumps(payload, ensure_ascii=False))
+        return 10
+
+    start_payload = _build_status(
+        mode="guarded-run",
+        root=root,
+        reports_dir=reports_dir,
+        status_file=status_file,
+        state_file=state_file,
+        active_procs=[],
+        heartbeat=heartbeat,
+        action="launch",
+        reason="lock_acquired_and_command_starting",
+        launched=True,
+        lock_file=lock_file,
+    )
+    _write_json(output_file, start_payload)
+    print(json.dumps(start_payload, ensure_ascii=False))
+
+    if args.dry_run:
+        _release_lock(lock_file)
+        return 0
+
+    try:
+        completed = subprocess.run(command, cwd=str(root))
+        return int(completed.returncode)
+    finally:
+        _release_lock(lock_file)
 
 
 def main():
@@ -518,10 +791,13 @@ def main():
     status_file = _status_path(args, reports_dir)
     state_file = _state_path(args, reports_dir)
     output_file = _output_path(args, reports_dir)
+    lock_file = _lock_path(args, reports_dir)
 
     if args.mode == "preflight":
-        return _handle_preflight(args, root, reports_dir, status_file, state_file, output_file)
-    return _handle_recover(args, root, reports_dir, status_file, state_file, output_file)
+        return _handle_preflight(args, root, reports_dir, status_file, state_file, output_file, lock_file)
+    if args.mode == "recover":
+        return _handle_recover(args, root, reports_dir, status_file, state_file, output_file, lock_file)
+    return _handle_guarded_run(args, root, reports_dir, status_file, state_file, output_file, lock_file)
 
 
 if __name__ == "__main__":
