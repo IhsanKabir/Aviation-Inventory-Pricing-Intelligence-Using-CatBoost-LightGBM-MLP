@@ -49,6 +49,10 @@ if exist "%RECOVERY_HELPER%" (
     echo [%date% %time%] ingestion cycle skipped: %OPERATIONAL_COMPLETION_BUFFER_MINUTES% minute post-completion buffer is active>> "%LOGFILE%"
     exit /b 0
   )
+  if "!RC!"=="12" (
+    echo [%date% %time%] ingestion cycle skipped: PostgreSQL is unavailable>> "%LOGFILE%"
+    exit /b 0
+  )
   echo [%date% %time%] ingestion cycle finished rc=!RC!>> "%LOGFILE%"
   exit /b !RC!
 )

@@ -65,6 +65,10 @@ if [[ -f "$RECOVERY_HELPER" ]]; then
     echo "[$(timestamp)] training enrichment skipped: ${TRAINING_COMPLETION_BUFFER_MINUTES} minute post-completion buffer is active" >> "$LOGFILE"
     exit 0
   fi
+  if [[ "$PRE_RC" -eq 12 ]]; then
+    echo "[$(timestamp)] training enrichment skipped: PostgreSQL is unavailable" >> "$LOGFILE"
+    exit 0
+  fi
   if [[ "$PRE_RC" -ne 0 ]]; then
     echo "[$(timestamp)] training preflight warning rc=$PRE_RC (continuing)" >> "$LOGFILE"
   fi

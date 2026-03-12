@@ -52,6 +52,7 @@ Target: implement as much as possible in parallel, but execute in phases when ne
 - Scheduler launch policy is sequential, not overlapping:
   - do not start a new ingestion cycle while an active/fresh accumulation exists
   - enforce a configurable completion buffer after a completed accumulation before the next launch
+  - fail fast when PostgreSQL is unavailable instead of starting a partial/broken cycle
   - current recommended defaults:
     - operational: `90` minutes
     - training: `120` minutes
@@ -67,6 +68,7 @@ Target: implement as much as possible in parallel, but execute in phases when ne
     - Bangladesh domestic Eid round-trip plus directional Eid one-way behavior can run together
     - worker outbound / return, regional round-trip, tourism, and hub-spoke / long-haul route behaviors can be layered together
   - operational remains the comparison-safe baseline; training is the core daily enrichment lane; deep is the optional weekly/opportunistic enrichment lane
+  - DB-unavailable scheduler outcomes should be recorded as clean skips (`postgres_unreachable`), not treated as successful or partial collection cycles
 
 ### Required Data Fields
 

@@ -55,6 +55,10 @@ if exist "%RECOVERY_HELPER%" (
     echo [%date% %time%] training enrichment skipped: %TRAINING_COMPLETION_BUFFER_MINUTES% minute post-completion buffer is active>> "%LOGFILE%"
     exit /b 0
   )
+  if "!PRE_RC!"=="12" (
+    echo [%date% %time%] training enrichment skipped: PostgreSQL is unavailable>> "%LOGFILE%"
+    exit /b 0
+  )
   if not "!PRE_RC!"=="0" (
     echo [%date% %time%] training preflight warning rc=!PRE_RC! (continuing)>> "%LOGFILE%"
   )

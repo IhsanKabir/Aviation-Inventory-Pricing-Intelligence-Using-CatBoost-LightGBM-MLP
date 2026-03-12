@@ -94,6 +94,7 @@ schtasks /Query /TN AirlineIntel_IngestionOnLogon /FO LIST /V | findstr /I /C:"S
   - a pipeline process is still active
   - heartbeat state is still `running` and fresh
   - the last completed accumulation is less than the configured completion buffer old
+  - PostgreSQL is unreachable at launch time
 
 ## Current Runtime Baseline
 
@@ -156,6 +157,7 @@ Interpretation:
 - `scrape_parallel_latest.json` is the better source for whole-cycle airline coverage and worker outcomes.
 - `run_all_status_latest.json` may only reflect the last worker heartbeat, not the full parallel cycle.
 - `run_all_accumulation_status_latest.json` is the wrapper/accumulation heartbeat, not the final source of whole-cycle truth.
+- `postgres_unreachable` from the recovery helper means do not launch or recover yet; restore PostgreSQL service health first.
 
 ## Operational vs Training Cycles
 

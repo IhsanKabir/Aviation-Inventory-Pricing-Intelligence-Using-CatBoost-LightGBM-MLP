@@ -4,6 +4,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -126,6 +127,22 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
+def _read_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    try:
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+    except Exception:
+        return {}
+    return values
+
+
 def _write_json(path: Path, payload: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -142,6 +159,26 @@ def _parse_iso(ts: str | None):
 
 def _now_utc() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
+
+
+def _db_connection_target(root: Path) -> tuple[str, int]:
+    env = _read_env_file(root / ".env")
+    host = env.get("DB_HOST") or os.getenv("DB_HOST") or "localhost"
+    port_raw = env.get("DB_PORT") or os.getenv("DB_PORT") or "5432"
+    try:
+        port = int(port_raw)
+    except Exception:
+        port = 5432
+    return host, port
+
+
+def _db_reachable(root: Path, timeout_seconds: float = 2.0) -> tuple[bool, str, str, int]:
+    host, port = _db_connection_target(root)
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds):
+            return True, "db_reachable", host, port
+    except OSError as exc:
+        return False, f"db_unreachable:{exc}", host, port
 
 
 def _file_age_minutes(path: Path) -> float | None:
@@ -398,6 +435,7 @@ def _build_status(
     reason: str,
     launched: bool = False,
     lock_file: Path | None = None,
+    db_check: dict | None = None,
 ) -> dict:
     hb_age = _heartbeat_age_minutes(heartbeat) if heartbeat else None
     lock_payload = _read_json(lock_file) if lock_file and lock_file.exists() else {}
@@ -424,6 +462,7 @@ def _build_status(
         "lock_present": bool(lock_file and lock_file.exists()),
         "lock_age_minutes": lock_age,
         "lock_created_at_utc": lock_payload.get("created_at_utc") if lock_payload else None,
+        "db_check": db_check or {},
         "action": action,
         "reason": reason,
         "launched": bool(launched),
@@ -434,6 +473,8 @@ def _build_status(
 def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, state_file: Path, output_file: Path, lock_file: Path) -> int:
     active = _active_pipeline_processes()
     heartbeat = _read_json(status_file)
+    db_ok, db_reason, db_host, db_port = _db_reachable(root)
+    db_check = {"ok": db_ok, "reason": db_reason, "host": db_host, "port": db_port}
     if lock_file.exists():
         cleared, reason = _try_remove_stale_lock(lock_file, active, heartbeat, args)
         if not cleared:
@@ -448,6 +489,7 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
                 action="skip",
                 reason=f"wrapper_lock_present:{reason}",
                 lock_file=lock_file,
+                db_check=db_check,
             )
             _write_json(output_file, payload)
             print(json.dumps(payload, ensure_ascii=False))
@@ -464,6 +506,7 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
             action="skip",
             reason="active_pipeline_process_detected",
             lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -480,6 +523,7 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
             action="skip",
             reason="fresh_running_heartbeat",
             lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -496,10 +540,28 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
             action="skip",
             reason="completed_buffer_active",
             lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
         return 11
+    if not db_ok:
+        payload = _build_status(
+            mode="preflight",
+            root=root,
+            reports_dir=reports_dir,
+            status_file=status_file,
+            state_file=state_file,
+            active_procs=[],
+            heartbeat=heartbeat,
+            action="skip",
+            reason="postgres_unreachable",
+            lock_file=lock_file,
+            db_check=db_check,
+        )
+        _write_json(output_file, payload)
+        print(json.dumps(payload, ensure_ascii=False))
+        return 12
     payload = _build_status(
         mode="preflight",
         root=root,
@@ -511,6 +573,7 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
         action="ok",
         reason="no_active_pipeline_process",
         lock_file=lock_file,
+        db_check=db_check,
     )
     _write_json(output_file, payload)
     print(json.dumps(payload, ensure_ascii=False))
@@ -521,6 +584,8 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
     active = _active_pipeline_processes()
     heartbeat = _read_json(status_file)
     state = _read_json(state_file)
+    db_ok, db_reason, db_host, db_port = _db_reachable(root)
+    db_check = {"ok": db_ok, "reason": db_reason, "host": db_host, "port": db_port}
 
     if active:
         payload = _build_status(
@@ -534,6 +599,7 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             action="none",
             reason="active_pipeline_process_detected",
             lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -553,6 +619,7 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             action="none",
             reason="fresh_running_heartbeat",
             lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -569,6 +636,7 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             action="none",
             reason="completed_buffer_active",
             lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -608,6 +676,24 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             action="none",
             reason=reason,
             lock_file=lock_file,
+            db_check=db_check,
+        )
+        _write_json(output_file, payload)
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+    if not db_ok:
+        payload = _build_status(
+            mode="recover",
+            root=root,
+            reports_dir=reports_dir,
+            status_file=status_file,
+            state_file=state_file,
+            active_procs=[],
+            heartbeat=heartbeat,
+            action="none",
+            reason="postgres_unreachable",
+            lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -634,6 +720,7 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
         reason=f"{launch_reason}: {msg}",
         launched=ok and not args.dry_run,
         lock_file=lock_file,
+        db_check=db_check,
     )
     _write_json(output_file, payload)
     print(json.dumps(payload, ensure_ascii=False))
@@ -643,6 +730,8 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
 def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, state_file: Path, output_file: Path, lock_file: Path) -> int:
     active = _active_pipeline_processes()
     heartbeat = _read_json(status_file)
+    db_ok, db_reason, db_host, db_port = _db_reachable(root)
+    db_check = {"ok": db_ok, "reason": db_reason, "host": db_host, "port": db_port}
     if lock_file.exists():
         cleared, reason = _try_remove_stale_lock(lock_file, active, heartbeat, args)
         if not cleared:
@@ -657,6 +746,7 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
                 action="skip",
                 reason=f"wrapper_lock_present:{reason}",
                 lock_file=lock_file,
+                db_check=db_check,
             )
             _write_json(output_file, payload)
             print(json.dumps(payload, ensure_ascii=False))
@@ -674,6 +764,7 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             action="skip",
             reason="active_pipeline_process_detected",
             lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -691,6 +782,7 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             action="skip",
             reason="fresh_running_heartbeat",
             lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -708,10 +800,28 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             action="skip",
             reason="completed_buffer_active",
             lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
         return 11
+    if not db_ok:
+        payload = _build_status(
+            mode="guarded-run",
+            root=root,
+            reports_dir=reports_dir,
+            status_file=status_file,
+            state_file=state_file,
+            active_procs=[],
+            heartbeat=heartbeat,
+            action="skip",
+            reason="postgres_unreachable",
+            lock_file=lock_file,
+            db_check=db_check,
+        )
+        _write_json(output_file, payload)
+        print(json.dumps(payload, ensure_ascii=False))
+        return 12
 
     command = list(args.command or [])
     if command and command[0] == "--":
@@ -728,6 +838,7 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             action="error",
             reason="missing_command",
             lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -752,6 +863,7 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             action="skip",
             reason=f"lock_acquire_failed:{reason}",
             lock_file=lock_file,
+            db_check=db_check,
         )
         _write_json(output_file, payload)
         print(json.dumps(payload, ensure_ascii=False))
@@ -769,6 +881,7 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
         reason="lock_acquired_and_command_starting",
         launched=True,
         lock_file=lock_file,
+        db_check=db_check,
     )
     _write_json(output_file, start_payload)
     print(json.dumps(start_payload, ensure_ascii=False))

@@ -68,6 +68,10 @@ if [[ -f "$RECOVERY_HELPER" ]]; then
     echo "[$(timestamp)] ingestion cycle skipped: ${OPERATIONAL_COMPLETION_BUFFER_MINUTES} minute post-completion buffer is active" >> "$LOGFILE"
     exit 0
   fi
+  if [[ "$RC" -eq 12 ]]; then
+    echo "[$(timestamp)] ingestion cycle skipped: PostgreSQL is unavailable" >> "$LOGFILE"
+    exit 0
+  fi
   echo "[$(timestamp)] ingestion cycle finished rc=$RC" >> "$LOGFILE"
   exit "$RC"
 fi
