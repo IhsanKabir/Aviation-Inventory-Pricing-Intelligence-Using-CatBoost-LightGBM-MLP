@@ -7,6 +7,8 @@ mkdir -p "$ROOT/logs" "$ROOT/output/reports"
 PYEXE="$ROOT/.venv/bin/python"
 LOGFILE="$ROOT/logs/training_deep.log"
 RECOVERY_HELPER="$ROOT/tools/recover_interrupted_accumulation.py"
+RECOVERY_STATUS="$ROOT/output/reports/accumulation_recovery_latest.json"
+CYCLE_STATE="$ROOT/output/reports/accumulation_cycle_latest.json"
 ENVFILE="$ROOT/.env"
 export RUN_ALL_TRIP_PLAN_MODE=deep
 
@@ -56,6 +58,9 @@ if [[ -f "$RECOVERY_HELPER" ]]; then
     --min-completed-gap-minutes "$DEEP_COMPLETION_BUFFER_MINUTES" >> "$LOGFILE" 2>&1
   PRE_RC=$?
   set -e
+  if [[ -f "$RECOVERY_STATUS" && -f "$CYCLE_STATE" ]]; then
+    "$PYEXE" -c "import json, pathlib, datetime; p=json.loads(pathlib.Path(r'$RECOVERY_STATUS').read_text(encoding='utf-8')); c=json.loads(pathlib.Path(r'$CYCLE_STATE').read_text(encoding='utf-8')); print(f'[{datetime.datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")}] deep wrapper summary: state={c.get(\"state\")} action={p.get(\"action\")} reason={p.get(\"reason\")} cycle_id={c.get(\"cycle_id\")} launched={p.get(\"launched\")} db_ok={(p.get(\"db_check\") or {}).get(\"ok\")} rc=$PRE_RC')" >> "$LOGFILE" 2>&1
+  fi
 
   if [[ "$PRE_RC" -eq 10 ]]; then
     echo "[$(timestamp)] deep training skipped: active or fresh accumulation already present" >> "$LOGFILE"

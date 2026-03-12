@@ -7,6 +7,8 @@ mkdir -p "$ROOT/logs" "$ROOT/output/reports"
 PYEXE="$ROOT/.venv/bin/python"
 LOGFILE="$ROOT/logs/ingestion_4h.log"
 RECOVERY_HELPER="$ROOT/tools/recover_interrupted_accumulation.py"
+RECOVERY_STATUS="$ROOT/output/reports/accumulation_recovery_latest.json"
+CYCLE_STATE="$ROOT/output/reports/accumulation_cycle_latest.json"
 ENVFILE="$ROOT/.env"
 
 timestamp() {
@@ -43,7 +45,7 @@ if [[ -n "${BIGQUERY_PROJECT_ID:-}" && -n "${BIGQUERY_DATASET:-}" && -z "${GOOGL
 fi
 
 if [[ -f "$RECOVERY_HELPER" ]]; then
-  echo "[$(timestamp)] starting ingestion cycle" >> "$LOGFILE"
+  echo "[$(timestamp)] ingestion cycle launch check" >> "$LOGFILE"
   set +e
   "$PYEXE" "$RECOVERY_HELPER" \
     --mode guarded-run \
@@ -59,6 +61,9 @@ if [[ -f "$RECOVERY_HELPER" ]]; then
     --report-timestamp-tz local >> "$LOGFILE" 2>&1
   RC=$?
   set -e
+  if [[ -f "$RECOVERY_STATUS" && -f "$CYCLE_STATE" ]]; then
+    "$PYEXE" -c "import json, pathlib, datetime; p=json.loads(pathlib.Path(r'$RECOVERY_STATUS').read_text(encoding='utf-8')); c=json.loads(pathlib.Path(r'$CYCLE_STATE').read_text(encoding='utf-8')); print(f'[{datetime.datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")}] ingestion wrapper summary: state={c.get(\"state\")} action={p.get(\"action\")} reason={p.get(\"reason\")} cycle_id={c.get(\"cycle_id\")} launched={p.get(\"launched\")} db_ok={(p.get(\"db_check\") or {}).get(\"ok\")} rc=$RC')" >> "$LOGFILE" 2>&1
+  fi
 
   if [[ "$RC" -eq 10 ]]; then
     echo "[$(timestamp)] ingestion cycle skipped: wrapper lock or active accumulation already present" >> "$LOGFILE"
@@ -72,7 +77,7 @@ if [[ -f "$RECOVERY_HELPER" ]]; then
     echo "[$(timestamp)] ingestion cycle skipped: PostgreSQL is unavailable" >> "$LOGFILE"
     exit 0
   fi
-  echo "[$(timestamp)] ingestion cycle finished rc=$RC" >> "$LOGFILE"
+  echo "[$(timestamp)] ingestion wrapper finished rc=$RC" >> "$LOGFILE"
   exit "$RC"
 fi
 

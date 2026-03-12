@@ -7,6 +7,8 @@ if not exist "%ROOT%\output\reports" mkdir "%ROOT%\output\reports"
 set "PYEXE=%ROOT%\.venv\Scripts\python.exe"
 set "LOGFILE=%ROOT%\logs\training_deep.log"
 set "RECOVERY_HELPER=%ROOT%\tools\recover_interrupted_accumulation.py"
+set "RECOVERY_STATUS=%ROOT%\output\reports\accumulation_recovery_latest.json"
+set "CYCLE_STATE=%ROOT%\output\reports\accumulation_cycle_latest.json"
 set "ENVFILE=%ROOT%\.env"
 set "RUN_ALL_TRIP_PLAN_MODE=deep"
 
@@ -49,6 +51,9 @@ if defined BIGQUERY_PROJECT_ID if defined BIGQUERY_DATASET if not defined GOOGLE
 if exist "%RECOVERY_HELPER%" (
   "%PYEXE%" "%RECOVERY_HELPER%" --mode preflight --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%DEEP_COMPLETION_BUFFER_MINUTES%" >> "%LOGFILE%" 2>&1
   set "PRE_RC=%ERRORLEVEL%"
+  if exist "%RECOVERY_STATUS%" if exist "%CYCLE_STATE%" (
+    powershell -NoProfile -Command "$p = Get-Content -Raw '%RECOVERY_STATUS%' | ConvertFrom-Json; $c = Get-Content -Raw '%CYCLE_STATE%' | ConvertFrom-Json; $msg = ('[{0} {1}] deep wrapper summary: state={2} action={3} reason={4} cycle_id={5} launched={6} db_ok={7} rc={8}' -f (Get-Date -Format 'ddd MM/dd/yyyy'), (Get-Date -Format 'HH:mm:ss.ff'), $c.state, $p.action, $p.reason, $c.cycle_id, $p.launched, $p.db_check.ok, '!PRE_RC!'); Add-Content -Path '%LOGFILE%' -Value $msg" >nul 2>&1
+  )
   if "!PRE_RC!"=="10" (
     echo [%date% %time%] deep training skipped: active or fresh accumulation already present>> "%LOGFILE%"
     exit /b 0
