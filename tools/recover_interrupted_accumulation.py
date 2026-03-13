@@ -724,6 +724,147 @@ def _build_cycle_state_payload(
     }
 
 
+def _event_timestamp(payload: dict) -> dt.datetime | None:
+    return _parse_iso(payload.get("checked_at_utc")) or _parse_iso(payload.get("completed_at_utc"))
+
+
+def _parallel_completion_timestamp(parallel_status: dict | None) -> dt.datetime | None:
+    parallel_status = parallel_status or {}
+    return _parse_iso(parallel_status.get("completed_at_utc")) or _parse_iso(parallel_status.get("generated_at"))
+
+
+def _parallel_completion_is_newer(existing_cycle_state: dict, parallel_status: dict | None) -> bool:
+    parallel_ts = _parallel_completion_timestamp(parallel_status)
+    if parallel_ts is None:
+        return False
+    existing_ts = _event_timestamp(existing_cycle_state)
+    if existing_ts is None:
+        return True
+    return parallel_ts > existing_ts
+
+
+def _parallel_completion_is_newer_than_payload(payload: dict, parallel_status: dict | None) -> bool:
+    parallel_ts = _parallel_completion_timestamp(parallel_status)
+    if parallel_ts is None:
+        return False
+    payload_ts = _event_timestamp(payload)
+    if payload_ts is None:
+        return True
+    return parallel_ts > payload_ts
+
+
+def _parallel_completion_matches_payload_cycle(payload: dict, parallel_status: dict | None) -> bool:
+    if not isinstance(parallel_status, dict):
+        return False
+    parallel_ts = _parallel_completion_timestamp(parallel_status)
+    if parallel_ts is None:
+        return False
+    parallel_cycle_id = str(parallel_status.get("cycle_id") or "").strip()
+    payload_cycle_id = str(payload.get("cycle_id") or payload.get("accumulation_run_id") or "").strip()
+    if not parallel_cycle_id or not payload_cycle_id:
+        return False
+    return parallel_cycle_id == payload_cycle_id
+
+
+def _preserve_existing_completed_cycle(existing_cycle_state: dict, payload: dict) -> bool:
+    existing_state = str(existing_cycle_state.get("state") or "").strip().lower()
+    payload_state = str(payload.get("state") or "").strip().lower()
+    if existing_state != "completed":
+        return False
+    if payload_state not in {"skipped", "running", "starting"}:
+        return False
+    existing_completed_at = _parse_iso(existing_cycle_state.get("completed_at_utc"))
+    if existing_completed_at is None:
+        return False
+    existing_cycle_id = str(existing_cycle_state.get("cycle_id") or "").strip()
+    payload_cycle_id = str(payload.get("cycle_id") or "").strip()
+    if existing_cycle_id and payload_cycle_id and existing_cycle_id != payload_cycle_id:
+        return False
+    return True
+
+
+def _write_cycle_state(
+    cycle_state_file: Path,
+    *,
+    lifecycle_state: str,
+    base_payload: dict,
+    status_file: Path,
+    parallel_file: Path,
+    heartbeat: dict | None,
+    parallel_status: dict | None,
+    command: list[str] | None = None,
+    return_code: int | None = None,
+):
+    payload = _build_cycle_state_payload(
+        lifecycle_state=lifecycle_state,
+        base_payload=base_payload,
+        status_file=status_file,
+        parallel_file=parallel_file,
+        heartbeat=heartbeat,
+        parallel_status=parallel_status,
+        command=command,
+        return_code=return_code,
+    )
+
+    existing_cycle_state = _read_json(cycle_state_file)
+    if _parallel_completion_is_newer(existing_cycle_state, parallel_status) or _parallel_completion_is_newer_than_payload(payload, parallel_status):
+        parallel_status = parallel_status or {}
+        heartbeat = heartbeat or {}
+        parallel_cycle_id = str(parallel_status.get("cycle_id") or "").strip()
+        heartbeat_cycle_id = str(heartbeat.get("cycle_id") or heartbeat.get("scrape_id") or "").strip()
+        aligned_heartbeat = heartbeat if parallel_cycle_id and heartbeat_cycle_id == parallel_cycle_id else {}
+        completed_payload = {
+            "mode": "aggregate-sync",
+            "action": "completed",
+            "wrapper_event": "wrapper_finished_success",
+            "reason": "parallel_scrape_done",
+            "checked_at_utc": parallel_status.get("completed_at_utc")
+            or parallel_status.get("generated_at")
+            or base_payload.get("checked_at_utc"),
+            "db_check": base_payload.get("db_check") or {},
+        }
+        payload = _build_cycle_state_payload(
+            lifecycle_state="completed",
+            base_payload=completed_payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=aligned_heartbeat,
+            parallel_status=parallel_status,
+            command=command,
+            return_code=return_code,
+        )
+    elif _parallel_completion_matches_payload_cycle(payload, parallel_status):
+        parallel_status = parallel_status or {}
+        heartbeat = heartbeat or {}
+        parallel_cycle_id = str(parallel_status.get("cycle_id") or "").strip()
+        heartbeat_cycle_id = str(heartbeat.get("cycle_id") or heartbeat.get("scrape_id") or "").strip()
+        aligned_heartbeat = heartbeat if parallel_cycle_id and heartbeat_cycle_id == parallel_cycle_id else {}
+        completed_payload = {
+            "mode": "aggregate-sync",
+            "action": "completed",
+            "wrapper_event": "wrapper_finished_success",
+            "reason": "parallel_scrape_done",
+            "checked_at_utc": parallel_status.get("completed_at_utc")
+            or parallel_status.get("generated_at")
+            or base_payload.get("checked_at_utc"),
+            "db_check": base_payload.get("db_check") or {},
+        }
+        payload = _build_cycle_state_payload(
+            lifecycle_state="completed",
+            base_payload=completed_payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=aligned_heartbeat,
+            parallel_status=parallel_status,
+            command=command,
+            return_code=return_code,
+        )
+    elif _preserve_existing_completed_cycle(existing_cycle_state, payload):
+        payload = existing_cycle_state
+
+    _write_json(cycle_state_file, payload)
+
+
 def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, state_file: Path, output_file: Path, cycle_state_file: Path, lock_file: Path) -> int:
     active = _active_pipeline_processes()
     heartbeat = _read_json(status_file)
@@ -748,16 +889,14 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
                 db_check=db_check,
             )
             _write_json(output_file, payload)
-            _write_json(
+            _write_cycle_state(
                 cycle_state_file,
-                _build_cycle_state_payload(
-                    lifecycle_state="skipped",
-                    base_payload=payload,
-                    status_file=status_file,
-                    parallel_file=parallel_file,
-                    heartbeat=heartbeat,
-                    parallel_status=parallel_status,
-                ),
+                lifecycle_state="skipped",
+                base_payload=payload,
+                status_file=status_file,
+                parallel_file=parallel_file,
+                heartbeat=heartbeat,
+                parallel_status=parallel_status,
             )
             print(json.dumps(payload, ensure_ascii=False))
             return 10
@@ -776,16 +915,14 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="skipped",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="skipped",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 10
@@ -804,16 +941,14 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="skipped",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="skipped",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 10
@@ -832,16 +967,14 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="skipped",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="skipped",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 11
@@ -860,16 +993,14 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="skipped",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="skipped",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 12
@@ -887,16 +1018,14 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
         db_check=db_check,
     )
     _write_json(output_file, payload)
-    _write_json(
+    _write_cycle_state(
         cycle_state_file,
-        _build_cycle_state_payload(
-            lifecycle_state="ready",
-            base_payload=payload,
-            status_file=status_file,
-            parallel_file=parallel_file,
-            heartbeat=heartbeat,
-            parallel_status=parallel_status,
-        ),
+        lifecycle_state="ready",
+        base_payload=payload,
+        status_file=status_file,
+        parallel_file=parallel_file,
+        heartbeat=heartbeat,
+        parallel_status=parallel_status,
     )
     print(json.dumps(payload, ensure_ascii=False))
     return 0
@@ -926,16 +1055,14 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="running",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="running",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 0
@@ -957,16 +1084,14 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="running",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="running",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 0
@@ -985,16 +1110,14 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="skipped",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="skipped",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 0
@@ -1053,16 +1176,14 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="skipped",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="skipped",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 0
@@ -1091,16 +1212,14 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
         db_check=db_check,
     )
     _write_json(output_file, payload)
-    _write_json(
+    _write_cycle_state(
         cycle_state_file,
-        _build_cycle_state_payload(
-            lifecycle_state="starting" if ok else "failed",
-            base_payload=payload,
-            status_file=status_file,
-            parallel_file=parallel_file,
-            heartbeat=heartbeat,
-            parallel_status=parallel_status,
-        ),
+        lifecycle_state="starting" if ok else "failed",
+        base_payload=payload,
+        status_file=status_file,
+        parallel_file=parallel_file,
+        heartbeat=heartbeat,
+        parallel_status=parallel_status,
     )
     print(json.dumps(payload, ensure_ascii=False))
     return 0 if ok else 1
@@ -1130,16 +1249,14 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
                 db_check=db_check,
             )
             _write_json(output_file, payload)
-            _write_json(
+            _write_cycle_state(
                 cycle_state_file,
-                _build_cycle_state_payload(
-                    lifecycle_state="skipped",
-                    base_payload=payload,
-                    status_file=status_file,
-                    parallel_file=parallel_file,
-                    heartbeat=heartbeat,
-                    parallel_status=parallel_status,
-                ),
+                lifecycle_state="skipped",
+                base_payload=payload,
+                status_file=status_file,
+                parallel_file=parallel_file,
+                heartbeat=heartbeat,
+                parallel_status=parallel_status,
             )
             print(json.dumps(payload, ensure_ascii=False))
             return 10
@@ -1159,16 +1276,14 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="skipped",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="skipped",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 10
@@ -1188,16 +1303,14 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="skipped",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="skipped",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 10
@@ -1217,16 +1330,14 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="skipped",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="skipped",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 11
@@ -1245,16 +1356,14 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="skipped",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="skipped",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 12
@@ -1277,16 +1386,14 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="failed",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="failed",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 2
@@ -1313,16 +1420,14 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             db_check=db_check,
         )
         _write_json(output_file, payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="skipped",
-                base_payload=payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=heartbeat,
-                parallel_status=parallel_status,
-            ),
+            lifecycle_state="skipped",
+            base_payload=payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=heartbeat,
+            parallel_status=parallel_status,
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 10
@@ -1342,17 +1447,15 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
         db_check=db_check,
     )
     _write_json(output_file, start_payload)
-    _write_json(
+    _write_cycle_state(
         cycle_state_file,
-        _build_cycle_state_payload(
-            lifecycle_state="starting",
-            base_payload=start_payload,
-            status_file=status_file,
-            parallel_file=parallel_file,
-            heartbeat={},
-            parallel_status={},
-            command=command,
-        ),
+        lifecycle_state="starting",
+        base_payload=start_payload,
+        status_file=status_file,
+        parallel_file=parallel_file,
+        heartbeat={},
+        parallel_status={},
+        command=command,
     )
     print(json.dumps(start_payload, ensure_ascii=False))
 
@@ -1379,18 +1482,16 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
             db_check=db_check,
         )
         _write_json(output_file, final_payload)
-        _write_json(
+        _write_cycle_state(
             cycle_state_file,
-            _build_cycle_state_payload(
-                lifecycle_state="completed" if int(completed.returncode) == 0 else "failed",
-                base_payload=final_payload,
-                status_file=status_file,
-                parallel_file=parallel_file,
-                heartbeat=final_heartbeat,
-                parallel_status=final_parallel,
-                command=command,
-                return_code=int(completed.returncode),
-            ),
+            lifecycle_state="completed" if int(completed.returncode) == 0 else "failed",
+            base_payload=final_payload,
+            status_file=status_file,
+            parallel_file=parallel_file,
+            heartbeat=final_heartbeat,
+            parallel_status=final_parallel,
+            command=command,
+            return_code=int(completed.returncode),
         )
         print(json.dumps(final_payload, ensure_ascii=False))
         return int(completed.returncode)
