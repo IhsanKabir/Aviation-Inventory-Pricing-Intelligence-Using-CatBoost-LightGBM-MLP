@@ -684,13 +684,25 @@ def _build_cycle_state_payload(
     cycle_id = str(parallel_status.get("cycle_id") or heartbeat.get("cycle_id") or heartbeat.get("scrape_id") or "").strip() or None
     completed_at_utc = parallel_status.get("completed_at_utc") or heartbeat.get("completed_at_utc") or base_payload.get("checked_at_utc")
     started_at_utc = parallel_status.get("started_at_utc") or heartbeat.get("started_at_utc") or heartbeat.get("accumulation_started_at_utc")
+    lifecycle_action = base_payload.get("action")
+    wrapper_event = base_payload.get("wrapper_event")
+    reason = base_payload.get("reason")
+
+    # If aggregate parallel output confirms this cycle completed, preserve that
+    # terminal state instead of letting later transient wrapper events relabel it.
+    if cycle_id and parallel_status.get("cycle_id") == cycle_id and parallel_status.get("completed_at_utc"):
+        lifecycle_state = "completed"
+        lifecycle_action = "completed"
+        wrapper_event = "wrapper_finished_success"
+        reason = "parallel_scrape_done"
+
     return {
         "state": lifecycle_state,
         "status_source": "wrapper_cycle_state",
         "mode": base_payload.get("mode"),
-        "action": base_payload.get("action"),
-        "wrapper_event": base_payload.get("wrapper_event"),
-        "reason": base_payload.get("reason"),
+        "action": lifecycle_action,
+        "wrapper_event": wrapper_event,
+        "reason": reason,
         "checked_at_utc": base_payload.get("checked_at_utc"),
         "cycle_id": cycle_id,
         "accumulation_run_id": cycle_id,
