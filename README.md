@@ -1,6 +1,6 @@
 # Aero Pulse Intelligence Platform
 
-Multi-airline fare, inventory, OTA benchmarking, reporting, and forecasting platform for thesis-grade aviation intelligence work.
+Multi-airline fare, inventory, benchmarking, reporting, and forecasting platform for thesis-grade aviation intelligence work.
 
 ## End-To-End Pipeline
 
