@@ -149,6 +149,7 @@ export function RouteScopeControls({
   departureDateOptions,
   returnDateOptions,
   availabilityOk,
+  availabilityDeferred,
   availabilityEndpointMissing,
   availabilityError,
   selectedReturnDateUnavailable,
@@ -162,6 +163,7 @@ export function RouteScopeControls({
   departureDateOptions: DateAvailabilityPoint[];
   returnDateOptions: DateAvailabilityPoint[];
   availabilityOk: boolean;
+  availabilityDeferred: boolean;
   availabilityEndpointMissing: boolean;
   availabilityError?: string;
   selectedReturnDateUnavailable: boolean;
@@ -561,7 +563,9 @@ export function RouteScopeControls({
           <div className="filter-label">
             {renderAvailabilityTitle("Collected departure dates", departureSummary)}
           </div>
-          {availabilityOk ? (
+          {availabilityDeferred ? (
+            <div className="empty-state">Select an exact route to inspect collected dates.</div>
+          ) : availabilityOk ? (
             departureDateOptions.length ? (
               <div className="availability-section">
                 <div className="chip-row">
@@ -600,7 +604,9 @@ export function RouteScopeControls({
             <div className="filter-label">
               {renderAvailabilityTitle("Collected return dates", returnSummary)}
             </div>
-            {availabilityOk ? (
+            {availabilityDeferred ? (
+              <div className="empty-state">Select an exact route to inspect collected return dates.</div>
+            ) : availabilityOk ? (
               returnDateOptions.length ? (
                 <div className="availability-section">
                   <div className="chip-row">

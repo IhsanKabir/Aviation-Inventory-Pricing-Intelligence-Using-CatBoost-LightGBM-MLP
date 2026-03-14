@@ -682,6 +682,11 @@ def _build_cycle_state_payload(
     heartbeat = heartbeat or {}
     parallel_status = parallel_status or {}
     cycle_id = str(parallel_status.get("cycle_id") or heartbeat.get("cycle_id") or heartbeat.get("scrape_id") or "").strip() or None
+    aggregate_completed = bool(
+        cycle_id
+        and parallel_status.get("cycle_id") == cycle_id
+        and parallel_status.get("completed_at_utc")
+    )
     completed_at_utc = parallel_status.get("completed_at_utc") or heartbeat.get("completed_at_utc") or base_payload.get("checked_at_utc")
     started_at_utc = parallel_status.get("started_at_utc") or heartbeat.get("started_at_utc") or heartbeat.get("accumulation_started_at_utc")
     lifecycle_action = base_payload.get("action")
@@ -690,11 +695,16 @@ def _build_cycle_state_payload(
 
     # If aggregate parallel output confirms this cycle completed, preserve that
     # terminal state instead of letting later transient wrapper events relabel it.
-    if cycle_id and parallel_status.get("cycle_id") == cycle_id and parallel_status.get("completed_at_utc"):
+    if aggregate_completed:
         lifecycle_state = "completed"
         lifecycle_action = "completed"
         wrapper_event = "wrapper_finished_success"
         reason = "parallel_scrape_done"
+        # A completed aggregate cycle is canonical; do not carry forward a
+        # transient preflight/recovery mode or action label for the same cycle.
+        base_payload = dict(base_payload)
+        base_payload["mode"] = "aggregate"
+        base_payload["action"] = lifecycle_action
 
     return {
         "state": lifecycle_state,

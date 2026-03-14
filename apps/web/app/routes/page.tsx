@@ -190,11 +190,12 @@ function normalizeAirportCode(value?: string | null) {
 
 export default async function RoutesPage({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {};
+  const tripTypeParam = firstParam(params, "trip_type");
   const selectedAirlines = manyParams(params, "airline").map((item) => item.trim().toUpperCase()).filter(Boolean);
   const origin = normalizeAirportCode(firstParam(params, "origin"));
   const destination = normalizeAirportCode(firstParam(params, "destination"));
   const cabin = firstParam(params, "cabin");
-  const tripType = firstParam(params, "trip_type") ?? "OW";
+  const tripType = tripTypeParam ?? "OW";
   const returnDate = firstParam(params, "return_date");
   const returnDateStart = firstParam(params, "return_date_start");
   const returnDateEnd = firstParam(params, "return_date_end");
@@ -209,6 +210,8 @@ export default async function RoutesPage({ searchParams }: PageProps) {
     tripType === "RT" && returnScope === "range" ? returnDateStart ?? undefined : undefined;
   const effectiveReturnDateEnd =
     tripType === "RT" && returnScope === "range" ? returnDateEnd ?? undefined : undefined;
+  const scopedTripTypes = tripTypeParam ? [tripType] : tripType === "RT" ? [tripType] : undefined;
+  const shouldLoadAvailability = Boolean(origin && destination);
   const tripScopeLabel = buildTripScopeLabel(
     tripType,
     returnScope,
@@ -223,7 +226,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
       cycleId,
       airlines: selectedAirlines.length ? selectedAirlines : undefined,
       cabins: cabin ? [cabin] : undefined,
-      tripTypes: tripType ? [tripType] : undefined
+      tripTypes: scopedTripTypes
     }),
     getRecentCycles(8),
     getRouteMonitorMatrixPayload({
@@ -239,14 +242,20 @@ export default async function RoutesPage({ searchParams }: PageProps) {
       routeLimit,
       historyLimit
     }),
-    getRouteDateAvailabilityPayload({
-      cycleId,
-      airlines: selectedAirlines.length ? selectedAirlines : undefined,
-      origins: origin ? [origin] : undefined,
-      destinations: destination ? [destination] : undefined,
-      cabins: cabin ? [cabin] : undefined,
-      tripTypes: tripType ? [tripType] : undefined
-    })
+    shouldLoadAvailability
+      ? getRouteDateAvailabilityPayload({
+          cycleId,
+          airlines: selectedAirlines.length ? selectedAirlines : undefined,
+          origins: origin ? [origin] : undefined,
+          destinations: destination ? [destination] : undefined,
+          cabins: cabin ? [cabin] : undefined,
+          tripTypes: tripType ? [tripType] : undefined
+        })
+      : Promise.resolve({
+          ok: true,
+          data: { cycle_id: cycleId ?? null, departure_dates: [], return_dates: [] },
+          error: undefined
+        })
   ]);
 
   const routeBlocks = matrix.data?.routes ?? [];
@@ -329,6 +338,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
           <RouteScopeControls
             availabilityEndpointMissing={availabilityEndpointMissing}
             availabilityError={availability.error}
+            availabilityDeferred={!shouldLoadAvailability}
             availabilityOk={availability.ok}
             cycleOptions={recentCycleOptions.map((item) => ({
               cycleId: item.cycle_id ?? null,
