@@ -10,6 +10,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 from core.market_priors import apply_market_priors
+from core.holiday_features import add_holiday_features, get_holiday_feature_columns
 from db import DATABASE_URL as DEFAULT_DATABASE_URL
 
 
@@ -33,6 +34,17 @@ MARKET_PRIOR_NUMERIC_COLS = [
     "airline_is_return_oriented",
     "horizon_is_visa_window",
     "horizon_is_long_window",
+]
+
+HOLIDAY_FEATURE_COLS = [
+    "is_search_holiday",
+    "is_high_demand_holiday",
+    "days_to_next_holiday",
+    "days_since_last_holiday",
+    "is_holiday_week",
+    "holiday_type_code",
+    "is_departure_holiday",
+    "is_departure_high_demand",
 ]
 
 AIRLINE_MODEL_CODE = {"hybrid": 0.0, "hub_spoke": 1.0, "lcc": 2.0}
@@ -342,6 +354,28 @@ def _apply_market_priors_safe(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
 
+def _apply_holiday_features_safe(df: pd.DataFrame, date_column: str = "report_day", departure_column: str = "departure_day") -> pd.DataFrame:
+    """
+    Safely apply holiday features to DataFrame.
+
+    Args:
+        df: Input DataFrame
+        date_column: Column name for search/report date
+        departure_column: Column name for departure date (optional)
+
+    Returns:
+        DataFrame with holiday features added, or original DataFrame if error occurs
+    """
+    if df is None or df.empty:
+        return df
+    try:
+        return add_holiday_features(df, date_column=date_column, departure_column=departure_column)
+    except Exception as e:
+        # If holiday feature extraction fails, continue without them
+        print(f"Warning: Holiday features unavailable: {e}")
+        return df
+
+
 def _ml_feature_frame(part: pd.DataFrame, target: str):
     vals = pd.to_numeric(part[target], errors="coerce")
     work = pd.DataFrame(index=part.index)
@@ -364,6 +398,11 @@ def _ml_feature_frame(part: pd.DataFrame, target: str):
         dep = pd.to_datetime(part["departure_day"], errors="coerce")
         work["days_to_departure"] = (dep - report_day).dt.days
     for col in MARKET_PRIOR_NUMERIC_COLS:
+        if col in part.columns:
+            work[col] = pd.to_numeric(part[col], errors="coerce")
+
+    # Add holiday features
+    for col in HOLIDAY_FEATURE_COLS:
         if col in part.columns:
             work[col] = pd.to_numeric(part[col], errors="coerce")
 
@@ -442,6 +481,116 @@ def _robust_prediction_bounds(y: pd.Series):
         lower = float(np.min(vals))
         upper = float(np.max(vals))
     return lower, upper
+
+
+def add_prediction_confidence(
+    df: pd.DataFrame,
+    target: str,
+    route_eval: pd.DataFrame,
+    group_cols: list[str]
+) -> pd.DataFrame:
+    """
+    Add prediction confidence bands based on quantile spread and historical accuracy.
+
+    Confidence levels:
+        - high: uncertainty < 10% of median prediction AND historical MAE < threshold
+        - medium: uncertainty 10-25% of median prediction OR historical MAE moderate
+        - low: uncertainty > 25% of median prediction OR historical MAE high
+
+    Args:
+        df: Predictions DataFrame with quantile columns
+        target: Target column name
+        route_eval: Route-level evaluation metrics (contains historical MAE per route)
+        group_cols: Grouping columns (e.g., ['airline', 'origin', 'destination', 'cabin'])
+
+    Returns:
+        DataFrame with added columns: prediction_uncertainty, prediction_confidence
+    """
+    if df is None or df.empty:
+        return df
+
+    result = df.copy()
+
+    # Find quantile columns
+    q10_col = [c for c in result.columns if 'q10' in c.lower()]
+    q50_col = [c for c in result.columns if 'q50' in c.lower()]
+    q90_col = [c for c in result.columns if 'q90' in c.lower()]
+
+    # If no quantiles available, use simple confidence based on historical MAE only
+    if not q10_col or not q50_col or not q90_col:
+        result['prediction_confidence'] = 'medium'
+        result['prediction_uncertainty'] = 0.0
+        return result
+
+    q10_col = q10_col[0]
+    q50_col = q50_col[0]
+    q90_col = q90_col[0]
+
+    # Calculate uncertainty as quantile spread
+    result['prediction_uncertainty'] = abs(result[q90_col] - result[q10_col])
+
+    # Calculate relative uncertainty (uncertainty / median prediction)
+    median_pred = result[q50_col].replace(0, 1.0)  # Avoid division by zero
+    result['relative_uncertainty'] = result['prediction_uncertainty'] / abs(median_pred)
+
+    # Merge with historical MAE from route_eval
+    if not route_eval.empty and 'mae' in route_eval.columns:
+        merge_cols = [c for c in group_cols if c in result.columns and c in route_eval.columns]
+        if merge_cols:
+            # Get best model MAE per route
+            route_mae = route_eval.sort_values('mae').groupby(merge_cols, as_index=False).first()[merge_cols + ['mae']]
+            result = result.merge(route_mae, on=merge_cols, how='left')
+        else:
+            result['mae'] = np.nan
+    else:
+        result['mae'] = np.nan
+
+    # Determine confidence level
+    # High: relative_uncertainty < 0.10 AND mae < 0.3 (for change events) or mae < 500 (for prices)
+    # Medium: 0.10 <= relative_uncertainty < 0.25 OR moderate mae
+    # Low: relative_uncertainty >= 0.25 OR high mae
+
+    # Define MAE thresholds based on target type
+    if target in EVENT_TARGETS:
+        mae_high_threshold = 0.3
+        mae_medium_threshold = 0.5
+    elif target == 'min_price_bdt':
+        mae_high_threshold = 500
+        mae_medium_threshold = 1000
+    elif target in ['avg_seat_available', 'offers_count']:
+        mae_high_threshold = 5.0
+        mae_medium_threshold = 10.0
+    elif target == 'soldout_rate':
+        mae_high_threshold = 0.15
+        mae_medium_threshold = 0.30
+    else:
+        mae_high_threshold = float('inf')
+        mae_medium_threshold = float('inf')
+
+    def determine_confidence(row):
+        rel_unc = row.get('relative_uncertainty', 0.5)
+        mae = row.get('mae', float('inf'))
+
+        # High confidence: low uncertainty AND low MAE
+        if rel_unc < 0.10 and mae < mae_high_threshold:
+            return 'high'
+
+        # Low confidence: high uncertainty OR high MAE
+        if rel_unc >= 0.25 or mae >= mae_medium_threshold:
+            return 'low'
+
+        # Medium confidence: everything else
+        return 'medium'
+
+    result['prediction_confidence'] = result.apply(determine_confidence, axis=1)
+
+    # Clean up temporary columns
+    if 'relative_uncertainty' in result.columns:
+        result = result.drop(columns=['relative_uncertainty'])
+    if 'mae' in result.columns:
+        result = result.drop(columns=['mae'])
+
+    return result
 
 
 def _clip_to_bounds(value, lower, upper):
@@ -814,8 +963,12 @@ def load_daily_frame(args):
     if df["report_day"].nunique() < 2:
         fallback = _load_from_offer_history(engine, args)
         if not fallback.empty and fallback["report_day"].nunique() >= 2:
-            return _apply_market_priors_safe(fallback)
-    return _apply_market_priors_safe(df)
+            fallback = _apply_market_priors_safe(fallback)
+            fallback = _apply_holiday_features_safe(fallback)
+            return fallback
+    df = _apply_market_priors_safe(df)
+    df = _apply_holiday_features_safe(df)
+    return df
 
 
 def load_search_dynamic_frame(args):
@@ -880,7 +1033,9 @@ def load_search_dynamic_frame(args):
     )
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn, params=params)
-    return _apply_market_priors_safe(df)
+    df = _apply_market_priors_safe(df)
+    df = _apply_holiday_features_safe(df)
+    return df
 
 
 def add_prediction_columns(df: pd.DataFrame, target: str, windows: list[int], group_cols: list[str]):
@@ -1565,6 +1720,8 @@ def main():
     if not next_day_df.empty:
         next_pred_cols = [c for c in pred_cols if c in next_day_df.columns]
         next_day_df = _clip_prediction_columns(next_day_df, target=target, pred_cols=next_pred_cols)
+        # Add prediction confidence bands
+        next_day_df = add_prediction_confidence(next_day_df, target=target, route_eval=route_eval, group_cols=group_cols)
     trend_df = build_trend_summary(history_df, target=target, group_cols=group_cols)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
