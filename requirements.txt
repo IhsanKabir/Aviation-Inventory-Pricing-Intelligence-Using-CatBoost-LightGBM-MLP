@@ -14,6 +14,8 @@ xlsxwriter
 scikit-learn
 catboost
 lightgbm
+shap
+optuna
 # OTA/browser-assisted token/session tooling
 playwright
 fastapi
