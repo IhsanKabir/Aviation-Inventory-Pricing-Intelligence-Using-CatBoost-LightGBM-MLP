@@ -1,0 +1,29 @@
+{
+  "description": "Hub airports for route characteristic identification",
+  "hubs": {
+    "global_major": ["DXB", "DOH", "AUH", "IST", "SIN", "BKK", "KUL", "HKG", "ICN", "NRT", "DEL", "BOM"],
+    "middle_east": ["DXB", "DOH", "AUH", "RUH", "JED", "MCT", "KWI", "BAH"],
+    "south_asia": ["DEL", "BOM", "CCU", "MAA", "BLR", "HYD", "CMB"],
+    "southeast_asia": ["BKK", "SIN", "KUL", "CGK", "MNL", "HAN", "SGN"],
+    "bangladesh": ["DAC", "CXB"],
+    "lcc_hubs": ["KUL", "BKK", "SIN", "DXB"]
+  },
+  "route_types": {
+    "domestic": {
+      "max_distance_km": 500,
+      "examples": ["DAC-CXB", "DAC-JSR"]
+    },
+    "regional": {
+      "max_distance_km": 2500,
+      "examples": ["DAC-DEL", "DAC-BKK", "DAC-SIN"]
+    },
+    "international_short": {
+      "max_distance_km": 5000,
+      "examples": ["DAC-DXB", "DAC-DOH", "DAC-KUL"]
+    },
+    "long_haul": {
+      "min_distance_km": 5000,
+      "examples": ["DAC-LHR", "DAC-JFK"]
+    }
+  }
+}
