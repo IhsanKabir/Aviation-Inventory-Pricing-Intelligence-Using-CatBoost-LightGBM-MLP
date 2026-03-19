@@ -879,3 +879,33 @@ Trip configuration now has a dedicated validator:
 
 Operational rule:
 - validate `config/route_trip_windows.json`, `config/market_priors.json`, and `config/routes.json` before relying on new scheduler-facing trip-profile changes
+
+## Manual Operational Mode (2026-03-15)
+
+For laptops that cannot stay on continuously, operational collection should run
+manually instead of through the finish-driven scheduler.
+
+Decision:
+
+1. keep the guarded operational wrapper and buffer logic
+2. disable `AirlineIntel_Ingestion4H` and `AirlineIntel_IngestionOnLogon` on
+   intermittently powered laptops
+3. launch operational manually with:
+   - `cmd /c scheduler\run_ingestion_4h_once.bat`
+
+Reason:
+
+- a power-off destroys in-flight Python workers and active search requests
+- the current system can skip/recover cleanly, but it does not yet support true
+  query-level checkpoint resume after shutdown
+- manual operational launches are more reliable than forced scheduler runs on a
+  laptop that is regularly turned off
+
+Current observed route issue:
+
+- domestic routes such as `DAC-CXB`, `DAC-JSR`, and `DAC-SPD` are present in the
+  operational trip config as one-way monitored routes
+- if they do not appear on the website, that is currently because the latest
+  completed offer snapshot has no collected rows for those route/date queries,
+  not because the operational OW config omitted them
+- website visibility also remains gated by downstream warehouse publish time

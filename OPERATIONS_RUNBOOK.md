@@ -323,6 +323,30 @@ powershell -ExecutionPolicy Bypass -File scheduler\install_training_enrichment_a
 powershell -ExecutionPolicy Bypass -File scheduler\install_training_deep_autorun.ps1 -StartTime 02:00
 ```
 
+## Manual Operational Mode
+
+For laptops that are not reliably always-on, operational collection should be run
+manually instead of through Task Scheduler.
+
+Disable the operational autorun tasks:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scheduler\disable_ingestion_autorun.ps1
+```
+
+Manual operational launch:
+
+```powershell
+cmd /c scheduler\run_ingestion_4h_once.bat
+```
+
+Recommended use:
+
+- start operational only when you have enough uninterrupted runtime
+- keep daily training/deep scheduling on a more stable machine if needed
+- treat website freshness lag separately from collection completeness; current
+  warehouse publish time can still add substantial delay after scrape completion
+
 ## If Daily Ops File Did Not Update
 
 1. Run one manual cycle:

@@ -465,6 +465,7 @@
         },
         "CGP-DAC": {
           "market_trip_profiles": [
+            "default_one_way_monitoring",
             "bangladesh_domestic_round_trip_short",
             "bangladesh_domestic_eid_round_trip_2026",
             "bangladesh_domestic_eid_capital_return_one_way_2026"
@@ -490,6 +491,7 @@
         },
         "CXB-DAC": {
           "market_trip_profiles": [
+            "default_one_way_monitoring",
             "bangladesh_domestic_round_trip_short",
             "bangladesh_domestic_eid_round_trip_2026",
             "bangladesh_domestic_eid_capital_return_one_way_2026"
@@ -531,6 +533,7 @@
         "DAC-BZL": {
           "market_trip_profiles": [
             "bangladesh_domestic_round_trip_short",
+            "default_one_way_monitoring",
             "bangladesh_domestic_eid_round_trip_2026",
             "bangladesh_domestic_eid_capital_outbound_one_way_2026"
           ],
@@ -564,6 +567,7 @@
         },
         "DAC-CGP": {
           "market_trip_profiles": [
+            "default_one_way_monitoring",
             "bangladesh_domestic_round_trip_short",
             "bangladesh_domestic_eid_round_trip_2026",
             "bangladesh_domestic_eid_capital_outbound_one_way_2026"
@@ -573,6 +577,7 @@
             "bangladesh_domestic_round_trip_short"
           ],
           "training_market_trip_profiles": [
+            "default_one_way_monitoring",
             "bangladesh_domestic_round_trip_short",
             "bangladesh_domestic_eid_round_trip_2026",
             "bangladesh_domestic_eid_capital_outbound_one_way_2026"
@@ -581,6 +586,7 @@
         "DAC-CXB": {
           "market_trip_profiles": [
             "bangladesh_domestic_round_trip_short",
+            "default_one_way_monitoring",
             "bangladesh_domestic_eid_round_trip_2026",
             "bangladesh_domestic_eid_capital_outbound_one_way_2026"
           ],
@@ -590,6 +596,7 @@
           ],
           "training_market_trip_profiles": [
             "bangladesh_domestic_round_trip_short",
+            "default_one_way_monitoring",
             "bangladesh_domestic_eid_round_trip_2026",
             "bangladesh_domestic_eid_capital_outbound_one_way_2026"
           ]
