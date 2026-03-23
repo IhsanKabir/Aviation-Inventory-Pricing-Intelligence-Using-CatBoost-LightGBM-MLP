@@ -2648,7 +2648,7 @@ def _get_route_monitor_matrix_from_bigquery(
               GROUP BY
                 cycle_id, captured_at_utc, airline, origin, destination,
                 flight_number, departure_utc, cabin
-            )
+            ),
             aggregated_history AS (
               SELECT
                 ho.cycle_id,
