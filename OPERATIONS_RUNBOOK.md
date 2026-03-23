@@ -323,6 +323,12 @@ powershell -ExecutionPolicy Bypass -File scheduler\install_training_enrichment_a
 powershell -ExecutionPolicy Bypass -File scheduler\install_training_deep_autorun.ps1 -StartTime 02:00
 ```
 
+Disable ingestion autorun on a laptop that should stop self-rescheduling:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scheduler\disable_ingestion_autorun.ps1
+```
+
 ## If Daily Ops File Did Not Update
 
 1. Run one manual cycle:

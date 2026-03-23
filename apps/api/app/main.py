@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
+import time
 from datetime import date
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -11,6 +14,7 @@ from .config import settings
 from .db import get_optional_db
 from .repositories import exporting, reporting
 
+LOG = logging.getLogger("api.http")
 
 app = FastAPI(
     title=settings.api_title,
@@ -26,6 +30,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+if settings.gzip_enabled:
+    app.add_middleware(GZipMiddleware, minimum_size=settings.gzip_minimum_size)
+
+
+@app.middleware("http")
+async def request_timing_middleware(request: Request, call_next):
+    started_at = time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (time.perf_counter() - started_at) * 1000
+    response.headers["X-Process-Time-Ms"] = f"{elapsed_ms:.1f}"
+    path_template = request.scope.get("route").path if request.scope.get("route") else request.url.path
+    response.headers["X-Route-Template"] = str(path_template)
+    if settings.request_timing_log_enabled:
+        LOG.info(
+            "request_timing method=%s path=%s route=%s status=%s total_ms=%.1f",
+            request.method,
+            request.url.path,
+            path_template,
+            getattr(response, "status_code", "-"),
+            elapsed_ms,
+        )
+    return response
 
 
 def _cap_limit(limit: int) -> int:
@@ -77,6 +104,9 @@ def meta_routes(
     airline: list[str] | None = Query(default=None),
     cabin: list[str] | None = Query(default=None),
     trip_type: list[str] | None = Query(default=None),
+    origin_prefix: str | None = None,
+    destination_prefix: str | None = None,
+    limit: int | None = Query(default=None, ge=1, le=200),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
     return {
@@ -86,6 +116,9 @@ def meta_routes(
             airlines=airline,
             cabins=cabin,
             trip_types=trip_type,
+            origin_prefix=origin_prefix,
+            destination_prefix=destination_prefix,
+            limit=limit,
         )
     }
 

@@ -34,6 +34,8 @@ Core project decisions and operating policy live in:
 
 - [PROJECT_DECISIONS.md](PROJECT_DECISIONS.md)
 - [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md)
+- [SYSTEM_IMPROVEMENT_ROADMAP.md](SYSTEM_IMPROVEMENT_ROADMAP.md) - Comprehensive improvement recommendations
+- [IMPROVEMENT_PRIORITIES.md](IMPROVEMENT_PRIORITIES.md) - Quick-win priorities and implementation order
 - [docs/WEB_PLATFORM_PLAN.md](docs/WEB_PLATFORM_PLAN.md)
 - [warehouse/bigquery/README.md](warehouse/bigquery/README.md)
 
@@ -123,6 +125,18 @@ Useful controls:
 .\.venv\Scripts\python.exe run_pipeline.py --bigquery-sync-lookback-days 7
 .\.venv\Scripts\python.exe run_pipeline.py --skip-bigquery-sync
 .\.venv\Scripts\python.exe run_pipeline.py --fail-on-bigquery-sync-error
+```
+
+Install finish-driven ingestion autorun:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scheduler\install_ingestion_autorun.ps1
+```
+
+Disable ingestion autorun:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scheduler\disable_ingestion_autorun.ps1
 ```
 
 Generate reports only:

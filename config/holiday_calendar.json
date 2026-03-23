@@ -1,0 +1,203 @@
+{
+  "holidays": [
+    {
+      "date": "2026-02-21",
+      "name": "International Mother Language Day",
+      "type": "national",
+      "country": "BD"
+    },
+    {
+      "date": "2026-03-17",
+      "name": "Birthday of Sheikh Mujibur Rahman",
+      "type": "national",
+      "country": "BD"
+    },
+    {
+      "date": "2026-03-26",
+      "name": "Independence Day",
+      "type": "national",
+      "country": "BD"
+    },
+    {
+      "date": "2026-04-11",
+      "name": "Eid-ul-Fitr (Day 1)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2026-04-12",
+      "name": "Eid-ul-Fitr (Day 2)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2026-04-13",
+      "name": "Eid-ul-Fitr (Day 3)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2026-04-14",
+      "name": "Pohela Boishakh (Bengali New Year)",
+      "type": "national",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2026-05-01",
+      "name": "May Day",
+      "type": "national",
+      "country": "BD"
+    },
+    {
+      "date": "2026-06-18",
+      "name": "Eid-ul-Adha (Day 1)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2026-06-19",
+      "name": "Eid-ul-Adha (Day 2)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2026-06-20",
+      "name": "Eid-ul-Adha (Day 3)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2026-07-17",
+      "name": "Ashura",
+      "type": "religious",
+      "country": "BD"
+    },
+    {
+      "date": "2026-08-15",
+      "name": "National Mourning Day",
+      "type": "national",
+      "country": "BD"
+    },
+    {
+      "date": "2026-09-16",
+      "name": "Eid-e-Milad-un-Nabi",
+      "type": "religious",
+      "country": "BD"
+    },
+    {
+      "date": "2026-10-24",
+      "name": "Durga Puja",
+      "type": "religious",
+      "country": "BD"
+    },
+    {
+      "date": "2026-12-16",
+      "name": "Victory Day",
+      "type": "national",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2026-12-25",
+      "name": "Christmas",
+      "type": "religious",
+      "country": "BD"
+    },
+    {
+      "date": "2025-04-01",
+      "name": "Eid-ul-Fitr (Day 1)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2025-04-02",
+      "name": "Eid-ul-Fitr (Day 2)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2025-04-03",
+      "name": "Eid-ul-Fitr (Day 3)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2025-06-07",
+      "name": "Eid-ul-Adha (Day 1)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2025-06-08",
+      "name": "Eid-ul-Adha (Day 2)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2025-06-09",
+      "name": "Eid-ul-Adha (Day 3)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2027-03-22",
+      "name": "Eid-ul-Fitr (Day 1)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2027-03-23",
+      "name": "Eid-ul-Fitr (Day 2)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2027-03-24",
+      "name": "Eid-ul-Fitr (Day 3)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2027-05-29",
+      "name": "Eid-ul-Adha (Day 1)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2027-05-30",
+      "name": "Eid-ul-Adha (Day 2)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    },
+    {
+      "date": "2027-05-31",
+      "name": "Eid-ul-Adha (Day 3)",
+      "type": "religious",
+      "country": "BD",
+      "high_demand": true
+    }
+  ],
+  "meta": {
+    "note": "Religious holidays (Eid) dates are approximate and may shift by 1-2 days based on moon sighting",
+    "high_demand_window": "Typically 7-10 days before and 3-5 days after major holidays",
+    "source": "Bangladesh public holidays calendar, updated 2026-03-18"
+  }
+}
