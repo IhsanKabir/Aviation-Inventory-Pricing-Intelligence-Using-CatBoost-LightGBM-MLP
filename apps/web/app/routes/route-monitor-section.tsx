@@ -195,7 +195,7 @@ export async function RouteMonitorSection({
     returnDateEnd,
     routeLimit,
     historyLimit,
-    compactHistory: true
+    compactHistory: false
   });
 
   const routeBlocks = matrix.data?.routes ?? [];
