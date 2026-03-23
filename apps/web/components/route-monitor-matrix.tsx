@@ -661,7 +661,7 @@ export function RouteMonitorMatrix({
 
                                   return (
                                     <tr
-                                      className={capture.is_latest ? "latest-capture-row" : "history-capture-row"}
+                                      className={captureIndex === 0 ? "latest-capture-row" : "history-capture-row"}
                                       data-group-start={captureIndex === 0}
                                       data-group-end={captureIndex === visibleCaptures.length - 1}
                                       key={`${rowKey}-${capture.captured_at_utc}`}

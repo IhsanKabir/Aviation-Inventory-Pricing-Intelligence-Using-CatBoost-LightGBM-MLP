@@ -1,6 +1,6 @@
 ﻿# Airline Intelligence System Decisions (Thesis Track)
 
-Last updated: 2026-03-12
+Last updated: 2026-03-20
 
 ## 1) Program Vision
 
@@ -45,6 +45,21 @@ Target: implement as much as possible in parallel, but execute in phases when ne
 ### Route Scope
 
 - Dynamic route + airline configuration (already in use)
+- Bangladesh domestic operational baseline is explicitly intended to include one-way coverage for `BG`, `2A`, `BS`, and `VQ` on the currently configured DAC-linked domestic network in `config/routes.json`.
+- At the moment that configured DAC-linked domestic network is:
+  - `DAC-BZL`, `BZL-DAC`
+  - `DAC-CGP`, `CGP-DAC`
+  - `DAC-CXB`, `CXB-DAC`
+  - `DAC-JSR`, `JSR-DAC`
+  - `DAC-RJH`, `RJH-DAC`
+  - `DAC-SPD`, `SPD-DAC`
+  - `DAC-ZYL`, `ZYL-DAC`
+- The operational expectation for those routes is:
+  - `default_one_way_monitoring` stays active as the baseline one-way layer
+  - `bangladesh_domestic_round_trip_short` may be layered on top where runtime allows
+- Operational rule: a trip profile is only effective when it appears in both `market_trip_profiles` and `active_market_trip_profiles` for the route. `active_market_trip_profiles` filters the candidate list; it does not add missing profiles.
+- Investigation on March 22, 2026 found that the Bangladesh domestic routes for `BG`, `2A`, `BS`, and `VQ` had a profile-membership bug: many route entries listed `default_one_way_monitoring` only in `active_market_trip_profiles`. That caused the planner to resolve only the surviving `RT` profile. The config has now been corrected so the intended one-way baseline is eligible again.
+- If a Bangladesh domestic route is added in `config/routes.json` for one of those airlines, the matching route entry in `config/route_trip_windows.json` must include the intended one-way profile in both `market_trip_profiles` and `active_market_trip_profiles` so the route does not exist only on paper.
 
 ### Collection Frequency
 
@@ -96,6 +111,7 @@ Mandatory for analysis (minimum set):
 
 - All possible search combinations over time (routes/cabins/passenger mixes/date windows)
 - Round-trip search is supported as search intent layered on top of one-way fact storage
+- Bangladesh domestic one-way monitoring should be treated as non-optional baseline coverage for the configured `BG`, `2A`, `BS`, and `VQ` domestic route set, and profile-membership mistakes of this kind should now be blocked by trip-config validation.
 
 ### Cabin & Fare Mapping
 
@@ -872,6 +888,71 @@ Until the roadmap above is complete:
 - treat PostgreSQL service health as a blocker, not a warning
 - let guarded wrappers skip rather than force launches
 - prefer fewer clean cycles over more ambiguous cycles
+
+## Copilot Coding Agent Push Workflow (2026-03-20)
+
+GitHub Copilot can push changes only when the repository is enabled for Copilot
+coding agent and the acting user has write access. The recommended workflow is:
+
+1. Keep `main` protected.
+2. Let Copilot work on a feature branch.
+3. Open a pull request from that branch.
+4. Review and merge the PR after checks pass.
+
+Setup checklist:
+
+- enable Copilot coding agent at the org or enterprise level if it is controlled
+  by policy
+- make sure this repository is not opted out of Copilot coding agent
+- grant the user or bot account `write` access to the repository
+- keep branch protection rules on `main`
+- if your ruleset blocks Copilot, add a ruleset bypass for the Copilot coding
+  agent or use the standard branch/PR path instead of direct pushes
+
+How to use it:
+
+- from GitHub.com, open the Agents tab, dashboard task box, or an issue and ask
+  Copilot to create a pull request
+- optionally choose a base branch; Copilot creates a new branch from that base
+  and pushes its work to a draft PR
+- Copilot works best on branches whose names begin with `copilot/`
+- Copilot does not push directly to `main` or `master`
+
+Local IDE note:
+
+- if you use Copilot in VS Code or another IDE, Copilot edits the files locally;
+  your normal Git credentials still perform the final push to GitHub
+
+PR note:
+
+- if the PR triggers GitHub Actions, a user with write access must approve the
+  workflow run before it executes
+
+Firewall note:
+
+- if Copilot reports `forceExit` and blocked addresses, the agent's firewall is
+  preventing a network call inside the GitHub Actions appliance
+- fix it by adding the needed host or URL in repository settings under
+  `Settings` -> `Copilot` -> `coding agent` -> `Custom allowlist`
+- if the blocked network call is only needed during setup, move it into
+  `copilot-setup-steps.yml`, because the agent firewall does not apply to setup
+  steps
+- if you are using self-hosted runners, disable the integrated firewall and
+  allow the standard GitHub Actions hosts plus the Copilot-required hosts
+  documented by GitHub
+
+Branch protection note:
+
+- this error usually means a repo rule or branch protection rule blocked the
+  push target
+- check repository `Settings` -> `Rules` -> `Rulesets` and `Settings` ->
+  `Branches` for any rule that applies to the branch Copilot is trying to push
+- if the rule covers `copilot/*` branches, either exempt the Copilot coding
+  agent or loosen the rule so Copilot can push the feature branch and open the
+  PR
+- if the rule only protects `main`, that is fine; Copilot should push to a
+  feature branch and merge through the PR instead of pushing to `main`
+
 ## Trip Config Validation
 
 Trip configuration now has a dedicated validator:

@@ -53,7 +53,8 @@ def _flatten_route_monitor(payload: dict[str, Any]) -> pd.DataFrame:
             for item in route.get("flight_groups", [])
         }
         for date_group in route.get("date_groups", []):
-            for capture in date_group.get("captures", []):
+            captures = list(date_group.get("captures") or [])
+            for capture_index, capture in enumerate(captures):
                 for cell in capture.get("cells", []):
                     flight = flight_lookup.get(str(cell.get("flight_group_id"))) or {}
                     rows.append(
@@ -70,7 +71,6 @@ def _flatten_route_monitor(payload: dict[str, Any]) -> pd.DataFrame:
                             "is_cross_border": route.get("is_cross_border"),
                             "search_trip_type": route.get("search_trip_type"),
                             "trip_pair_key": route.get("trip_pair_key"),
-                            "trip_request_id": route.get("trip_request_id"),
                             "requested_outbound_date": route.get("requested_outbound_date"),
                             "requested_return_date": route.get("requested_return_date"),
                             "trip_duration_days": route.get("trip_duration_days"),
@@ -79,7 +79,7 @@ def _flatten_route_monitor(payload: dict[str, Any]) -> pd.DataFrame:
                             "departure_date": date_group.get("departure_date"),
                             "day_label": date_group.get("day_label"),
                             "captured_at_utc": capture.get("captured_at_utc"),
-                            "is_latest_capture": capture.get("is_latest"),
+                            "is_latest_capture": capture_index == 0,
                             "airline": flight.get("airline"),
                             "flight_number": flight.get("flight_number"),
                             "departure_time": flight.get("departure_time"),

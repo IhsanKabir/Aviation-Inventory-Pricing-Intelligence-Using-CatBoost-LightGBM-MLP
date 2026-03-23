@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
+import time
 from datetime import date
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -11,6 +14,7 @@ from .config import settings
 from .db import get_optional_db
 from .repositories import exporting, reporting
 
+LOG = logging.getLogger("api.http")
 
 app = FastAPI(
     title=settings.api_title,
@@ -27,11 +31,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+if settings.gzip_enabled:
+    app.add_middleware(GZipMiddleware, minimum_size=settings.gzip_minimum_size)
+
+
+@app.middleware("http")
+async def request_timing_middleware(request: Request, call_next):
+    started_at = time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (time.perf_counter() - started_at) * 1000
+    response.headers["X-Process-Time-Ms"] = f"{elapsed_ms:.1f}"
+    path_template = request.scope.get("route").path if request.scope.get("route") else request.url.path
+    response.headers["X-Route-Template"] = str(path_template)
+    if settings.request_timing_log_enabled:
+        LOG.info(
+            "request_timing method=%s path=%s route=%s status=%s total_ms=%.1f",
+            request.method,
+            request.url.path,
+            path_template,
+            getattr(response, "status_code", "-"),
+            elapsed_ms,
+        )
+    return response
+
 
 def _cap_limit(limit: int) -> int:
     if limit < 1:
         return settings.default_limit
     return min(limit, settings.max_limit)
+
+
+def _apply_reporting_metric_headers(response: Response, metrics: dict, prefix: str) -> None:
+    normalized_prefix = prefix.replace("_", "-").title()
+    header_prefix = f"X-{normalized_prefix}-"
+    for key, value in metrics.items():
+        if not key.startswith(prefix):
+            continue
+        suffix = key[len(prefix):].strip("_").replace("_", "-").title()
+        response.headers[f"{header_prefix}{suffix}"] = str(value)
 
 
 @app.get("/", include_in_schema=False)
@@ -77,17 +114,28 @@ def meta_routes(
     airline: list[str] | None = Query(default=None),
     cabin: list[str] | None = Query(default=None),
     trip_type: list[str] | None = Query(default=None),
+    origin_prefix: str | None = None,
+    destination_prefix: str | None = None,
+    limit: int | None = Query(default=None, ge=1, le=200),
+    response: Response = None,
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
-    return {
+    reporting.clear_request_metrics()
+    payload = {
         "items": reporting.list_routes(
             db,
             cycle_id=cycle_id,
             airlines=airline,
             cabins=cabin,
             trip_types=trip_type,
+            origin_prefix=origin_prefix,
+            destination_prefix=destination_prefix,
+            limit=limit,
         )
     }
+    if response is not None:
+        _apply_reporting_metric_headers(response, reporting.get_request_metrics(), "route_list")
+    return payload
 
 
 @app.get("/api/v1/reporting/cycles/latest")
@@ -140,9 +188,11 @@ def route_monitor_matrix(
     return_date_end: date | None = None,
     route_limit: int = Query(default=8, ge=1, le=24),
     history_limit: int = Query(default=12, ge=1, le=48),
+    response: Response = None,
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
-    return reporting.get_route_monitor_matrix(
+    reporting.clear_request_metrics()
+    payload = reporting.get_route_monitor_matrix(
         db,
         cycle_id=cycle_id,
         airlines=airline,
@@ -156,6 +206,9 @@ def route_monitor_matrix(
         route_limit=route_limit,
         history_limit=history_limit,
     )
+    if response is not None:
+        _apply_reporting_metric_headers(response, reporting.get_request_metrics(), "route_matrix")
+    return payload
 
 
 @app.get("/api/v1/reporting/route-date-availability")
@@ -166,9 +219,11 @@ def route_date_availability(
     destination: list[str] | None = Query(default=None),
     cabin: list[str] | None = Query(default=None),
     trip_type: list[str] | None = Query(default=None),
+    response: Response = None,
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
-    return reporting.get_route_date_availability(
+    reporting.clear_request_metrics()
+    payload = reporting.get_route_date_availability(
         db,
         cycle_id=cycle_id,
         airlines=airline,
@@ -177,6 +232,9 @@ def route_date_availability(
         cabins=cabin,
         trip_types=trip_type,
     )
+    if response is not None:
+        _apply_reporting_metric_headers(response, reporting.get_request_metrics(), "route_date_availability")
+    return payload
 
 
 @app.get("/api/v1/reporting/airline-operations")

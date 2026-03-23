@@ -1,7 +1,10 @@
 param(
     [string]$TaskName = "AirlineIntel_Ingestion4H",
     [string]$OnLogonTaskName = "AirlineIntel_IngestionOnLogon",
-    [switch]$KeepStartupShortcut,
+    [string]$ShortcutName = "AirlineIntel Ingestion Kickoff.lnk",
+    [switch]$SkipPrimaryTask,
+    [switch]$SkipOnLogonTask,
+    [switch]$SkipStartupShortcut,
     [switch]$WhatIf
 )
 
@@ -9,8 +12,12 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $batchPath = Join-Path $repoRoot "scheduler\run_ingestion_4h_once.bat"
+$SchtasksExe = Join-Path $env:SystemRoot "System32\schtasks.exe"
+if (-not (Test-Path $SchtasksExe)) {
+    $SchtasksExe = "schtasks.exe"
+}
 $startupDir = [Environment]::GetFolderPath("Startup")
-$shortcutPath = Join-Path $startupDir "AirlineIntel Ingestion Kickoff.lnk"
+$shortcutPath = Join-Path $startupDir $ShortcutName
 
 function Invoke-Schtasks {
     param(
@@ -27,14 +34,14 @@ function Invoke-Schtasks {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            & schtasks.exe @CmdArgs | Out-Host
+            & $SchtasksExe @CmdArgs | Out-Host
         }
         finally {
             $ErrorActionPreference = $prev
         }
     }
     else {
-        & schtasks.exe @CmdArgs | Out-Host
+        & $SchtasksExe @CmdArgs | Out-Host
     }
 
     $rc = $LASTEXITCODE
@@ -70,10 +77,15 @@ function Disable-TaskIfPresent {
     }
 }
 
-Disable-TaskIfPresent -Name $TaskName
-Disable-TaskIfPresent -Name $OnLogonTaskName
+if (-not $SkipPrimaryTask) {
+    Disable-TaskIfPresent -Name $TaskName
+}
 
-if (-not $KeepStartupShortcut) {
+if (-not $SkipOnLogonTask) {
+    Disable-TaskIfPresent -Name $OnLogonTaskName
+}
+
+if (-not $SkipStartupShortcut) {
     if ($WhatIf) {
         Write-Host "[WhatIf] Remove startup shortcut $shortcutPath"
     }

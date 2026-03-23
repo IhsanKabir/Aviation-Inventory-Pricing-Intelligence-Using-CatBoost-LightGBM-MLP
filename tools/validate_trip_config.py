@@ -57,6 +57,23 @@ def _validate_profile_list(
             errors.append(f"{owner}: unknown profile '{name}' referenced in {field_name}")
 
 
+def _validate_active_profile_membership(
+    *,
+    owner: str,
+    market_names: list[str],
+    active_names: list[str],
+    errors: list[str],
+) -> None:
+    if not market_names or not active_names:
+        return
+    missing = [name for name in active_names if name not in market_names]
+    for name in missing:
+        errors.append(
+            f"{owner}: active profile '{name}' must also be present in market_trip_profiles "
+            f"because active_market_trip_profiles only filters the candidate set"
+        )
+
+
 def validate_trip_config(
     *,
     route_trip_payload: dict,
@@ -106,6 +123,16 @@ def validate_trip_config(
                 warnings=warnings,
                 errors=errors,
             )
+        _validate_active_profile_membership(
+            owner=owner_prefix,
+            market_names=_normalize_profile_names(
+                airline_payload.get("market_trip_profiles") or airline_payload.get("market_trip_profile")
+            ),
+            active_names=_normalize_profile_names(
+                airline_payload.get("active_market_trip_profiles") or airline_payload.get("active_market_trip_profile")
+            ),
+            errors=errors,
+        )
 
         routes_map = airline_payload.get("routes", {})
         if not isinstance(routes_map, dict):
@@ -145,6 +172,16 @@ def validate_trip_config(
                     warnings=warnings,
                     errors=errors,
                 )
+            _validate_active_profile_membership(
+                owner=owner,
+                market_names=_normalize_profile_names(
+                    route_payload.get("market_trip_profiles") or route_payload.get("market_trip_profile")
+                ),
+                active_names=_normalize_profile_names(
+                    route_payload.get("active_market_trip_profiles") or route_payload.get("active_market_trip_profile")
+                ),
+                errors=errors,
+            )
 
     for airline, route_key in sorted(missing_from_trip_config):
         warnings.append(

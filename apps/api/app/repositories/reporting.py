@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from copy import deepcopy
+from contextvars import ContextVar
 from functools import lru_cache
+from threading import Lock
 from collections import defaultdict
 from collections.abc import Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
@@ -46,6 +52,15 @@ WEEKDAY_ORDER = [
 COMPARABLE_CYCLE_MIN_OFFER_ROWS = 500
 COMPARABLE_CYCLE_MIN_AIRLINES = 5
 COMPARABLE_CYCLE_MIN_ROUTES = 10
+ROUTE_LIST_CACHE_TTL_SEC = 60
+ROUTE_MATRIX_CACHE_TTL_SEC = 60
+ROUTE_DATE_AVAILABILITY_CACHE_TTL_SEC = 60
+ROUTE_MATRIX_MIN_HISTORY_CYCLES = 12
+
+_EPHEMERAL_RESPONSE_CACHE: dict[tuple[Any, ...], tuple[float, Any]] = {}
+_EPHEMERAL_RESPONSE_CACHE_LOCK = Lock()
+_REQUEST_METRICS: ContextVar[dict[str, Any] | None] = ContextVar("reporting_request_metrics", default=None)
+LOG = logging.getLogger("api.reporting")
 
 
 def _normalize_codes(values: Sequence[str] | None, uppercase: bool = True) -> list[str]:
@@ -60,6 +75,77 @@ def _normalize_codes(values: Sequence[str] | None, uppercase: bool = True) -> li
             continue
         out.append(cleaned.upper() if uppercase else cleaned)
     return out
+
+
+def _normalize_code_prefix(value: str | None, uppercase: bool = True) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    return cleaned.upper() if uppercase else cleaned
+
+
+def _normalize_scalar_cache_value(value: Any) -> Any:
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _normalize_sequence_cache_value(values: Sequence[str] | None, uppercase: bool = True) -> tuple[str, ...]:
+    return tuple(_normalize_codes(values, uppercase=uppercase))
+
+
+def _cache_key(prefix: str, **parts: Any) -> tuple[Any, ...]:
+    return tuple(
+        [prefix]
+        + [
+            (name, _normalize_scalar_cache_value(value))
+            for name, value in sorted(parts.items())
+        ]
+    )
+
+
+def _get_cached_response(key: tuple[Any, ...], ttl_seconds: int) -> Any | None:
+    now = time.monotonic()
+    with _EPHEMERAL_RESPONSE_CACHE_LOCK:
+        cached = _EPHEMERAL_RESPONSE_CACHE.get(key)
+        if not cached:
+            return None
+        stored_at, payload = cached
+        if now - stored_at > ttl_seconds:
+            _EPHEMERAL_RESPONSE_CACHE.pop(key, None)
+            return None
+    return deepcopy(payload)
+
+
+def _set_cached_response(key: tuple[Any, ...], payload: Any) -> Any:
+    cached_payload = deepcopy(payload)
+    with _EPHEMERAL_RESPONSE_CACHE_LOCK:
+        _EPHEMERAL_RESPONSE_CACHE[key] = (time.monotonic(), cached_payload)
+    return deepcopy(cached_payload)
+
+
+def _route_matrix_history_cycle_limit(history_limit: int) -> int:
+    return max(int(history_limit or 0) + 2, ROUTE_MATRIX_MIN_HISTORY_CYCLES)
+
+
+def clear_request_metrics() -> None:
+    _REQUEST_METRICS.set({})
+
+
+def get_request_metrics() -> dict[str, Any]:
+    return dict(_REQUEST_METRICS.get() or {})
+
+
+def _set_request_metrics(**entries: Any) -> None:
+    metrics = _REQUEST_METRICS.get()
+    if metrics is None:
+        return
+    for key, value in entries.items():
+        metrics[key] = value
 
 
 def _apply_in_filter(
@@ -79,6 +165,31 @@ def _apply_in_filter(
         params[key] = value
         placeholders.append(f":{key}")
     clauses.append(f"{column} IN ({', '.join(placeholders)})")
+
+
+def _apply_route_pair_filter(
+    clauses: list[str],
+    params: dict[str, Any],
+    origin_column: str,
+    destination_column: str,
+    route_pairs: Sequence[tuple[str, str]],
+    prefix: str,
+) -> None:
+    normalized_pairs = [
+        (str(origin or "").strip().upper(), str(destination or "").strip().upper())
+        for origin, destination in route_pairs
+        if str(origin or "").strip() and str(destination or "").strip()
+    ]
+    if not normalized_pairs:
+        return
+    pair_clauses: list[str] = []
+    for idx, (origin, destination) in enumerate(normalized_pairs):
+        origin_key = f"{prefix}_origin_{idx}"
+        destination_key = f"{prefix}_destination_{idx}"
+        params[origin_key] = origin
+        params[destination_key] = destination
+        pair_clauses.append(f"({origin_column} = :{origin_key} AND {destination_column} = :{destination_key})")
+    clauses.append(f"({' OR '.join(pair_clauses)})")
 
 
 def _rows_to_dicts(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -373,14 +484,7 @@ def _get_latest_cycle_from_bigquery(comparable_only: bool = True) -> dict[str, A
     return clean_rows[0] if clean_rows else None
 
 
-def get_latest_cycle(session: Session | None, comparable_only: bool = True) -> dict[str, Any] | None:
-    if _bigquery_ready():
-        try:
-            return _get_latest_cycle_from_bigquery(comparable_only=comparable_only)
-        except (GoogleAPIError, RuntimeError, ValueError):
-            pass
-    if session is None:
-        return None
+def _get_latest_cycle_from_sql(session: Session, comparable_only: bool = True) -> dict[str, Any] | None:
     row = session.execute(
         text(
             """
@@ -415,8 +519,60 @@ def get_latest_cycle(session: Session | None, comparable_only: bool = True) -> d
     return dict(row) if row else None
 
 
-def get_recent_cycles(session: Session | None, limit: int = 10, comparable_only: bool = True) -> list[dict[str, Any]]:
+def get_latest_cycle(session: Session | None, comparable_only: bool = True) -> dict[str, Any] | None:
     if _bigquery_ready():
+        try:
+            return _get_latest_cycle_from_bigquery(comparable_only=comparable_only)
+        except (GoogleAPIError, RuntimeError, ValueError):
+            pass
+    if session is None:
+        return None
+    return _get_latest_cycle_from_sql(session, comparable_only=comparable_only)
+
+
+def _get_recent_cycles_from_sql(
+    session: Session,
+    limit: int = 10,
+    comparable_only: bool = True,
+) -> list[dict[str, Any]]:
+    rows = session.execute(
+        text(
+            """
+            SELECT
+                fo.scrape_id::text AS cycle_id,
+                MIN(fo.scraped_at) AS cycle_started_at_utc,
+                MAX(fo.scraped_at) AS cycle_completed_at_utc,
+                COUNT(*) AS offer_rows,
+                COUNT(DISTINCT fo.airline) AS airline_count,
+                COUNT(DISTINCT (fo.origin || '-' || fo.destination)) AS route_count
+            FROM flight_offers fo
+            GROUP BY fo.scrape_id
+            HAVING (
+                :comparable_only = FALSE
+                OR (
+                    COUNT(*) >= :min_offer_rows
+                    AND COUNT(DISTINCT fo.airline) >= :min_airlines
+                    AND COUNT(DISTINCT (fo.origin || '-' || fo.destination)) >= :min_routes
+                )
+            )
+            ORDER BY MAX(fo.scraped_at) DESC
+            LIMIT :limit
+            """
+        ),
+        {
+            "limit": limit,
+            "comparable_only": comparable_only,
+            "min_offer_rows": COMPARABLE_CYCLE_MIN_OFFER_ROWS,
+            "min_airlines": COMPARABLE_CYCLE_MIN_AIRLINES,
+            "min_routes": COMPARABLE_CYCLE_MIN_ROUTES,
+        },
+    ).mappings().all()
+    return _rows_to_dicts([dict(row) for row in rows])
+
+
+def get_recent_cycles(session: Session | None, limit: int = 10, comparable_only: bool = True) -> list[dict[str, Any]]:
+    prefer_sql = session is not None
+    if not prefer_sql and _bigquery_ready():
         try:
             comparable_filter = ""
             if comparable_only:
@@ -461,39 +617,7 @@ def get_recent_cycles(session: Session | None, limit: int = 10, comparable_only:
             pass
     if session is None:
         return []
-    rows = session.execute(
-        text(
-            """
-            SELECT
-                fo.scrape_id::text AS cycle_id,
-                MIN(fo.scraped_at) AS cycle_started_at_utc,
-                MAX(fo.scraped_at) AS cycle_completed_at_utc,
-                COUNT(*) AS offer_rows,
-                COUNT(DISTINCT fo.airline) AS airline_count,
-                COUNT(DISTINCT (fo.origin || '-' || fo.destination)) AS route_count
-            FROM flight_offers fo
-            GROUP BY fo.scrape_id
-            HAVING (
-                :comparable_only = FALSE
-                OR (
-                    COUNT(*) >= :min_offer_rows
-                    AND COUNT(DISTINCT fo.airline) >= :min_airlines
-                    AND COUNT(DISTINCT (fo.origin || '-' || fo.destination)) >= :min_routes
-                )
-            )
-            ORDER BY MAX(fo.scraped_at) DESC
-            LIMIT :limit
-            """
-        ),
-        {
-            "limit": limit,
-            "comparable_only": comparable_only,
-            "min_offer_rows": COMPARABLE_CYCLE_MIN_OFFER_ROWS,
-            "min_airlines": COMPARABLE_CYCLE_MIN_AIRLINES,
-            "min_routes": COMPARABLE_CYCLE_MIN_ROUTES,
-        },
-    ).mappings().all()
-    return _rows_to_dicts([dict(row) for row in rows])
+    return _get_recent_cycles_from_sql(session, limit=limit, comparable_only=comparable_only)
 
 
 def _serialize_date_count_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -590,17 +714,65 @@ def get_route_date_availability(
     cabins: Sequence[str] | None = None,
     trip_types: Sequence[str] | None = None,
 ) -> dict[str, Any]:
+    started_at = time.perf_counter()
     normalized_trip_types = [value for value in _normalize_codes(trip_types) if value in {"OW", "RT"}]
-    if _bigquery_ready():
+    prefer_sql = session is not None
+    if not prefer_sql and _bigquery_ready():
         try:
-            return _get_route_date_availability_from_bigquery(
-                cycle_id=cycle_id,
+            resolved_cycle_id = _resolve_cycle_id_bigquery(cycle_id)
+            cache_key = _cache_key(
+                "route_date_availability",
+                backend="bigquery",
+                cycle_id=resolved_cycle_id,
+                airlines=_normalize_sequence_cache_value(airlines),
+                origins=_normalize_sequence_cache_value(origins),
+                destinations=_normalize_sequence_cache_value(destinations),
+                cabins=_normalize_sequence_cache_value(cabins, uppercase=False),
+                trip_types=tuple(normalized_trip_types),
+            )
+            cached = _get_cached_response(cache_key, ROUTE_DATE_AVAILABILITY_CACHE_TTL_SEC)
+            if cached is not None:
+                _set_request_metrics(
+                    route_date_availability_backend="bigquery",
+                    route_date_availability_cache="hit",
+                    route_date_availability_departure_dates=len(cached.get("departure_dates") or []),
+                    route_date_availability_return_dates=len(cached.get("return_dates") or []),
+                    route_date_availability_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+                )
+                LOG.info(
+                    "route_date_availability cache_hit backend=bigquery cycle_id=%s airlines=%d origins=%d destinations=%d cabins=%d trip_types=%s total_ms=%.1f",
+                    resolved_cycle_id,
+                    len(_normalize_sequence_cache_value(airlines)),
+                    len(_normalize_sequence_cache_value(origins)),
+                    len(_normalize_sequence_cache_value(destinations)),
+                    len(_normalize_sequence_cache_value(cabins, uppercase=False)),
+                    ",".join(normalized_trip_types) or "-",
+                    (time.perf_counter() - started_at) * 1000,
+                )
+                return cached
+            payload = _get_route_date_availability_from_bigquery(
+                cycle_id=resolved_cycle_id,
                 airlines=airlines,
                 origins=origins,
                 destinations=destinations,
                 cabins=cabins,
                 trip_types=normalized_trip_types,
             )
+            _set_request_metrics(
+                route_date_availability_backend="bigquery",
+                route_date_availability_cache="miss",
+                route_date_availability_departure_dates=len(payload.get("departure_dates") or []),
+                route_date_availability_return_dates=len(payload.get("return_dates") or []),
+                route_date_availability_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+            )
+            LOG.info(
+                "route_date_availability backend=bigquery cycle_id=%s departure_dates=%d return_dates=%d total_ms=%.1f",
+                resolved_cycle_id,
+                len(payload.get("departure_dates") or []),
+                len(payload.get("return_dates") or []),
+                (time.perf_counter() - started_at) * 1000,
+            )
+            return _set_cached_response(cache_key, payload)
         except (GoogleAPIError, RuntimeError, ValueError):
             pass
     if session is None:
@@ -608,7 +780,45 @@ def get_route_date_availability(
 
     resolved_cycle_id = _resolve_cycle_id(session, cycle_id)
     if not resolved_cycle_id:
+        _set_request_metrics(
+            route_date_availability_backend="sql",
+            route_date_availability_cache="miss",
+            route_date_availability_departure_dates=0,
+            route_date_availability_return_dates=0,
+            route_date_availability_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+        )
         return {"cycle_id": None, "departure_dates": [], "return_dates": []}
+
+    cache_key = _cache_key(
+        "route_date_availability",
+        backend="sql",
+        cycle_id=resolved_cycle_id,
+        airlines=_normalize_sequence_cache_value(airlines),
+        origins=_normalize_sequence_cache_value(origins),
+        destinations=_normalize_sequence_cache_value(destinations),
+        cabins=_normalize_sequence_cache_value(cabins, uppercase=False),
+        trip_types=tuple(normalized_trip_types),
+    )
+    cached = _get_cached_response(cache_key, ROUTE_DATE_AVAILABILITY_CACHE_TTL_SEC)
+    if cached is not None:
+        _set_request_metrics(
+            route_date_availability_backend="sql",
+            route_date_availability_cache="hit",
+            route_date_availability_departure_dates=len(cached.get("departure_dates") or []),
+            route_date_availability_return_dates=len(cached.get("return_dates") or []),
+            route_date_availability_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+        )
+        LOG.info(
+            "route_date_availability cache_hit backend=sql cycle_id=%s airlines=%d origins=%d destinations=%d cabins=%d trip_types=%s total_ms=%.1f",
+            resolved_cycle_id,
+            len(_normalize_sequence_cache_value(airlines)),
+            len(_normalize_sequence_cache_value(origins)),
+            len(_normalize_sequence_cache_value(destinations)),
+            len(_normalize_sequence_cache_value(cabins, uppercase=False)),
+            ",".join(normalized_trip_types) or "-",
+            (time.perf_counter() - started_at) * 1000,
+        )
+        return cached
 
     clauses = ["fo.scrape_id = CAST(:cycle_id AS uuid)"]
     params: dict[str, Any] = {"cycle_id": resolved_cycle_id}
@@ -659,11 +869,26 @@ def get_route_date_availability(
         ),
         params,
     ).mappings().all()
-    return {
+    payload = {
         "cycle_id": resolved_cycle_id,
         "departure_dates": _serialize_date_count_rows(_rows_to_dicts([dict(row) for row in departure_rows])),
         "return_dates": _serialize_date_count_rows(_rows_to_dicts([dict(row) for row in return_rows])),
     }
+    _set_request_metrics(
+        route_date_availability_backend="sql",
+        route_date_availability_cache="miss",
+        route_date_availability_departure_dates=len(payload.get("departure_dates") or []),
+        route_date_availability_return_dates=len(payload.get("return_dates") or []),
+        route_date_availability_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+    )
+    LOG.info(
+        "route_date_availability backend=sql cycle_id=%s departure_dates=%d return_dates=%d total_ms=%.1f",
+        resolved_cycle_id,
+        len(payload.get("departure_dates") or []),
+        len(payload.get("return_dates") or []),
+        (time.perf_counter() - started_at) * 1000,
+    )
+    return _set_cached_response(cache_key, payload)
 
 
 def get_health(session: Session | None) -> dict[str, Any]:
@@ -702,6 +927,101 @@ def _load_configured_route_pairs() -> list[str]:
         if airline and origin and destination:
             route_pairs.append(f"{airline}:{origin}-{destination}")
     return route_pairs
+
+
+@lru_cache(maxsize=1)
+def _load_configured_route_entries() -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(ROUTES_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, list):
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        airline = str(row.get("airline") or "").strip().upper()
+        origin = str(row.get("origin") or "").strip().upper()
+        destination = str(row.get("destination") or "").strip().upper()
+        cabins = [
+            str(item or "").strip()
+            for item in row.get("cabins", [])
+            if str(item or "").strip()
+        ] if isinstance(row.get("cabins"), list) else []
+        if not airline or not origin or not destination:
+            continue
+        entries.append(
+            {
+                "airline": airline,
+                "origin": origin,
+                "destination": destination,
+                "route_key": f"{origin}-{destination}",
+                "cabins": cabins,
+            }
+        )
+    return entries
+
+
+def _list_configured_routes(
+    *,
+    airlines: Sequence[str] | None = None,
+    cabins: Sequence[str] | None = None,
+    origin_prefix: str | None = None,
+    destination_prefix: str | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    normalized_airlines = set(_normalize_codes(airlines))
+    normalized_cabins = {value.strip().lower() for value in _normalize_codes(cabins, uppercase=False) if value.strip()}
+    normalized_origin_prefix = _normalize_code_prefix(origin_prefix)
+    normalized_destination_prefix = _normalize_code_prefix(destination_prefix)
+
+    aggregated: dict[str, dict[str, Any]] = {}
+    for entry in _load_configured_route_entries():
+        origin = str(entry.get("origin") or "")
+        destination = str(entry.get("destination") or "")
+        route_key = str(entry.get("route_key") or "")
+        airline = str(entry.get("airline") or "")
+        entry_cabins = [str(item or "").strip().lower() for item in entry.get("cabins", [])]
+        if normalized_airlines and airline not in normalized_airlines:
+            continue
+        if normalized_cabins and entry_cabins and not normalized_cabins.intersection(entry_cabins):
+            continue
+        if normalized_origin_prefix and not origin.startswith(normalized_origin_prefix):
+            continue
+        if normalized_destination_prefix and not destination.startswith(normalized_destination_prefix):
+            continue
+
+        current = aggregated.setdefault(
+            route_key,
+            {
+                "route_key": route_key,
+                "origin": origin,
+                "destination": destination,
+                "offer_rows": None,
+                "first_seen_at_utc": None,
+                "last_seen_at_utc": None,
+                "_airlines": set(),
+            },
+        )
+        current["_airlines"].add(airline)
+
+    rows: list[dict[str, Any]] = []
+    for route_key, row in aggregated.items():
+        clean = {key: value for key, value in row.items() if key != "_airlines"}
+        clean["airlines_present"] = len(row.get("_airlines") or [])
+        rows.append(clean)
+
+    rows.sort(
+        key=lambda item: (
+            -int(item.get("airlines_present") or 0),
+            str(item.get("route_key") or ""),
+        )
+    )
+    if limit:
+        rows = rows[: int(limit)]
+    return _annotate_route_records(rows)
 
 
 def _load_latest_run_status() -> dict[str, Any] | None:
@@ -992,7 +1312,23 @@ def _run_bigquery_query(query: str, parameters: Sequence[bigquery.ScalarQueryPar
         raise RuntimeError("BigQuery client is not configured")
 
     job_config = bigquery.QueryJobConfig(query_parameters=list(parameters or ()))
-    rows = client.query(query, job_config=job_config).result()
+    job = client.query(query, job_config=job_config)
+    started_at = time.perf_counter()
+    try:
+        rows = job.result(timeout=settings.bigquery_query_timeout_sec)
+    except (GoogleAPIError, FuturesTimeoutError, TimeoutError) as exc:
+        try:
+            job.cancel()
+        except Exception:
+            pass
+        LOG.warning(
+            "bigquery query_timeout timeout_sec=%.1f elapsed_ms=%.1f",
+            settings.bigquery_query_timeout_sec,
+            (time.perf_counter() - started_at) * 1000,
+        )
+        raise RuntimeError(
+            f"BigQuery query timed out after {settings.bigquery_query_timeout_sec:.1f}s"
+        ) from exc
     return [dict(row.items()) for row in rows]
 
 
@@ -1440,14 +1776,107 @@ def list_routes(
     airlines: Sequence[str] | None = None,
     cabins: Sequence[str] | None = None,
     trip_types: Sequence[str] | None = None,
+    origin_prefix: str | None = None,
+    destination_prefix: str | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
+    started_at = time.perf_counter()
     normalized_trip_types = [value for value in _normalize_codes(trip_types) if value in {"OW", "RT"}]
-    use_filtered_scope = bool(cycle_id or airlines or cabins or normalized_trip_types)
-    if _bigquery_ready():
+    normalized_origin_prefix = _normalize_code_prefix(origin_prefix)
+    normalized_destination_prefix = _normalize_code_prefix(destination_prefix)
+    use_filtered_scope = bool(
+        cycle_id or airlines or cabins or normalized_trip_types or normalized_origin_prefix or normalized_destination_prefix
+    )
+    if not cycle_id:
+        cache_key = _cache_key(
+            "route_list",
+            backend="config",
+            airlines=_normalize_sequence_cache_value(airlines),
+            cabins=_normalize_sequence_cache_value(cabins, uppercase=False),
+            trip_types=tuple(normalized_trip_types),
+            origin_prefix=normalized_origin_prefix,
+            destination_prefix=normalized_destination_prefix,
+            limit=limit,
+        )
+        cached = _get_cached_response(cache_key, ROUTE_LIST_CACHE_TTL_SEC)
+        if cached is not None:
+            _set_request_metrics(
+                route_list_backend="config",
+                route_list_cache="hit",
+                route_list_rows=len(cached),
+                route_list_filtered=use_filtered_scope,
+                route_list_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+            )
+            LOG.info(
+                "route_list cache_hit backend=config rows=%d filtered=%s total_ms=%.1f",
+                len(cached),
+                use_filtered_scope,
+                (time.perf_counter() - started_at) * 1000,
+            )
+            return cached
+        configured_payload = _list_configured_routes(
+            airlines=airlines,
+            cabins=cabins,
+            origin_prefix=normalized_origin_prefix,
+            destination_prefix=normalized_destination_prefix,
+            limit=limit,
+        )
+        _set_request_metrics(
+            route_list_backend="config",
+            route_list_cache="miss",
+            route_list_rows=len(configured_payload),
+            route_list_filtered=use_filtered_scope,
+            route_list_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+        )
+        LOG.info(
+            "route_list backend=config rows=%d filtered=%s total_ms=%.1f",
+            len(configured_payload),
+            use_filtered_scope,
+            (time.perf_counter() - started_at) * 1000,
+        )
+        return _set_cached_response(cache_key, configured_payload)
+
+    prefer_sql = session is not None
+    if not prefer_sql and _bigquery_ready():
         try:
+            resolved_cycle_id = _resolve_cycle_id_bigquery(cycle_id) if use_filtered_scope else None
+            cache_key = _cache_key(
+                "route_list",
+                backend="bigquery",
+                cycle_id=resolved_cycle_id,
+                airlines=_normalize_sequence_cache_value(airlines),
+                cabins=_normalize_sequence_cache_value(cabins, uppercase=False),
+                trip_types=tuple(normalized_trip_types),
+                origin_prefix=normalized_origin_prefix,
+                destination_prefix=normalized_destination_prefix,
+                limit=limit,
+            )
+            cached = _get_cached_response(cache_key, ROUTE_LIST_CACHE_TTL_SEC)
+            if cached is not None:
+                _set_request_metrics(
+                    route_list_backend="bigquery",
+                    route_list_cache="hit",
+                    route_list_rows=len(cached),
+                    route_list_filtered=use_filtered_scope,
+                    route_list_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+                )
+                LOG.info(
+                    "route_list cache_hit backend=bigquery cycle_id=%s rows=%d filtered=%s total_ms=%.1f",
+                    resolved_cycle_id,
+                    len(cached),
+                    use_filtered_scope,
+                    (time.perf_counter() - started_at) * 1000,
+                )
+                return cached
             if use_filtered_scope:
-                resolved_cycle_id = _resolve_cycle_id_bigquery(cycle_id)
                 if not resolved_cycle_id:
+                    _set_request_metrics(
+                        route_list_backend="bigquery",
+                        route_list_cache="miss",
+                        route_list_rows=0,
+                        route_list_filtered=use_filtered_scope,
+                        route_list_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+                    )
                     return []
                 filters = ["cycle_id = @cycle_id"]
                 params: list[bigquery.ScalarQueryParameter] = [
@@ -1462,6 +1891,13 @@ def list_routes(
                 if normalized_trip_types:
                     filters.append("search_trip_type IN UNNEST(@trip_types)")
                     params.append(bigquery.ArrayQueryParameter("trip_types", "STRING", normalized_trip_types))
+                if normalized_origin_prefix:
+                    filters.append("STARTS_WITH(origin, @origin_prefix)")
+                    params.append(bigquery.ScalarQueryParameter("origin_prefix", "STRING", normalized_origin_prefix))
+                if normalized_destination_prefix:
+                    filters.append("STARTS_WITH(destination, @destination_prefix)")
+                    params.append(bigquery.ScalarQueryParameter("destination_prefix", "STRING", normalized_destination_prefix))
+                limit_clause = f"LIMIT {int(limit)}" if limit else ""
                 rows = _run_bigquery_query(
                     f"""
                     SELECT
@@ -1476,10 +1912,21 @@ def list_routes(
                     WHERE {' AND '.join(filters)}
                     GROUP BY origin, destination, route_key
                     ORDER BY offer_rows DESC NULLS LAST, route_key
+                    {limit_clause}
                     """,
                     params,
                 )
             else:
+                where_prefix = []
+                params: list[bigquery.ScalarQueryParameter] = []
+                if normalized_origin_prefix:
+                    where_prefix.append("STARTS_WITH(origin, @origin_prefix)")
+                    params.append(bigquery.ScalarQueryParameter("origin_prefix", "STRING", normalized_origin_prefix))
+                if normalized_destination_prefix:
+                    where_prefix.append("STARTS_WITH(destination, @destination_prefix)")
+                    params.append(bigquery.ScalarQueryParameter("destination_prefix", "STRING", normalized_destination_prefix))
+                where_clause = f"WHERE {' AND '.join(where_prefix)}" if where_prefix else ""
+                limit_clause = f"LIMIT {int(limit)}" if limit else ""
                 rows = _run_bigquery_query(
                     f"""
                     WITH ranked_routes AS (
@@ -1507,16 +1954,62 @@ def list_routes(
                       last_seen_at_utc
                     FROM ranked_routes
                     WHERE row_rank = 1
+                    {"AND " + " AND ".join(where_prefix) if where_prefix else ""}
                     ORDER BY offer_rows DESC NULLS LAST, route_key
-                    """
+                    {limit_clause}
+                    """,
+                    params if params else None,
                 )
-            return _annotate_route_records(_serialize_warehouse_rows(rows))
-        except (GoogleAPIError, RuntimeError, ValueError):
-            pass
+            payload = _annotate_route_records(_serialize_warehouse_rows(rows))
+            _set_request_metrics(
+                route_list_backend="bigquery",
+                route_list_cache="miss",
+                route_list_rows=len(payload),
+                route_list_filtered=use_filtered_scope,
+                route_list_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+            )
+            LOG.info(
+                "route_list backend=bigquery cycle_id=%s rows=%d filtered=%s total_ms=%.1f",
+                resolved_cycle_id,
+                len(payload),
+                use_filtered_scope,
+                (time.perf_counter() - started_at) * 1000,
+            )
+            return _set_cached_response(cache_key, payload)
+        except (GoogleAPIError, RuntimeError, ValueError) as exc:
+            LOG.warning("route_date_availability bigquery_fallback reason=%s", exc)
     if session is None:
         return []
 
     resolved_cycle_id = _resolve_cycle_id(session, cycle_id) if use_filtered_scope else None
+    cache_key = _cache_key(
+        "route_list",
+        backend="sql",
+        cycle_id=resolved_cycle_id,
+        airlines=_normalize_sequence_cache_value(airlines),
+        cabins=_normalize_sequence_cache_value(cabins, uppercase=False),
+        trip_types=tuple(normalized_trip_types),
+        origin_prefix=normalized_origin_prefix,
+        destination_prefix=normalized_destination_prefix,
+        limit=limit,
+    )
+    cached = _get_cached_response(cache_key, ROUTE_LIST_CACHE_TTL_SEC)
+    if cached is not None:
+        _set_request_metrics(
+            route_list_backend="sql",
+            route_list_cache="hit",
+            route_list_rows=len(cached),
+            route_list_filtered=use_filtered_scope,
+            route_list_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+        )
+        LOG.info(
+            "route_list cache_hit backend=sql cycle_id=%s rows=%d filtered=%s total_ms=%.1f",
+            resolved_cycle_id,
+            len(cached),
+            use_filtered_scope,
+            (time.perf_counter() - started_at) * 1000,
+        )
+        return cached
     clauses = ["1=1"]
     params: dict[str, Any] = {}
     if resolved_cycle_id:
@@ -1526,6 +2019,15 @@ def list_routes(
     _apply_in_filter(clauses, params, "fo.cabin", cabins, "route_cabin", uppercase=False)
     if normalized_trip_types:
         _apply_in_filter(clauses, params, "COALESCE(frm.search_trip_type, 'OW')", normalized_trip_types, "route_trip_type")
+    if normalized_origin_prefix:
+        clauses.append("fo.origin LIKE :route_origin_prefix")
+        params["route_origin_prefix"] = f"{normalized_origin_prefix}%"
+    if normalized_destination_prefix:
+        clauses.append("fo.destination LIKE :route_destination_prefix")
+        params["route_destination_prefix"] = f"{normalized_destination_prefix}%"
+    limit_clause = "LIMIT :route_limit" if limit else ""
+    if limit:
+        params["route_limit"] = int(limit)
 
     rows = session.execute(
         text(
@@ -1544,22 +2046,40 @@ def list_routes(
             WHERE {' AND '.join(clauses)}
             GROUP BY fo.origin, fo.destination
             ORDER BY offer_rows DESC, route_key
+            {limit_clause}
             """
         ),
         params,
     ).mappings().all()
-    return _annotate_route_records(_rows_to_dicts([dict(row) for row in rows]))
+    payload = _annotate_route_records(_rows_to_dicts([dict(row) for row in rows]))
+    _set_request_metrics(
+        route_list_backend="sql",
+        route_list_cache="miss",
+        route_list_rows=len(payload),
+        route_list_filtered=use_filtered_scope,
+        route_list_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+    )
+    LOG.info(
+        "route_list backend=sql cycle_id=%s rows=%d filtered=%s total_ms=%.1f",
+        resolved_cycle_id,
+        len(payload),
+        use_filtered_scope,
+        (time.perf_counter() - started_at) * 1000,
+    )
+    return _set_cached_response(cache_key, payload)
 
 
-def _resolve_cycle_id(session: Session, cycle_id: str | None) -> str | None:
+def _resolve_cycle_id(session: Session | None, cycle_id: str | None) -> str | None:
     if cycle_id:
         return cycle_id.strip()
-    latest_cycle = get_latest_cycle(session)
+    if session is None:
+        return None
+    latest_cycle = _get_latest_cycle_from_sql(session, comparable_only=True)
     return str(latest_cycle["cycle_id"]) if latest_cycle else None
 
 
 def get_current_snapshot(
-    session: Session,
+    session: Session | None,
     cycle_id: str | None = None,
     airlines: Sequence[str] | None = None,
     origins: Sequence[str] | None = None,
@@ -1568,7 +2088,7 @@ def get_current_snapshot(
     limit: int = 250,
 ) -> dict[str, Any]:
     resolved_cycle_id = _resolve_cycle_id(session, cycle_id)
-    if not resolved_cycle_id:
+    if not resolved_cycle_id or session is None:
         return {"cycle_id": None, "rows": []}
 
     clauses = ["fo.scrape_id = CAST(:cycle_id AS uuid)"]
@@ -1644,6 +2164,7 @@ def _build_route_monitor_matrix_from_aggregates(
     if not current_rows:
         return {"cycle_id": resolved_cycle_id, "routes": []}
 
+    started_at = time.perf_counter()
     route_date_map: dict[str, set[str]] = defaultdict(set)
     flight_groups_by_route: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     route_trip_meta: dict[str, dict[str, Any]] = {}
@@ -1659,7 +2180,6 @@ def _build_route_monitor_matrix_from_aggregates(
             route_trip_meta[route_key] = {
                 "search_trip_type": normalized_row.get("search_trip_type"),
                 "trip_pair_key": normalized_row.get("trip_pair_key"),
-                "trip_request_id": normalized_row.get("trip_request_id"),
                 "requested_outbound_date": normalized_row.get("requested_outbound_date"),
                 "requested_return_date": normalized_row.get("requested_return_date"),
                 "trip_duration_days": normalized_row.get("trip_duration_days"),
@@ -1676,13 +2196,13 @@ def _build_route_monitor_matrix_from_aggregates(
                 "cabin": normalized_row.get("cabin"),
                 "aircraft": normalized_row.get("aircraft"),
                 "search_trip_type": normalized_row.get("search_trip_type"),
-                "trip_request_id": normalized_row.get("trip_request_id"),
                 "requested_return_date": normalized_row.get("requested_return_date"),
                 "leg_direction": normalized_row.get("leg_direction"),
                 "leg_sequence": normalized_row.get("leg_sequence"),
                 "itinerary_leg_count": normalized_row.get("itinerary_leg_count"),
             }
 
+    current_scan_ms = (time.perf_counter() - started_at) * 1000
     grouped_cell_history: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     captures_by_route_date: dict[tuple[str, str], set[str]] = defaultdict(set)
 
@@ -1702,8 +2222,48 @@ def _build_route_monitor_matrix_from_aggregates(
         captures_by_route_date[(route_key, dep_date_iso)].add(captured_at_iso)
         grouped_cell_history[(route_key, dep_date_iso, flight_group_id)].append(normalized_row)
 
-    route_payloads: list[dict[str, Any]] = []
+    history_scan_ms = (time.perf_counter() - started_at) * 1000 - current_scan_ms
+    preprocess_started_at = time.perf_counter()
     signal_counts: dict[str, int] = defaultdict(int)
+    cells_by_route_date_capture: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+
+    for (route_key, dep_date_iso, flight_group_id), cell_history in grouped_cell_history.items():
+        ordered_history = sorted(cell_history, key=lambda item: item.get("captured_at_utc") or "")
+        previous_cell: dict[str, Any] | None = None
+        latest_captured_at = ordered_history[-1].get("captured_at_utc") if ordered_history else None
+        for current_cell in ordered_history:
+            captured_at_iso = current_cell.get("captured_at_utc")
+            if not captured_at_iso:
+                previous_cell = current_cell
+                continue
+            signal = _cell_signal(previous_cell, current_cell)
+            if captured_at_iso == latest_captured_at:
+                signal_counts[signal] += 1
+            cells_by_route_date_capture[(route_key, dep_date_iso, captured_at_iso)].append(
+                {
+                    "flight_group_id": flight_group_id,
+                    "min_total_price_bdt": current_cell.get("min_total_price_bdt"),
+                    "max_total_price_bdt": current_cell.get("max_total_price_bdt"),
+                    "tax_amount": current_cell.get("tax_amount"),
+                    "booking_class": current_cell.get("booking_class"),
+                    "min_booking_class": current_cell.get("min_booking_class") or current_cell.get("booking_class"),
+                    "max_booking_class": current_cell.get("max_booking_class"),
+                    "seat_available": current_cell.get("seat_available"),
+                    "min_seat_available": current_cell.get("min_seat_available")
+                    if current_cell.get("min_seat_available") is not None
+                    else current_cell.get("seat_available"),
+                    "max_seat_available": current_cell.get("max_seat_available"),
+                    "seat_capacity": current_cell.get("seat_capacity"),
+                    "load_factor_pct": current_cell.get("load_factor_pct"),
+                    "soldout": current_cell.get("soldout"),
+                    "signal": signal,
+                }
+            )
+            previous_cell = current_cell
+
+    preprocess_ms = (time.perf_counter() - preprocess_started_at) * 1000
+    build_started_at = time.perf_counter()
+    route_payloads: list[dict[str, Any]] = []
 
     for route_row in selected_routes:
         route_key = str(route_row["route_key"])
@@ -1715,6 +2275,10 @@ def _build_route_monitor_matrix_from_aggregates(
                 str(item.get("flight_number") or ""),
             ),
         )
+        flight_group_order = {
+            str(item.get("flight_group_id") or ""): idx
+            for idx, item in enumerate(flight_groups)
+        }
         date_groups: list[dict[str, Any]] = []
         for dep_date in sorted(route_date_map.get(route_key, set())):
             capture_times = sorted(captures_by_route_date.get((route_key, dep_date), set()), reverse=True)
@@ -1722,48 +2286,13 @@ def _build_route_monitor_matrix_from_aggregates(
                 capture_times = capture_times[:history_limit]
             captures: list[dict[str, Any]] = []
             for captured_at_iso in capture_times:
-                cells: list[dict[str, Any]] = []
-                for fg in flight_groups:
-                    fgid = fg["flight_group_id"]
-                    cell_history = sorted(
-                        grouped_cell_history.get((route_key, dep_date, fgid), []),
-                        key=lambda item: item.get("captured_at_utc") or "",
-                    )
-                    current_cell: dict[str, Any] | None = None
-                    previous_cell: dict[str, Any] | None = None
-                    for idx, candidate in enumerate(cell_history):
-                        if candidate.get("captured_at_utc") == captured_at_iso:
-                            current_cell = candidate
-                            previous_cell = cell_history[idx - 1] if idx > 0 else None
-                            break
-                    if not current_cell:
-                        continue
-                    signal = _cell_signal(previous_cell, current_cell)
-                    if captured_at_iso == capture_times[0]:
-                        signal_counts[signal] += 1
-                    cells.append(
-                            {
-                                "flight_group_id": fgid,
-                                "airline": current_cell.get("airline"),
-                                "min_total_price_bdt": current_cell.get("min_total_price_bdt"),
-                                "max_total_price_bdt": current_cell.get("max_total_price_bdt"),
-                                "tax_amount": current_cell.get("tax_amount"),
-                                "booking_class": current_cell.get("booking_class"),
-                                "min_booking_class": current_cell.get("min_booking_class") or current_cell.get("booking_class"),
-                                "max_booking_class": current_cell.get("max_booking_class"),
-                                "seat_available": current_cell.get("seat_available"),
-                                "min_seat_available": current_cell.get("min_seat_available") if current_cell.get("min_seat_available") is not None else current_cell.get("seat_available"),
-                                "max_seat_available": current_cell.get("max_seat_available"),
-                                "seat_capacity": current_cell.get("seat_capacity"),
-                                "load_factor_pct": current_cell.get("load_factor_pct"),
-                                "soldout": current_cell.get("soldout"),
-                                "signal": signal,
-                        }
-                    )
+                cells = sorted(
+                    cells_by_route_date_capture.get((route_key, dep_date, captured_at_iso), []),
+                    key=lambda item: flight_group_order.get(str(item.get("flight_group_id") or ""), 10**9),
+                )
                 captures.append(
                     {
                         "captured_at_utc": captured_at_iso,
-                        "is_latest": captured_at_iso == capture_times[0] if capture_times else False,
                         "cells": cells,
                     }
                 )
@@ -1787,6 +2316,20 @@ def _build_route_monitor_matrix_from_aggregates(
             }
         )
 
+    build_ms = (time.perf_counter() - build_started_at) * 1000
+    total_ms = (time.perf_counter() - started_at) * 1000
+    LOG.info(
+        "route_monitor_matrix_builder cycle_id=%s routes=%d current_rows=%d history_rows=%d current_scan_ms=%.1f history_scan_ms=%.1f preprocess_ms=%.1f build_ms=%.1f total_ms=%.1f",
+        resolved_cycle_id,
+        len(route_payloads),
+        len(current_rows),
+        len(history_rows),
+        current_scan_ms,
+        history_scan_ms,
+        preprocess_ms,
+        build_ms,
+        total_ms,
+    )
     return {
         "cycle_id": resolved_cycle_id,
         "routes": route_payloads,
@@ -1945,7 +2488,6 @@ def _get_route_monitor_matrix_from_bigquery(
               co.cabin,
               COALESCE(co.aircraft, '') AS aircraft,
               co.search_trip_type,
-              co.trip_request_id,
               co.requested_outbound_date,
               co.requested_return_date,
               co.trip_duration_days,
@@ -1998,7 +2540,7 @@ def _get_route_monitor_matrix_from_bigquery(
             GROUP BY
               co.cycle_id, co.captured_at_utc, co.airline, co.origin, co.destination, co.route_key,
               co.flight_number, co.departure_utc, co.departure_date, departure_time, co.cabin, aircraft,
-              co.search_trip_type, co.trip_request_id, co.requested_outbound_date, co.requested_return_date,
+              co.search_trip_type, co.requested_outbound_date, co.requested_return_date,
               co.trip_duration_days, co.trip_origin, co.trip_destination, co.trip_pair_key, co.leg_direction,
               co.leg_sequence, co.itinerary_leg_count
             ORDER BY co.route_key, co.departure_date, departure_time, co.airline, co.flight_number
@@ -2086,7 +2628,6 @@ def _get_route_monitor_matrix_from_bigquery(
               ho.cabin,
               COALESCE(ho.aircraft, '') AS aircraft,
               ho.search_trip_type,
-              ho.trip_request_id,
               ho.requested_outbound_date,
               ho.requested_return_date,
               ho.trip_duration_days,
@@ -2139,7 +2680,7 @@ def _get_route_monitor_matrix_from_bigquery(
             GROUP BY
               ho.cycle_id, ho.captured_at_utc, ho.airline, ho.origin, ho.destination, ho.route_key,
               ho.flight_number, ho.departure_utc, ho.departure_date, departure_time, ho.cabin, aircraft,
-              ho.search_trip_type, ho.trip_request_id, ho.requested_outbound_date, ho.requested_return_date,
+              ho.search_trip_type, ho.requested_outbound_date, ho.requested_return_date,
               ho.trip_duration_days, ho.trip_origin, ho.trip_destination, ho.trip_pair_key, ho.leg_direction,
               ho.leg_sequence, ho.itinerary_leg_count
             ORDER BY ho.captured_at_utc DESC, ho.route_key, ho.departure_date, departure_time, ho.airline, ho.flight_number
@@ -2225,11 +2766,44 @@ def get_route_monitor_matrix(
     route_limit: int = 8,
     history_limit: int = 12,
 ) -> dict[str, Any]:
+    started_at = time.perf_counter()
     normalized_trip_types = [value for value in _normalize_codes(trip_types) if value in {"OW", "RT"}]
-    if _bigquery_ready():
+    prefer_sql = session is not None
+    if not prefer_sql and _bigquery_ready():
         try:
-            return _get_route_monitor_matrix_from_bigquery(
-                cycle_id=cycle_id,
+            resolved_cycle_id = _resolve_cycle_id_bigquery(cycle_id)
+            cache_key = _cache_key(
+                "route_monitor_matrix",
+                backend="bigquery",
+                cycle_id=resolved_cycle_id,
+                airlines=_normalize_sequence_cache_value(airlines),
+                origins=_normalize_sequence_cache_value(origins),
+                destinations=_normalize_sequence_cache_value(destinations),
+                cabins=_normalize_sequence_cache_value(cabins, uppercase=False),
+                trip_types=tuple(normalized_trip_types),
+                return_date=return_date,
+                return_date_start=return_date_start,
+                return_date_end=return_date_end,
+                route_limit=route_limit,
+                history_limit=history_limit,
+            )
+            cached = _get_cached_response(cache_key, ROUTE_MATRIX_CACHE_TTL_SEC)
+            if cached is not None:
+                _set_request_metrics(
+                    route_matrix_backend="bigquery",
+                    route_matrix_cache="hit",
+                    route_matrix_routes=len(cached.get("routes") or []),
+                    route_matrix_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+                )
+                LOG.info(
+                    "route_monitor_matrix cache_hit backend=bigquery cycle_id=%s routes=%d total_ms=%.1f",
+                    resolved_cycle_id,
+                    len(cached.get("routes") or []),
+                    (time.perf_counter() - started_at) * 1000,
+                )
+                return cached
+            payload = _get_route_monitor_matrix_from_bigquery(
+                cycle_id=resolved_cycle_id,
                 airlines=airlines,
                 origins=origins,
                 destinations=destinations,
@@ -2241,15 +2815,72 @@ def get_route_monitor_matrix(
                 route_limit=route_limit,
                 history_limit=history_limit,
             )
-        except (GoogleAPIError, RuntimeError, ValueError):
-            pass
+            _set_request_metrics(
+                route_matrix_backend="bigquery",
+                route_matrix_cache="miss",
+                route_matrix_routes=len(payload.get("routes") or []),
+                route_matrix_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+            )
+            LOG.info(
+                "route_monitor_matrix backend=bigquery cycle_id=%s routes=%d total_ms=%.1f",
+                resolved_cycle_id,
+                len(payload.get("routes") or []),
+                (time.perf_counter() - started_at) * 1000,
+            )
+            return _set_cached_response(cache_key, payload)
+        except (GoogleAPIError, RuntimeError, ValueError) as exc:
+            LOG.warning("route_list bigquery_fallback reason=%s", exc)
     if session is None:
+        _set_request_metrics(
+            route_matrix_backend="sql",
+            route_matrix_cache="miss",
+            route_matrix_routes=0,
+            route_matrix_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+        )
         return {"cycle_id": None, "routes": []}
 
     resolved_cycle_id = _resolve_cycle_id(session, cycle_id)
     if not resolved_cycle_id:
+        _set_request_metrics(
+            route_matrix_backend="sql",
+            route_matrix_cache="miss",
+            route_matrix_routes=0,
+            route_matrix_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+        )
         return {"cycle_id": None, "routes": []}
 
+    cache_key = _cache_key(
+        "route_monitor_matrix",
+        backend="sql",
+        cycle_id=resolved_cycle_id,
+        airlines=_normalize_sequence_cache_value(airlines),
+        origins=_normalize_sequence_cache_value(origins),
+        destinations=_normalize_sequence_cache_value(destinations),
+        cabins=_normalize_sequence_cache_value(cabins, uppercase=False),
+        trip_types=tuple(normalized_trip_types),
+        return_date=return_date,
+        return_date_start=return_date_start,
+        return_date_end=return_date_end,
+        route_limit=route_limit,
+        history_limit=history_limit,
+    )
+    cached = _get_cached_response(cache_key, ROUTE_MATRIX_CACHE_TTL_SEC)
+    if cached is not None:
+        _set_request_metrics(
+            route_matrix_backend="sql",
+            route_matrix_cache="hit",
+            route_matrix_routes=len(cached.get("routes") or []),
+            route_matrix_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+        )
+        LOG.info(
+            "route_monitor_matrix cache_hit backend=sql cycle_id=%s routes=%d total_ms=%.1f",
+            resolved_cycle_id,
+            len(cached.get("routes") or []),
+            (time.perf_counter() - started_at) * 1000,
+        )
+        return cached
+
+    route_started_at = time.perf_counter()
     route_clauses = ["fo.scrape_id = CAST(:cycle_id AS uuid)"]
     route_params: dict[str, Any] = {"cycle_id": resolved_cycle_id, "route_limit": route_limit}
     _apply_in_filter(route_clauses, route_params, "fo.airline", airlines, "route_airline")
@@ -2294,15 +2925,24 @@ def get_route_monitor_matrix(
     ).mappings().all()
     selected_routes = [dict(row) for row in route_rows]
     if not selected_routes:
-        return {"cycle_id": resolved_cycle_id, "routes": []}
+        _set_request_metrics(
+            route_matrix_backend="sql",
+            route_matrix_cache="miss",
+            route_matrix_routes=0,
+            route_matrix_selected_routes=0,
+            route_matrix_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+        )
+        return _set_cached_response(cache_key, {"cycle_id": resolved_cycle_id, "routes": []})
+    route_selection_ms = (time.perf_counter() - route_started_at) * 1000
 
-    route_keys = [str(row["route_key"]) for row in selected_routes]
+    route_pairs = [(str(row.get("origin") or ""), str(row.get("destination") or "")) for row in selected_routes]
     min_date: date | None = None
     max_date: date | None = None
 
+    current_started_at = time.perf_counter()
     current_clauses = ["fo.scrape_id = CAST(:cycle_id AS uuid)"]
     current_params: dict[str, Any] = {"cycle_id": resolved_cycle_id}
-    _apply_in_filter(current_clauses, current_params, "(fo.origin || '-' || fo.destination)", route_keys, "matrix_route", uppercase=True)
+    _apply_route_pair_filter(current_clauses, current_params, "fo.origin", "fo.destination", route_pairs, "matrix_route")
     _apply_in_filter(current_clauses, current_params, "fo.airline", airlines, "matrix_airline")
     _apply_in_filter(current_clauses, current_params, "fo.cabin", cabins, "matrix_cabin", uppercase=False)
     if normalized_trip_types:
@@ -2321,21 +2961,17 @@ def get_route_monitor_matrix(
     current_rows = session.execute(
         text(
             f"""
-            SELECT
-                fo.scrape_id::text AS cycle_id,
-                fo.scraped_at AS captured_at_utc,
+            SELECT DISTINCT
                 fo.airline,
                 fo.origin,
                 fo.destination,
                 (fo.origin || '-' || fo.destination) AS route_key,
                 fo.flight_number,
-                fo.departure AS departure_utc,
                 fo.departure::date AS departure_date,
                 TO_CHAR(fo.departure, 'HH24:MI') AS departure_time,
                 fo.cabin,
                 COALESCE(frm.aircraft, '') AS aircraft,
                 COALESCE(frm.search_trip_type, 'OW') AS search_trip_type,
-                frm.trip_request_id,
                 frm.requested_outbound_date,
                 frm.requested_return_date,
                 frm.trip_duration_days,
@@ -2344,49 +2980,11 @@ def get_route_monitor_matrix(
                 COALESCE(frm.trip_origin, fo.origin) || '-' || COALESCE(frm.trip_destination, fo.destination) AS trip_pair_key,
                 COALESCE(frm.leg_direction, 'outbound') AS leg_direction,
                 frm.leg_sequence,
-                frm.itinerary_leg_count,
-                CAST(MIN(fo.price_total_bdt) AS NUMERIC(12, 2)) AS min_total_price_bdt,
-                CAST(MAX(fo.price_total_bdt) AS NUMERIC(12, 2)) AS max_total_price_bdt,
-                CAST(MAX(COALESCE(frm.tax_amount, GREATEST(fo.price_total_bdt - frm.fare_amount, 0))) AS NUMERIC(12, 2)) AS tax_amount,
-                (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS booking_class,
-                (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS min_booking_class,
-                (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt DESC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS max_booking_class,
-                (ARRAY_AGG(fo.seat_available ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE fo.seat_available IS NOT NULL))[1] AS seat_available,
-                (ARRAY_AGG(fo.seat_available ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE fo.seat_available IS NOT NULL))[1] AS min_seat_available,
-                (ARRAY_AGG(fo.seat_available ORDER BY fo.price_total_bdt DESC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE fo.seat_available IS NOT NULL))[1] AS max_seat_available,
-                MAX(fo.seat_capacity) AS seat_capacity,
-                CAST(MAX(frm.estimated_load_factor_pct) AS NUMERIC(6, 2)) AS load_factor_pct,
-                BOOL_OR(COALESCE(frm.soldout, FALSE)) AS soldout
+                frm.itinerary_leg_count
             FROM flight_offers fo
             LEFT JOIN flight_offer_raw_meta frm
               ON frm.flight_offer_id = fo.id
             WHERE {' AND '.join(current_clauses)}
-            GROUP BY
-                fo.scrape_id,
-                fo.scraped_at,
-                fo.airline,
-                fo.origin,
-                fo.destination,
-                fo.flight_number,
-                fo.departure,
-                fo.cabin,
-                COALESCE(frm.aircraft, ''),
-                COALESCE(frm.search_trip_type, 'OW'),
-                frm.trip_request_id,
-                frm.requested_outbound_date,
-                frm.requested_return_date,
-                frm.trip_duration_days,
-                COALESCE(frm.trip_origin, fo.origin),
-                COALESCE(frm.trip_destination, fo.destination),
-                COALESCE(frm.leg_direction, 'outbound'),
-                frm.leg_sequence,
-                frm.itinerary_leg_count
             ORDER BY route_key, departure_date, departure_time, fo.airline, fo.flight_number
             """
         ),
@@ -2394,7 +2992,15 @@ def get_route_monitor_matrix(
     ).mappings().all()
     current_dicts = _rows_to_dicts([dict(row) for row in current_rows])
     if not current_dicts:
-        return {"cycle_id": resolved_cycle_id, "routes": []}
+        _set_request_metrics(
+            route_matrix_backend="sql",
+            route_matrix_cache="miss",
+            route_matrix_routes=0,
+            route_matrix_selected_routes=len(selected_routes),
+            route_matrix_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+        )
+        return _set_cached_response(cache_key, {"cycle_id": resolved_cycle_id, "routes": []})
+    current_rows_ms = (time.perf_counter() - current_started_at) * 1000
 
     for row in current_dicts:
         dep_date = row.get("departure_date")
@@ -2403,112 +3009,203 @@ def get_route_monitor_matrix(
             max_date = dep_date if max_date is None or dep_date > max_date else max_date
 
     if min_date is None or max_date is None:
-        return {"cycle_id": resolved_cycle_id, "routes": []}
+        _set_request_metrics(
+            route_matrix_backend="sql",
+            route_matrix_cache="miss",
+            route_matrix_routes=0,
+            route_matrix_selected_routes=len(selected_routes),
+            route_matrix_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+        )
+        return _set_cached_response(cache_key, {"cycle_id": resolved_cycle_id, "routes": []})
 
-    history_clauses = [
-        "fo.departure::date >= :min_date",
-        "fo.departure::date <= :max_date",
+    history_cycle_ids = [
+        str(item.get("cycle_id") or "").strip()
+        for item in get_recent_cycles(session, limit=_route_matrix_history_cycle_limit(history_limit), comparable_only=True)
+        if str(item.get("cycle_id") or "").strip() and str(item.get("cycle_id") or "").strip() != resolved_cycle_id
     ]
-    history_params: dict[str, Any] = {"min_date": min_date, "max_date": max_date}
-    _apply_in_filter(history_clauses, history_params, "(fo.origin || '-' || fo.destination)", route_keys, "history_route", uppercase=True)
-    _apply_in_filter(history_clauses, history_params, "fo.airline", airlines, "history_airline")
-    _apply_in_filter(history_clauses, history_params, "fo.cabin", cabins, "history_cabin", uppercase=False)
-    if normalized_trip_types:
-        _apply_in_filter(history_clauses, history_params, "COALESCE(frm.search_trip_type, 'OW')", normalized_trip_types, "history_trip_type")
-    if return_date:
-        history_clauses.append("frm.requested_return_date = :history_return_date")
-        history_params["history_return_date"] = return_date.isoformat()
-    else:
-        if return_date_start:
-            history_clauses.append("frm.requested_return_date >= :history_return_date_start")
-            history_params["history_return_date_start"] = return_date_start.isoformat()
-        if return_date_end:
-            history_clauses.append("frm.requested_return_date <= :history_return_date_end")
-            history_params["history_return_date_end"] = return_date_end.isoformat()
+    history_dicts: list[dict[str, Any]] = []
+    history_rows_ms = 0.0
+    if history_cycle_ids:
+        history_started_at = time.perf_counter()
+        history_clauses = [
+            "fo.departure >= :min_departure_ts",
+            "fo.departure < :max_departure_exclusive_ts",
+        ]
+        history_params: dict[str, Any] = {
+            "min_departure_ts": datetime.combine(min_date, datetime.min.time()),
+            "max_departure_exclusive_ts": datetime.combine(max_date, datetime.min.time()) + timedelta(days=1),
+            "history_capture_limit": max(int(history_limit or 0), 1),
+        }
+        _apply_route_pair_filter(history_clauses, history_params, "fo.origin", "fo.destination", route_pairs, "history_route")
+        _apply_in_filter(history_clauses, history_params, "fo.scrape_id::text", history_cycle_ids, "history_cycle", uppercase=False)
+        _apply_in_filter(history_clauses, history_params, "fo.airline", airlines, "history_airline")
+        _apply_in_filter(history_clauses, history_params, "fo.cabin", cabins, "history_cabin", uppercase=False)
+        if normalized_trip_types:
+            _apply_in_filter(history_clauses, history_params, "COALESCE(frm.search_trip_type, 'OW')", normalized_trip_types, "history_trip_type")
+        if return_date:
+            history_clauses.append("frm.requested_return_date = :history_return_date")
+            history_params["history_return_date"] = return_date.isoformat()
+        else:
+            if return_date_start:
+                history_clauses.append("frm.requested_return_date >= :history_return_date_start")
+                history_params["history_return_date_start"] = return_date_start.isoformat()
+            if return_date_end:
+                history_clauses.append("frm.requested_return_date <= :history_return_date_end")
+                history_params["history_return_date_end"] = return_date_end.isoformat()
 
-    history_rows = session.execute(
-        text(
-            f"""
-            SELECT
-                fo.scrape_id::text AS cycle_id,
-                fo.scraped_at AS captured_at_utc,
-                fo.airline,
-                fo.origin,
-                fo.destination,
-                (fo.origin || '-' || fo.destination) AS route_key,
-                fo.flight_number,
-                fo.departure AS departure_utc,
-                fo.departure::date AS departure_date,
-                TO_CHAR(fo.departure, 'HH24:MI') AS departure_time,
-                fo.cabin,
-                COALESCE(frm.aircraft, '') AS aircraft,
-                COALESCE(frm.search_trip_type, 'OW') AS search_trip_type,
-                frm.trip_request_id,
-                frm.requested_outbound_date,
-                frm.requested_return_date,
-                frm.trip_duration_days,
-                COALESCE(frm.trip_origin, fo.origin) AS trip_origin,
-                COALESCE(frm.trip_destination, fo.destination) AS trip_destination,
-                COALESCE(frm.trip_origin, fo.origin) || '-' || COALESCE(frm.trip_destination, fo.destination) AS trip_pair_key,
-                COALESCE(frm.leg_direction, 'outbound') AS leg_direction,
-                frm.leg_sequence,
-                frm.itinerary_leg_count,
-                CAST(MIN(fo.price_total_bdt) AS NUMERIC(12, 2)) AS min_total_price_bdt,
-                CAST(MAX(fo.price_total_bdt) AS NUMERIC(12, 2)) AS max_total_price_bdt,
-                CAST(MAX(COALESCE(frm.tax_amount, GREATEST(fo.price_total_bdt - frm.fare_amount, 0))) AS NUMERIC(12, 2)) AS tax_amount,
-                (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS booking_class,
-                (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS min_booking_class,
-                (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt DESC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS max_booking_class,
-                (ARRAY_AGG(fo.seat_available ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE fo.seat_available IS NOT NULL))[1] AS seat_available,
-                (ARRAY_AGG(fo.seat_available ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE fo.seat_available IS NOT NULL))[1] AS min_seat_available,
-                (ARRAY_AGG(fo.seat_available ORDER BY fo.price_total_bdt DESC NULLS LAST, fo.seat_available DESC NULLS LAST)
-                  FILTER (WHERE fo.seat_available IS NOT NULL))[1] AS max_seat_available,
-                MAX(fo.seat_capacity) AS seat_capacity,
-                CAST(MAX(frm.estimated_load_factor_pct) AS NUMERIC(6, 2)) AS load_factor_pct,
-                BOOL_OR(COALESCE(frm.soldout, FALSE)) AS soldout
-            FROM flight_offers fo
-            LEFT JOIN flight_offer_raw_meta frm
-              ON frm.flight_offer_id = fo.id
-            WHERE {' AND '.join(history_clauses)}
-            GROUP BY
-                fo.scrape_id,
-                fo.scraped_at,
-                fo.airline,
-                fo.origin,
-                fo.destination,
-                fo.flight_number,
-                fo.departure,
-                fo.cabin,
-                COALESCE(frm.aircraft, ''),
-                COALESCE(frm.search_trip_type, 'OW'),
-                frm.trip_request_id,
-                frm.requested_outbound_date,
-                frm.requested_return_date,
-                frm.trip_duration_days,
-                COALESCE(frm.trip_origin, fo.origin),
-                COALESCE(frm.trip_destination, fo.destination),
-                COALESCE(frm.leg_direction, 'outbound'),
-                frm.leg_sequence,
-                frm.itinerary_leg_count
-            ORDER BY fo.scraped_at DESC, route_key, departure_date, departure_time, fo.airline, fo.flight_number
-            """
-        ),
-        history_params,
-    ).mappings().all()
-    history_dicts = _rows_to_dicts([dict(row) for row in history_rows])
+        history_rows = session.execute(
+            text(
+                f"""
+                WITH aggregated_history AS (
+                    SELECT
+                        fo.scrape_id::text AS cycle_id,
+                        fo.scraped_at AS captured_at_utc,
+                        fo.airline,
+                        fo.origin,
+                        fo.destination,
+                        (fo.origin || '-' || fo.destination) AS route_key,
+                        fo.flight_number,
+                        fo.departure AS departure_utc,
+                        fo.departure::date AS departure_date,
+                        TO_CHAR(fo.departure, 'HH24:MI') AS departure_time,
+                        fo.cabin,
+                        COALESCE(frm.aircraft, '') AS aircraft,
+                        COALESCE(frm.search_trip_type, 'OW') AS search_trip_type,
+                        frm.requested_outbound_date,
+                        frm.requested_return_date,
+                        frm.trip_duration_days,
+                        COALESCE(frm.trip_origin, fo.origin) AS trip_origin,
+                        COALESCE(frm.trip_destination, fo.destination) AS trip_destination,
+                        COALESCE(frm.trip_origin, fo.origin) || '-' || COALESCE(frm.trip_destination, fo.destination) AS trip_pair_key,
+                        COALESCE(frm.leg_direction, 'outbound') AS leg_direction,
+                        frm.leg_sequence,
+                        frm.itinerary_leg_count,
+                        CAST(MIN(fo.price_total_bdt) AS NUMERIC(12, 2)) AS min_total_price_bdt,
+                        CAST(MAX(fo.price_total_bdt) AS NUMERIC(12, 2)) AS max_total_price_bdt,
+                        CAST(MAX(COALESCE(frm.tax_amount, GREATEST(fo.price_total_bdt - frm.fare_amount, 0))) AS NUMERIC(12, 2)) AS tax_amount,
+                        (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
+                          FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS booking_class,
+                        (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
+                          FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS min_booking_class,
+                        (ARRAY_AGG(COALESCE(frm.booking_class, fo.fare_basis) ORDER BY fo.price_total_bdt DESC NULLS LAST, fo.seat_available DESC NULLS LAST)
+                          FILTER (WHERE COALESCE(frm.booking_class, fo.fare_basis) IS NOT NULL))[1] AS max_booking_class,
+                        (ARRAY_AGG(fo.seat_available ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
+                          FILTER (WHERE fo.seat_available IS NOT NULL))[1] AS seat_available,
+                        (ARRAY_AGG(fo.seat_available ORDER BY fo.price_total_bdt ASC NULLS LAST, fo.seat_available DESC NULLS LAST)
+                          FILTER (WHERE fo.seat_available IS NOT NULL))[1] AS min_seat_available,
+                        (ARRAY_AGG(fo.seat_available ORDER BY fo.price_total_bdt DESC NULLS LAST, fo.seat_available DESC NULLS LAST)
+                          FILTER (WHERE fo.seat_available IS NOT NULL))[1] AS max_seat_available,
+                        MAX(fo.seat_capacity) AS seat_capacity,
+                        CAST(MAX(frm.estimated_load_factor_pct) AS NUMERIC(6, 2)) AS load_factor_pct,
+                        BOOL_OR(COALESCE(frm.soldout, FALSE)) AS soldout
+                    FROM flight_offers fo
+                    LEFT JOIN flight_offer_raw_meta frm
+                      ON frm.flight_offer_id = fo.id
+                    WHERE {' AND '.join(history_clauses)}
+                    GROUP BY
+                        fo.scrape_id,
+                        fo.scraped_at,
+                        fo.airline,
+                        fo.origin,
+                        fo.destination,
+                        fo.flight_number,
+                        fo.departure,
+                        fo.cabin,
+                        COALESCE(frm.aircraft, ''),
+                        COALESCE(frm.search_trip_type, 'OW'),
+                        frm.requested_outbound_date,
+                        frm.requested_return_date,
+                        frm.trip_duration_days,
+                        COALESCE(frm.trip_origin, fo.origin),
+                        COALESCE(frm.trip_destination, fo.destination),
+                        COALESCE(frm.leg_direction, 'outbound'),
+                        frm.leg_sequence,
+                        frm.itinerary_leg_count
+                ),
+                ranked_history AS (
+                    SELECT
+                        aggregated_history.*,
+                        DENSE_RANK() OVER (
+                            PARTITION BY route_key, departure_date
+                            ORDER BY captured_at_utc DESC
+                        ) AS capture_rank
+                    FROM aggregated_history
+                )
+                SELECT
+                    cycle_id,
+                    captured_at_utc,
+                    airline,
+                    origin,
+                    destination,
+                    route_key,
+                    flight_number,
+                    departure_utc,
+                    departure_date,
+                    departure_time,
+                    cabin,
+                    aircraft,
+                    search_trip_type,
+                    requested_outbound_date,
+                    requested_return_date,
+                    trip_duration_days,
+                    trip_origin,
+                    trip_destination,
+                    trip_pair_key,
+                    leg_direction,
+                    leg_sequence,
+                    itinerary_leg_count,
+                    min_total_price_bdt,
+                    max_total_price_bdt,
+                    tax_amount,
+                    booking_class,
+                    min_booking_class,
+                    max_booking_class,
+                    seat_available,
+                    min_seat_available,
+                    max_seat_available,
+                    seat_capacity,
+                    load_factor_pct,
+                    soldout
+                FROM ranked_history
+                WHERE capture_rank <= :history_capture_limit
+                ORDER BY captured_at_utc DESC, route_key, departure_date, departure_time, airline, flight_number
+                """
+            ),
+            history_params,
+        ).mappings().all()
+        history_dicts = _rows_to_dicts([dict(row) for row in history_rows])
+        history_rows_ms = (time.perf_counter() - history_started_at) * 1000
 
-    return _build_route_monitor_matrix_from_aggregates(
+    payload = _build_route_monitor_matrix_from_aggregates(
         resolved_cycle_id=resolved_cycle_id,
         selected_routes=selected_routes,
         current_rows=current_dicts,
         history_rows=history_dicts,
         history_limit=history_limit,
     )
+    _set_request_metrics(
+        route_matrix_backend="sql",
+        route_matrix_cache="miss",
+        route_matrix_routes=len(payload.get("routes") or []),
+        route_matrix_selected_routes=len(selected_routes),
+        route_matrix_current_rows=len(current_dicts),
+        route_matrix_history_rows=len(history_dicts),
+        route_matrix_history_cycles=len(history_cycle_ids),
+        route_matrix_ms=f"{(time.perf_counter() - started_at) * 1000:.1f}",
+    )
+    LOG.info(
+        "route_monitor_matrix backend=sql cycle_id=%s selected_routes=%d current_rows=%d history_rows=%d history_cycles=%d route_ms=%.1f current_ms=%.1f history_ms=%.1f total_ms=%.1f",
+        resolved_cycle_id,
+        len(selected_routes),
+        len(current_dicts),
+        len(history_dicts),
+        len(history_cycle_ids),
+        route_selection_ms,
+        current_rows_ms,
+        history_rows_ms,
+        (time.perf_counter() - started_at) * 1000,
+    )
+    return _set_cached_response(cache_key, payload)
 
 
 def _build_airline_operations_payload(
@@ -3027,8 +3724,8 @@ def get_airline_operations(
                 route_limit=route_limit,
                 trend_limit=trend_limit,
             )
-        except (GoogleAPIError, RuntimeError, ValueError):
-            pass
+        except (GoogleAPIError, RuntimeError, ValueError) as exc:
+            LOG.warning("route_monitor_matrix bigquery_fallback reason=%s", exc)
 
     resolved_cycle_id = _resolve_cycle_id(session, cycle_id) if session is not None else None
     if not resolved_cycle_id or session is None:

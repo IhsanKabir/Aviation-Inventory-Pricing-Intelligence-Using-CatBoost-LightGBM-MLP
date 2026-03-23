@@ -2,7 +2,7 @@
 
 from models.base import Base
 from sqlalchemy import (
-    Column, Integer, String, DateTime, Numeric, ForeignKey, Boolean, JSON
+    Column, Integer, String, DateTime, Numeric, ForeignKey, Boolean, JSON, Index
 )
 from sqlalchemy.orm import relationship
 
@@ -78,3 +78,20 @@ class FlightOfferRawMetaORM(Base):
     raw_offer = Column(JSON)
 
     scraped_at = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_flight_offer_raw_meta_offer_trip_filters",
+            "flight_offer_id",
+            "search_trip_type",
+            "requested_return_date",
+        ),
+        Index(
+            "ix_flight_offer_raw_meta_trip_scope_lookup",
+            "search_trip_type",
+            "trip_origin",
+            "trip_destination",
+            "requested_return_date",
+            "flight_offer_id",
+        ),
+    )

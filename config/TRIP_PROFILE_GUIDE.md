@@ -27,6 +27,9 @@ For each route, these keys matter:
 `active_market_trip_profiles`
 - Profiles that are ON for `operational` runs.
 - This is the main on/off switch for live collection behavior.
+- Important: this list only filters the profiles already present in `market_trip_profiles`.
+- It does not activate a profile that is missing from `market_trip_profiles`.
+- Practical rule: if you want a profile to run in `operational`, put it in both lists.
 
 `training_market_trip_profiles`
 - Extra profiles used only in `training` mode.
@@ -94,6 +97,34 @@ For each route, these keys matter:
 - Extra one-way tourism pass used on `MLE`, `BKK`, and `KUL` routes.
 - Adds the `+7 day` departure horizon on top of the normal one-way baseline.
 
+## Current Bangladesh Domestic Baseline
+
+For the current Bangladesh domestic baseline, the intended operational setup is:
+- airlines: `BG`, `2A`, `BS`, `VQ`
+- one-way baseline: `default_one_way_monitoring`
+- optional layered domestic round-trip baseline: `bangladesh_domestic_round_trip_short`
+
+For those airlines, the currently configured DAC-linked domestic routes are:
+- `DAC-BZL`, `BZL-DAC`
+- `DAC-CGP`, `CGP-DAC`
+- `DAC-CXB`, `CXB-DAC`
+- `DAC-JSR`, `JSR-DAC`
+- `DAC-RJH`, `RJH-DAC`
+- `DAC-SPD`, `SPD-DAC`
+- `DAC-ZYL`, `ZYL-DAC`
+
+If you do not see one-way domestic behavior for one of those routes, check both files together:
+- `config/routes.json` must contain the airline-route pair
+- `config/route_trip_windows.json` must contain the same airline-route pair with `default_one_way_monitoring` in both `market_trip_profiles` and `active_market_trip_profiles`
+
+Investigation on March 22, 2026 found and corrected a bug in this area:
+- the routes existed
+- `default_one_way_monitoring` was often listed in `active_market_trip_profiles`
+- but it was missing from `market_trip_profiles`
+- result: the loader filtered to the remaining route candidate profiles, and the planner resolved round-trip behavior instead of the intended one-way baseline
+
+That specific wiring has now been corrected for the Bangladesh domestic baseline routes, and the validator should flag the same mistake in future edits.
+
 ## Practical Examples
 
 ### Turn on normal one-way only
@@ -101,6 +132,9 @@ For each route, these keys matter:
 In `route_trip_windows.json`:
 
 ```json
+"market_trip_profiles": [
+  "default_one_way_monitoring"
+],
 "active_market_trip_profiles": [
   "default_one_way_monitoring"
 ]
@@ -109,6 +143,10 @@ In `route_trip_windows.json`:
 ### Turn on normal one-way and domestic round-trip
 
 ```json
+"market_trip_profiles": [
+  "default_one_way_monitoring",
+  "bangladesh_domestic_round_trip_short"
+],
 "active_market_trip_profiles": [
   "default_one_way_monitoring",
   "bangladesh_domestic_round_trip_short"
@@ -118,6 +156,10 @@ In `route_trip_windows.json`:
 ### Keep operational small, but make training richer
 
 ```json
+"market_trip_profiles": [
+  "default_one_way_monitoring",
+  "bangladesh_domestic_round_trip_short"
+],
 "active_market_trip_profiles": [
   "default_one_way_monitoring"
 ],
@@ -169,6 +211,10 @@ This catches:
 - duplicate profile names in profile arrays
 - missing route-window entries for configured airline-route pairs
 
+It now also fails a route where:
+- a profile is listed in `active_market_trip_profiles`
+- but the same profile is missing from `market_trip_profiles`
+
 ## Current Operational Pattern
 
 The current design separates:
@@ -181,6 +227,7 @@ Use `active_market_trip_profiles` conservatively if runtime is important.
 At the moment, the intended common operational baseline is:
 - `default_one_way_monitoring` for one-way coverage across routes
 - route-specific round-trip profiles layered on top where applicable
+- but the one-way profile only becomes effective if it is also present in `market_trip_profiles`
 
 The current future-proof training pattern is:
 - operational coverage stays stable and comparison-safe

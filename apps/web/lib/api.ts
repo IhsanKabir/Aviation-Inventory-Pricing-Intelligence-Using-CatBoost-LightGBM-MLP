@@ -122,7 +122,6 @@ export type SnapshotPayload = {
 
 export type RouteMonitorMatrixCell = {
   flight_group_id: string;
-  airline: string;
   min_total_price_bdt?: number | null;
   max_total_price_bdt?: number | null;
   tax_amount?: number | null;
@@ -140,7 +139,6 @@ export type RouteMonitorMatrixCell = {
 
 export type RouteMonitorMatrixCapture = {
   captured_at_utc: string;
-  is_latest: boolean;
   cells: RouteMonitorMatrixCell[];
 };
 
@@ -152,7 +150,6 @@ export type RouteMonitorFlightGroup = {
   cabin?: string | null;
   aircraft?: string | null;
   search_trip_type?: string | null;
-  trip_request_id?: string | null;
   requested_return_date?: string | null;
   leg_direction?: string | null;
   leg_sequence?: number | null;
@@ -177,7 +174,6 @@ export type RouteMonitorMatrixRoute = {
   is_cross_border?: boolean | null;
   search_trip_type?: string | null;
   trip_pair_key?: string | null;
-  trip_request_id?: string | null;
   requested_outbound_date?: string | null;
   requested_return_date?: string | null;
   trip_duration_days?: number | null;
@@ -652,13 +648,19 @@ export async function getFilteredRoutes(query?: {
   airlines?: string[];
   cabins?: string[];
   tripTypes?: string[];
+  originPrefix?: string;
+  destinationPrefix?: string;
+  limit?: number;
 }) {
   return fetchJsonWithRevalidate<{ items: RouteItem[] }>(
     buildPath("/api/v1/meta/routes", {
       cycle_id: query?.cycleId,
       airline: query?.airlines,
       cabin: query?.cabins,
-      trip_type: query?.tripTypes
+      trip_type: query?.tripTypes,
+      origin_prefix: query?.originPrefix,
+      destination_prefix: query?.destinationPrefix,
+      limit: query?.limit
     }),
     120
   );

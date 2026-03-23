@@ -1,6 +1,6 @@
 # Aero Pulse Intelligence Platform
 
-Multi-airline fare, inventory, OTA benchmarking, reporting, and forecasting platform for thesis-grade aviation intelligence work.
+Multi-airline fare, inventory, benchmarking, reporting, and forecasting platform for thesis-grade aviation intelligence work.
 
 ## Why This Repository Is Strong
 
@@ -139,6 +139,12 @@ Disable operational autorun on intermittently powered laptops:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scheduler\disable_ingestion_autorun.ps1
+```
+
+Install finish-driven ingestion autorun:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scheduler\install_ingestion_autorun.ps1
 ```
 
 Generate reports only:

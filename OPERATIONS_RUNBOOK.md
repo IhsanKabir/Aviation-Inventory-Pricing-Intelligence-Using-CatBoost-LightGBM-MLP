@@ -346,7 +346,6 @@ Recommended use:
 - keep daily training/deep scheduling on a more stable machine if needed
 - treat website freshness lag separately from collection completeness; current
   warehouse publish time can still add substantial delay after scrape completion
-
 ## If Daily Ops File Did Not Update
 
 1. Run one manual cycle:
