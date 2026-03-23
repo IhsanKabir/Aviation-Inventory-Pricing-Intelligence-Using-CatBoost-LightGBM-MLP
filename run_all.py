@@ -46,6 +46,11 @@ from core.trip_context import (
     expand_iso_date_range,
     normalize_trip_type,
 )
+from core.offer_identity import (
+    build_offer_id_lookup_maps,
+    flight_offer_identity_key,
+    resolve_offer_id,
+)
 from core.trip_config import (
     load_route_trip_overrides,
     match_route_trip_overrides,
@@ -714,7 +719,7 @@ def build_current_snapshot(rows):
     snapshot = {}
     for r in rows:
         normalized = dict(r)
-        identity = _flight_offer_identity_key(
+        identity = flight_offer_identity_key(
             airline=r.get("airline"),
             origin=r.get("origin"),
             destination=r.get("destination"),
@@ -835,7 +840,7 @@ def preload_previous_snapshots(
         if dep_day not in by_day:
             continue
 
-        dep_key = _flight_offer_identity_key(
+        dep_key = flight_offer_identity_key(
             airline=r.get("airline"),
             origin=r.get("origin"),
             destination=r.get("destination"),
@@ -1366,37 +1371,6 @@ def _raw_meta_hash_key(meta: dict) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _flight_offer_identity_key(
-    *,
-    airline: str | None,
-    origin: str | None,
-    destination: str | None,
-    departure,
-    flight_number,
-    cabin: str | None,
-    fare_basis: str | None,
-    brand: str | None,
-) -> Tuple[str, str, str, str, str, str, str, str]:
-    dt = _parse_iso_datetime(departure)
-    if dt is not None and dt.tzinfo is not None:
-        dt = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
-    dep_key = dt.isoformat(sep="T", timespec="seconds") if dt is not None else str(departure or "")
-    return (
-        str(airline or "").upper(),
-        str(origin or "").upper(),
-        str(destination or "").upper(),
-        dep_key,
-        str(flight_number or ""),
-        str(cabin or ""),
-        str(fare_basis or ""),
-        str(brand or ""),
-    )
-
-
-def _flight_offer_identity_key_no_brand(key: Tuple[str, str, str, str, str, str, str, str]):
-    return key[:-1]
-
-
 def _load_inserted_offer_id_maps(
     *,
     session,
@@ -1427,25 +1401,7 @@ def _load_inserted_offer_id_maps(
         )
         .all()
     )
-
-    keyed = {}
-    keyed_no_brand = {}
-    for r in rows:
-        k = _flight_offer_identity_key(
-            airline=r.airline,
-            origin=r.origin,
-            destination=r.destination,
-            departure=r.departure,
-            flight_number=r.flight_number,
-            cabin=r.cabin,
-            fare_basis=r.fare_basis,
-            brand=r.brand,
-        )
-        keyed[k] = r.id
-        kb = _flight_offer_identity_key_no_brand(k)
-        if kb not in keyed_no_brand:
-            keyed_no_brand[kb] = r.id
-    return keyed, keyed_no_brand
+    return build_offer_id_lookup_maps(list(rows))
 
 
 def _resolve_return_selectors(args, *, today: datetime.date) -> tuple[list[str], list[int]]:
@@ -2119,7 +2075,13 @@ def main():
                             raw_meta_to_insert = []
                             raw_meta_matched = 0
                             raw_meta_unmatched = 0
-                            offer_id_map, offer_id_map_no_brand = _load_inserted_offer_id_maps(
+                            raw_meta_match_modes = {
+                                "exact": 0,
+                                "no_brand": 0,
+                                "no_fare_basis": 0,
+                                "core": 0,
+                            }
+                            offer_id_lookup_maps = _load_inserted_offer_id_maps(
                                 session=session,
                                 scrape_id=scrape_id,
                                 airline=code,
@@ -2139,7 +2101,7 @@ def main():
                                 )
 
                                 raw_offer = r.get("raw_offer") or {}
-                                identity = _flight_offer_identity_key(
+                                identity = flight_offer_identity_key(
                                     airline=r.get("airline"),
                                     origin=r.get("origin"),
                                     destination=r.get("destination"),
@@ -2149,15 +2111,13 @@ def main():
                                     fare_basis=r.get("fare_basis"),
                                     brand=r.get("brand"),
                                 )
-                                flight_offer_id = offer_id_map.get(identity)
-                                if flight_offer_id is None:
-                                    flight_offer_id = offer_id_map_no_brand.get(
-                                        _flight_offer_identity_key_no_brand(identity)
-                                    )
+                                flight_offer_id, match_mode = resolve_offer_id(identity, offer_id_lookup_maps)
                                 if flight_offer_id is None:
                                     raw_meta_unmatched += 1
                                     continue
                                 raw_meta_matched += 1
+                                if match_mode:
+                                    raw_meta_match_modes[match_mode] = raw_meta_match_modes.get(match_mode, 0) + 1
 
                                 penalty_payload = apply_penalty_inference(
                                     {
@@ -2250,12 +2210,16 @@ def main():
 
 
                         LOG.info(
-                            "[%s] Persisted %d core rows + %d raw-meta rows (matched=%d unmatched=%d)",
+                            "[%s] Persisted %d core rows + %d raw-meta rows (matched=%d unmatched=%d exact=%d no_brand=%d no_fare_basis=%d core=%d)",
                             code,
                             len(core_rows),
                             len(raw_meta_to_insert),
                             raw_meta_matched,
                             raw_meta_unmatched,
+                            raw_meta_match_modes.get("exact", 0),
+                            raw_meta_match_modes.get("no_brand", 0),
+                            raw_meta_match_modes.get("no_fare_basis", 0),
+                            raw_meta_match_modes.get("core", 0),
                         )
 
                         # ----------------------------

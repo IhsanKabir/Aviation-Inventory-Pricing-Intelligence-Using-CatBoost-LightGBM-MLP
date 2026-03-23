@@ -1,8 +1,9 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
 
+import { getApiBaseUrl } from "@/lib/api";
 import { buildReportingExportUrl } from "@/lib/export";
 
 type CycleOption = {
@@ -21,6 +22,25 @@ type DateAvailabilityPoint = {
   row_count: number;
 };
 
+type AvailabilityPayload = {
+  cycle_id: string | null;
+  departure_dates: DateAvailabilityPoint[];
+  return_dates: DateAvailabilityPoint[];
+};
+
+type AvailabilityState = {
+  loading: boolean;
+  endpointMissing: boolean;
+  error?: string;
+  data: AvailabilityPayload;
+};
+
+type RouteOptionsState = {
+  loading: boolean;
+  error?: string;
+  data: RouteOption[];
+};
+
 type ScopeState = {
   cycleId: string;
   airlines: string[];
@@ -37,6 +57,14 @@ type ScopeState = {
 };
 
 const AVAILABILITY_PREVIEW_COUNT = 6;
+const DEFAULT_ROUTE_HINT_COUNT = 16;
+const FILTERED_ROUTE_HINT_COUNT = 24;
+const EMPTY_ROUTE_OPTIONS: RouteOption[] = [];
+const EMPTY_AVAILABILITY: AvailabilityPayload = {
+  cycle_id: null,
+  departure_dates: [],
+  return_dates: []
+};
 
 function normalizeAirportCode(value: string) {
   return value.trim().toUpperCase();
@@ -81,6 +109,71 @@ function buildQueryString(state: ScopeState) {
       }
     }
   }
+
+  return next.toString();
+}
+
+function buildAvailabilityQueryString(state: ScopeState) {
+  const next = new URLSearchParams();
+
+  if (state.cycleId.trim()) {
+    next.set("cycle_id", state.cycleId.trim());
+  }
+  for (const airline of state.airlines) {
+    const normalizedAirline = airline.trim().toUpperCase();
+    if (normalizedAirline) {
+      next.append("airline", normalizedAirline);
+    }
+  }
+  const normalizedOrigin = normalizeAirportCode(state.origin);
+  if (normalizedOrigin) {
+    next.append("origin", normalizedOrigin);
+  }
+  const normalizedDestination = normalizeAirportCode(state.destination);
+  if (normalizedDestination) {
+    next.append("destination", normalizedDestination);
+  }
+  if (state.cabin.trim()) {
+    next.append("cabin", state.cabin.trim());
+  }
+  if (state.tripType.trim()) {
+    next.append("trip_type", state.tripType.trim());
+  }
+
+  return next.toString();
+}
+
+function buildRouteOptionsQueryString(state: ScopeState) {
+  const next = new URLSearchParams();
+
+  if (state.cycleId.trim()) {
+    next.set("cycle_id", state.cycleId.trim());
+  }
+  for (const airline of state.airlines) {
+    const normalizedAirline = airline.trim().toUpperCase();
+    if (normalizedAirline) {
+      next.append("airline", normalizedAirline);
+    }
+  }
+  if (state.cabin.trim()) {
+    next.append("cabin", state.cabin.trim());
+  }
+  if (state.tripType.trim()) {
+    next.append("trip_type", state.tripType.trim());
+  }
+
+  const normalizedOrigin = normalizeAirportCode(state.origin);
+  const normalizedDestination = normalizeAirportCode(state.destination);
+  if (normalizedOrigin) {
+    next.set("origin_prefix", normalizedOrigin);
+  }
+  if (normalizedDestination) {
+    next.set("destination_prefix", normalizedDestination);
+  }
+  next.set(
+    "limit",
+    String(normalizedOrigin || normalizedDestination ? FILTERED_ROUTE_HINT_COUNT : DEFAULT_ROUTE_HINT_COUNT)
+  );
 
   return next.toString();
 }
@@ -137,7 +230,7 @@ function renderAvailabilityTitle(
     summary.firstDate && summary.lastDate && summary.firstDate !== summary.lastDate
       ? `${summary.firstDate} to ${summary.lastDate}`
       : summary.firstDate ?? "Single date";
-  return `${label} · ${summary.totalDates} dates · ${summary.totalRows} rows · ${spanLabel}`;
+  return `${label} | ${summary.totalDates} dates | ${summary.totalRows} rows | ${spanLabel}`;
 }
 
 export function RouteScopeControls({
@@ -145,27 +238,13 @@ export function RouteScopeControls({
   tripScopeLabel,
   cycleOptions,
   airlineOptions,
-  routeOptions,
-  departureDateOptions,
-  returnDateOptions,
-  availabilityOk,
-  availabilityEndpointMissing,
-  availabilityError,
-  selectedReturnDateUnavailable,
-  selectedReturnRangeUnavailable
+  routeOptions = EMPTY_ROUTE_OPTIONS
 }: {
   initialState: ScopeState;
   tripScopeLabel: string;
   cycleOptions: CycleOption[];
   airlineOptions: string[];
-  routeOptions: RouteOption[];
-  departureDateOptions: DateAvailabilityPoint[];
-  returnDateOptions: DateAvailabilityPoint[];
-  availabilityOk: boolean;
-  availabilityEndpointMissing: boolean;
-  availabilityError?: string;
-  selectedReturnDateUnavailable: boolean;
-  selectedReturnRangeUnavailable: boolean;
+  routeOptions?: RouteOption[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -174,6 +253,15 @@ export function RouteScopeControls({
   const [state, setState] = useState<ScopeState>(initialState);
   const [showAllDepartureDates, setShowAllDepartureDates] = useState(false);
   const [showAllReturnDates, setShowAllReturnDates] = useState(false);
+  const [availabilityState, setAvailabilityState] = useState<AvailabilityState>({
+    loading: false,
+    endpointMissing: false,
+    data: EMPTY_AVAILABILITY
+  });
+  const [routeOptionsState, setRouteOptionsState] = useState<RouteOptionsState>({
+    loading: routeOptions.length === 0,
+    data: routeOptions
+  });
 
   const syncKey = useMemo(() => JSON.stringify(initialState), [initialState]);
 
@@ -183,7 +271,17 @@ export function RouteScopeControls({
     setShowAllReturnDates(false);
   }, [syncKey, initialState]);
 
+  useEffect(() => {
+    setRouteOptionsState({
+      loading: routeOptions.length === 0,
+      data: routeOptions
+    });
+  }, [routeOptions]);
+
   const queryString = useMemo(() => buildQueryString(state), [state]);
+  const routeOptionsQueryString = useMemo(() => buildRouteOptionsQueryString(state), [state]);
+  const deferredRouteOptionsQueryString = useDeferredValue(routeOptionsQueryString);
+  const liveRouteOptions = routeOptionsState.data;
   const airportCodesAreValid = useMemo(
     () => isAirportScopeReady(state.origin) && isAirportScopeReady(state.destination),
     [state.destination, state.origin]
@@ -191,7 +289,7 @@ export function RouteScopeControls({
   const airportOptions = useMemo(() => {
     const origins = new Set<string>();
     const destinations = new Set<string>();
-    for (const item of routeOptions) {
+    for (const item of liveRouteOptions) {
       origins.add(item.origin);
       destinations.add(item.destination);
     }
@@ -199,7 +297,7 @@ export function RouteScopeControls({
       origins: Array.from(origins).sort(),
       destinations: Array.from(destinations).sort()
     };
-  }, [routeOptions]);
+  }, [liveRouteOptions]);
   const originSuggestions = useMemo(
     () => filterAirportSuggestions(airportOptions.origins, state.origin),
     [airportOptions.origins, state.origin]
@@ -211,7 +309,7 @@ export function RouteScopeControls({
   const filteredRouteOptions = useMemo(() => {
     const originFilter = normalizeAirportCode(state.origin);
     const destinationFilter = normalizeAirportCode(state.destination);
-    const filtered = routeOptions.filter((item) => {
+    const filtered = liveRouteOptions.filter((item) => {
       if (originFilter && !item.origin.startsWith(originFilter)) {
         return false;
       }
@@ -220,11 +318,11 @@ export function RouteScopeControls({
       }
       return true;
     });
-    return filtered.slice(0, originFilter || destinationFilter ? 24 : 16);
-  }, [routeOptions, state.destination, state.origin]);
+    return filtered.slice(0, originFilter || destinationFilter ? FILTERED_ROUTE_HINT_COUNT : DEFAULT_ROUTE_HINT_COUNT);
+  }, [liveRouteOptions, state.destination, state.origin]);
   const exactRouteMatch = useMemo(
-    () => hasExactRouteMatch(routeOptions, state.origin, state.destination),
-    [routeOptions, state.destination, state.origin]
+    () => hasExactRouteMatch(liveRouteOptions, state.origin, state.destination),
+    [liveRouteOptions, state.destination, state.origin]
   );
   const scopeIsReady = useMemo(() => {
     if (!airportCodesAreValid) {
@@ -259,6 +357,13 @@ export function RouteScopeControls({
     };
     return buildReportingExportUrl(params, ["routes"]);
   }, [state]);
+  const availabilityQueryString = useMemo(
+    () => (scopeIsReady ? buildAvailabilityQueryString(state) : null),
+    [scopeIsReady, state]
+  );
+  const deferredAvailabilityQueryString = useDeferredValue(availabilityQueryString);
+  const departureDateOptions = availabilityState.data.departure_dates;
+  const returnDateOptions = availabilityState.data.return_dates;
   const departureSummary = useMemo(
     () => buildAvailabilitySummary(departureDateOptions),
     [departureDateOptions]
@@ -270,6 +375,135 @@ export function RouteScopeControls({
   const visibleReturnDates = showAllReturnDates
     ? returnDateOptions
     : returnDateOptions.slice(0, AVAILABILITY_PREVIEW_COUNT);
+  const returnDateMap = useMemo(
+    () => new Map(returnDateOptions.map((item) => [item.date, item.row_count])),
+    [returnDateOptions]
+  );
+  const availabilityIdle = !scopeIsReady;
+  const availabilityOk =
+    !availabilityIdle && !availabilityState.loading && !availabilityState.endpointMissing && !availabilityState.error;
+  const selectedReturnDateUnavailable =
+    availabilityOk &&
+    state.tripType === "RT" &&
+    state.returnScope === "exact" &&
+    Boolean(state.returnDate) &&
+    !returnDateMap.has(state.returnDate);
+  const selectedReturnRangeUnavailable =
+    availabilityOk &&
+    state.tripType === "RT" &&
+    state.returnScope === "range" &&
+    Boolean(state.returnDateStart || state.returnDateEnd) &&
+    !returnDateOptions.some((item) => {
+      if (state.returnDateStart && item.date < state.returnDateStart) {
+        return false;
+      }
+      if (state.returnDateEnd && item.date > state.returnDateEnd) {
+        return false;
+      }
+      return true;
+    });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setRouteOptionsState((current) => ({
+      ...current,
+      loading: true,
+      error: undefined
+    }));
+
+    const path = deferredRouteOptionsQueryString
+      ? `/api/v1/meta/routes?${deferredRouteOptionsQueryString}`
+      : "/api/v1/meta/routes";
+
+    fetch(`${getApiBaseUrl()}${path}`, {
+      cache: "no-store",
+      signal: controller.signal
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`);
+        }
+        const payload = (await response.json()) as { items?: RouteOption[] };
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        setRouteOptionsState({
+          loading: false,
+          error: undefined,
+          data: items
+        });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setRouteOptionsState({
+          loading: false,
+          error: error instanceof Error ? error.message : "Unable to load route suggestions.",
+          data: []
+        });
+      });
+
+    return () => controller.abort();
+  }, [deferredRouteOptionsQueryString]);
+
+  useEffect(() => {
+    if (!scopeIsReady || deferredAvailabilityQueryString === null) {
+      setAvailabilityState({
+        loading: false,
+        endpointMissing: false,
+        data: EMPTY_AVAILABILITY
+      });
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    setAvailabilityState((current) => ({
+      ...current,
+      loading: true,
+      endpointMissing: false,
+      error: undefined
+    }));
+
+    const path = deferredAvailabilityQueryString
+      ? `/api/v1/reporting/route-date-availability?${deferredAvailabilityQueryString}`
+      : "/api/v1/reporting/route-date-availability";
+
+    fetch(`${getApiBaseUrl()}${path}`, {
+      cache: "no-store",
+      signal: controller.signal
+    })
+      .then(async (response) => {
+        if (response.status === 404) {
+          setAvailabilityState({
+            loading: false,
+            endpointMissing: true,
+            data: EMPTY_AVAILABILITY
+          });
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`);
+        }
+        const data = (await response.json()) as AvailabilityPayload;
+        setAvailabilityState({
+          loading: false,
+          endpointMissing: false,
+          data
+        });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setAvailabilityState({
+          loading: false,
+          endpointMissing: false,
+          error: error instanceof Error ? error.message : "Unable to inspect collected dates.",
+          data: EMPTY_AVAILABILITY
+        });
+      });
+
+    return () => controller.abort();
+  }, [deferredAvailabilityQueryString, scopeIsReady]);
 
   useEffect(() => {
     if (!scopeIsReady) {
@@ -539,6 +773,11 @@ export function RouteScopeControls({
           </div>
         </div>
       </div>
+      {routeOptionsState.loading ? (
+        <p className="mono">Refreshing route suggestions for the current airline, cabin, and trip filters...</p>
+      ) : routeOptionsState.error ? (
+        <div className="status-banner warn">Route suggestions are temporarily unavailable: {routeOptionsState.error}</div>
+      ) : null}
 
       <div className="button-row">
         <button className="button-link" data-pending={isPending} onClick={applyImmediately} type="button">
@@ -555,13 +794,18 @@ export function RouteScopeControls({
       <p className="page-copy" style={{ marginTop: "0.25rem" }}>
         Trip scope: {tripScopeLabel}
       </p>
+      {availabilityState.loading ? (
+        <p className="mono">Refreshing collected dates for the current scope...</p>
+      ) : null}
 
       <div className="route-availability-grid">
         <div className="filter-group">
           <div className="filter-label">
             {renderAvailabilityTitle("Collected departure dates", departureSummary)}
           </div>
-          {availabilityOk ? (
+          {availabilityIdle ? (
+            <div className="empty-state">Collected dates will appear once the route scope is ready.</div>
+          ) : availabilityOk ? (
             departureDateOptions.length ? (
               <div className="availability-section">
                 <div className="chip-row">
@@ -586,11 +830,13 @@ export function RouteScopeControls({
             ) : (
               <div className="empty-state">No collected departure dates for the current scope.</div>
             )
-          ) : availabilityEndpointMissing ? (
+          ) : availabilityState.loading ? (
+            <div className="empty-state">Loading collected departure dates for the current scope...</div>
+          ) : availabilityState.endpointMissing ? (
             <div className="empty-state">Date availability is not available on the current API revision yet.</div>
           ) : (
             <div className="empty-state error-state">
-              Availability error: {availabilityError ?? "Unable to inspect collected dates."}
+              Availability error: {availabilityState.error ?? "Unable to inspect collected dates."}
             </div>
           )}
         </div>
@@ -600,7 +846,9 @@ export function RouteScopeControls({
             <div className="filter-label">
               {renderAvailabilityTitle("Collected return dates", returnSummary)}
             </div>
-            {availabilityOk ? (
+            {availabilityIdle ? (
+              <div className="empty-state">Collected return dates will appear once the route scope is ready.</div>
+            ) : availabilityOk ? (
               returnDateOptions.length ? (
                 <div className="availability-section">
                   <div className="chip-row">
@@ -625,11 +873,13 @@ export function RouteScopeControls({
               ) : (
                 <div className="empty-state">No collected round-trip return dates for the current scope.</div>
               )
-            ) : availabilityEndpointMissing ? (
+            ) : availabilityState.loading ? (
+              <div className="empty-state">Loading collected return dates for the current scope...</div>
+            ) : availabilityState.endpointMissing ? (
               <div className="empty-state">Date availability is not available on the current API revision yet.</div>
             ) : (
               <div className="empty-state error-state">
-                Availability error: {availabilityError ?? "Unable to inspect collected return dates."}
+                Availability error: {availabilityState.error ?? "Unable to inspect collected return dates."}
               </div>
             )}
           </div>
@@ -670,6 +920,7 @@ export function RouteScopeControls({
       {airportCodesAreValid &&
       normalizeAirportCode(state.origin) &&
       normalizeAirportCode(state.destination) &&
+      !routeOptionsState.loading &&
       !exactRouteMatch ? (
         <div className="status-banner warn">
           No exact route match found for the entered origin and destination. Pick one of the matching route chips.
@@ -678,3 +929,4 @@ export function RouteScopeControls({
     </div>
   );
 }
+

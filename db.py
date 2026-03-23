@@ -70,9 +70,14 @@ def _ensure_schema_extensions():
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS fare_changeable BOOLEAN",
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS fare_refundable BOOLEAN",
         "ALTER TABLE IF EXISTS flight_offer_raw_meta ADD COLUMN IF NOT EXISTS via_airports VARCHAR",
+        "CREATE INDEX IF NOT EXISTS ix_flight_offers_scrape_route_cabin_departure ON flight_offers (scrape_id, origin, destination, cabin, departure)",
+        "CREATE INDEX IF NOT EXISTS ix_flight_offers_scrape_airline_cabin_route ON flight_offers (scrape_id, airline, cabin, origin, destination)",
+        "CREATE INDEX IF NOT EXISTS ix_flight_offers_route_departure ON flight_offers (origin, destination, departure)",
         "CREATE INDEX IF NOT EXISTS ix_flight_offer_raw_meta_raw_offer_fingerprint ON flight_offer_raw_meta (raw_offer_fingerprint)",
         "CREATE INDEX IF NOT EXISTS ix_flight_offer_raw_meta_probe_group_id ON flight_offer_raw_meta (probe_group_id)",
         "CREATE INDEX IF NOT EXISTS ix_flight_offer_raw_meta_trip_request_id ON flight_offer_raw_meta (trip_request_id)",
+        "CREATE INDEX IF NOT EXISTS ix_flight_offer_raw_meta_offer_trip_filters ON flight_offer_raw_meta (flight_offer_id, search_trip_type, requested_return_date)",
+        "CREATE INDEX IF NOT EXISTS ix_flight_offer_raw_meta_trip_scope_lookup ON flight_offer_raw_meta (search_trip_type, trip_origin, trip_destination, requested_return_date, flight_offer_id)",
     ]
     with engine.begin() as conn:
         for stmt in ddl:

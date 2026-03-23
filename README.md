@@ -127,6 +127,18 @@ Useful controls:
 .\.venv\Scripts\python.exe run_pipeline.py --fail-on-bigquery-sync-error
 ```
 
+Install finish-driven ingestion autorun:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scheduler\install_ingestion_autorun.ps1
+```
+
+Disable ingestion autorun:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scheduler\disable_ingestion_autorun.ps1
+```
+
 Generate reports only:
 
 ```powershell
