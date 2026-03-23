@@ -139,6 +139,32 @@ class PredictionMonitor:
         key = f"{route}_{target}"
         self.baselines[key] = baseline_metrics
 
+    def _calculate_baseline_metrics(
+        self,
+        route: str,
+        target: str,
+        *,
+        recent_window_days: int,
+        reference_time: Optional[datetime] = None,
+    ) -> Dict[str, float]:
+        """Calculate a baseline window that does not overlap the recent comparison window."""
+        if reference_time is None:
+            reference_time = datetime.now()
+
+        recent_cutoff = reference_time - timedelta(days=recent_window_days)
+        baseline_start = recent_cutoff - timedelta(days=self.baseline_window_days)
+        baseline_metrics = self.calculate_metrics(
+            route,
+            target,
+            start_date=baseline_start,
+            end_date=recent_cutoff,
+        )
+
+        if baseline_metrics.get('count', 0) > 0:
+            return baseline_metrics
+
+        return self.calculate_metrics(route, target, end_date=recent_cutoff)
+
     def check_for_degradation(self, route: str, target: str, window_days: int = 7) -> Dict[str, any]:
         """
         Check if recent performance has degraded compared to baseline.
@@ -159,7 +185,11 @@ class PredictionMonitor:
         # Get baseline
         key = f"{route}_{target}"
         if key not in self.baselines:
-            self.update_baseline(route, target)
+            self.baselines[key] = self._calculate_baseline_metrics(
+                route,
+                target,
+                recent_window_days=window_days,
+            )
 
         baseline = self.baselines.get(key, {})
         baseline_mae = baseline.get('mae', np.nan)

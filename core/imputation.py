@@ -10,10 +10,29 @@ Implements multiple imputation strategies:
 
 import pandas as pd
 import numpy as np
-from sklearn.impute import KNNImputer
-from sklearn.preprocessing import LabelEncoder
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional
 import warnings
+
+try:
+    from sklearn.impute import KNNImputer
+except ModuleNotFoundError:
+    class KNNImputer:  # type: ignore[override]
+        """Lightweight fallback when scikit-learn is unavailable."""
+
+        def __init__(self, n_neighbors: int = 5, weights: str = "distance"):
+            self.n_neighbors = n_neighbors
+            self.weights = weights
+
+        def fit_transform(self, values):
+            frame = pd.DataFrame(values).copy()
+            for column in frame.columns:
+                series = frame[column]
+                if series.isna().any():
+                    fill_value = series.mean()
+                    if pd.isna(fill_value):
+                        fill_value = 0.0
+                    frame[column] = series.fillna(fill_value)
+            return frame.to_numpy()
 
 
 class RobustImputer:
@@ -213,14 +232,15 @@ def impute_with_similar_routes(df: pd.DataFrame,
             )
             similar_data = df[similar_mask]
 
-            if len(similar_data) >= n_neighbors:
-                # Use KNN imputation with similar routes
-                imputer = RobustImputer(n_neighbors=n_neighbors, warn_threshold=0.5)
+            # Fall back to route-local/global imputation when not enough similar routes exist.
+            imputer = RobustImputer(n_neighbors=n_neighbors, warn_threshold=0.5)
+            if len(similar_data) > 0:
                 combined_data = pd.concat([route_data, similar_data])
                 imputed_combined = imputer.fit_transform(combined_data, numeric_cols=numeric_cols)
-
-                # Update original dataframe with imputed route data
                 df.loc[route_mask, numeric_cols] = imputed_combined.iloc[:len(route_data)][numeric_cols].values
+            else:
+                imputed_route = imputer.fit_transform(route_data, numeric_cols=numeric_cols)
+                df.loc[route_mask, numeric_cols] = imputed_route[numeric_cols].values
 
     df = df.drop(columns=['_route_id'])
     return df
