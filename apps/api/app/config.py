@@ -15,6 +15,7 @@ class Settings:
     api_title: str
     api_version: str
     cors_origins: tuple[str, ...]
+    cors_origin_regex: str | None
     default_limit: int
     max_limit: int
     gzip_enabled: bool
@@ -53,9 +54,10 @@ def load_settings() -> Settings:
         cors_origins=_split_csv(
             os.getenv(
                 "API_CORS_ORIGINS",
-                "http://localhost:3000,http://127.0.0.1:3000",
+                "http://localhost:3000,http://127.0.0.1:3000,https://aviation-inventory-pricing-intellig.vercel.app",
             )
         ),
+        cors_origin_regex=(os.getenv("API_CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app").strip() or None),
         default_limit=default_limit,
         max_limit=max_limit,
         gzip_enabled=gzip_enabled,
