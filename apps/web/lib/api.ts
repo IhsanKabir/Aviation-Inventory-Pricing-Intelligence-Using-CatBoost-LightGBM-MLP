@@ -160,6 +160,9 @@ export type RouteMonitorMatrixDateGroup = {
   departure_date: string;
   day_label: string;
   captures: RouteMonitorMatrixCapture[];
+  capture_count?: number;
+  captures_loaded?: number;
+  history_complete?: boolean;
 };
 
 export type RouteMonitorMatrixRoute = {
@@ -556,9 +559,10 @@ type FetchResult<T> = {
 type QueryValue =
   | string
   | number
+  | boolean
   | null
   | undefined
-  | Array<string | number | null | undefined>;
+  | Array<string | number | boolean | null | undefined>;
 
 export function getApiBaseUrl(): string {
   const candidate =
@@ -702,8 +706,10 @@ export async function getRouteMonitorMatrixPayload(
     returnDate?: string;
     returnDateStart?: string;
     returnDateEnd?: string;
+    departureDate?: string;
     routeLimit?: number;
     historyLimit?: number;
+    compactHistory?: boolean;
   }
 ) {
   return fetchJsonWithRevalidate<RouteMonitorMatrixPayload>(
@@ -717,8 +723,10 @@ export async function getRouteMonitorMatrixPayload(
       return_date: query.returnDate,
       return_date_start: query.returnDateStart,
       return_date_end: query.returnDateEnd,
+      departure_date: query.departureDate,
       route_limit: query.routeLimit,
-      history_limit: query.historyLimit
+      history_limit: query.historyLimit,
+      compact_history: query.compactHistory
     }),
     60
   );

@@ -194,7 +194,8 @@ export async function RouteMonitorSection({
     returnDateStart,
     returnDateEnd,
     routeLimit,
-    historyLimit
+    historyLimit,
+    compactHistory: true
   });
 
   const routeBlocks = matrix.data?.routes ?? [];
@@ -261,7 +262,22 @@ export async function RouteMonitorSection({
         ) : routeBlocks.length === 0 ? (
           <div className="empty-state">No route blocks matched the current scope.</div>
         ) : (
-          <RouteMonitorMatrix initialAirlines={selectedAirlines} payload={matrix.data!} />
+          <RouteMonitorMatrix
+            initialAirlines={selectedAirlines}
+            payload={matrix.data!}
+            scopeQuery={{
+              cycleId,
+              airlines: selectedAirlines,
+              origin,
+              destination,
+              cabin,
+              tripType,
+              returnDate,
+              returnDateStart,
+              returnDateEnd,
+              historyLimit
+            }}
+          />
         )}
       </DataPanel>
     </>

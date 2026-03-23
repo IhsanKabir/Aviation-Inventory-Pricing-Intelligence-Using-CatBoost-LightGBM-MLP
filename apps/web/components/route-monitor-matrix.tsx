@@ -6,13 +6,27 @@ import { Fragment, useMemo, useState } from "react";
 import type {
   RouteMonitorFlightGroup,
   RouteMonitorMatrixCell,
+  RouteMonitorMatrixDateGroup,
   RouteMonitorMatrixPayload,
   RouteMonitorMatrixRoute
 } from "@/lib/api";
+import { getRouteMonitorMatrixPayload } from "@/lib/api";
 import { formatDhakaDate, formatDhakaDateTime, formatMoney, formatPercent, formatRouteGeo, formatRouteType } from "@/lib/format";
 
 type ViewMode = "context" | "strict";
 type SignalKey = "increase" | "decrease" | "new" | "sold_out" | "unknown";
+type RouteMonitorScopeQuery = {
+  cycleId?: string;
+  airlines?: string[];
+  origin?: string;
+  destination?: string;
+  cabin?: string;
+  tripType: string;
+  returnDate?: string;
+  returnDateStart?: string;
+  returnDateEnd?: string;
+  historyLimit: number;
+};
 
 const SIGNAL_LABELS: Record<SignalKey, string> = {
   increase: "Increase",
@@ -255,17 +269,41 @@ function routeHasLoadData(route: RouteMonitorMatrixRoute) {
   );
 }
 
+function dateGroupKey(route: RouteMonitorMatrixRoute, departureDate: string) {
+  return [
+    route.route_key,
+    route.search_trip_type ?? "OW",
+    route.trip_pair_key ?? "",
+    route.requested_return_date ?? "",
+    departureDate
+  ].join("|");
+}
+
+function routeMatchesDrilldown(target: RouteMonitorMatrixRoute, candidate: RouteMonitorMatrixRoute) {
+  return (
+    candidate.route_key === target.route_key &&
+    (candidate.search_trip_type ?? "OW") === (target.search_trip_type ?? "OW") &&
+    (candidate.trip_pair_key ?? "") === (target.trip_pair_key ?? "") &&
+    (candidate.requested_return_date ?? "") === (target.requested_return_date ?? "")
+  );
+}
+
 export function RouteMonitorMatrix({
   payload,
-  initialAirlines = []
+  initialAirlines = [],
+  scopeQuery
 }: {
   payload: RouteMonitorMatrixPayload;
   initialAirlines?: string[];
+  scopeQuery: RouteMonitorScopeQuery;
 }) {
   const [selectedAirlines, setSelectedAirlines] = useState<string[]>(initialAirlines);
   const [selectedSignals, setSelectedSignals] = useState<SignalKey[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("context");
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+  const [loadedDateGroups, setLoadedDateGroups] = useState<Record<string, RouteMonitorMatrixDateGroup>>({});
+  const [loadingRows, setLoadingRows] = useState<Record<string, boolean>>({});
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
 
   const availableAirlines = useMemo(() => {
     const codes = new Set<string>();
@@ -295,7 +333,8 @@ export function RouteMonitorMatrix({
         const visibleFlightSet = new Set(sortedFlightGroups.map((item) => item.flight_group_id));
         const dateGroups = route.date_groups
           .map((dateGroup) => {
-            const captures = dateGroup.captures
+            const effectiveDateGroup = loadedDateGroups[dateGroupKey(route, dateGroup.departure_date)] ?? dateGroup;
+            const captures = effectiveDateGroup.captures
               .map((capture) => ({
                 ...capture,
                 cells: capture.cells.filter(
@@ -313,7 +352,7 @@ export function RouteMonitorMatrix({
               return null;
             }
 
-            return { ...dateGroup, captures };
+            return { ...effectiveDateGroup, captures };
           })
           .filter(Boolean) as RouteMonitorMatrixRoute["date_groups"];
 
@@ -338,7 +377,7 @@ export function RouteMonitorMatrix({
         };
       })
       .filter(Boolean) as RouteMonitorMatrixRoute[];
-  }, [payload.routes, selectedAirlines, selectedSignals, viewMode]);
+  }, [loadedDateGroups, payload.routes, selectedAirlines, selectedSignals, viewMode]);
 
   const visibleSections = useMemo(() => {
     const sections = new Map<
@@ -417,8 +456,81 @@ export function RouteMonitorMatrix({
     );
   }
 
-  function toggleRow(key: string) {
-    setExpandedRows((current) => ({ ...current, [key]: !current[key] }));
+  async function loadRowHistory(route: RouteMonitorMatrixRoute, dateGroup: RouteMonitorMatrixDateGroup, rowKey: string) {
+    setLoadingRows((current) => ({ ...current, [rowKey]: true }));
+    setRowErrors((current) => {
+      const next = { ...current };
+      delete next[rowKey];
+      return next;
+    });
+
+    try {
+      const drilldown = await getRouteMonitorMatrixPayload({
+        cycleId: scopeQuery.cycleId,
+        airlines: scopeQuery.airlines?.length ? scopeQuery.airlines : undefined,
+        origins: [route.origin],
+        destinations: [route.destination],
+        cabins: scopeQuery.cabin ? [scopeQuery.cabin] : undefined,
+        tripTypes: [route.search_trip_type ?? scopeQuery.tripType ?? "OW"],
+        returnDate:
+          (route.search_trip_type ?? scopeQuery.tripType ?? "OW") === "RT" && route.requested_return_date
+            ? route.requested_return_date
+            : scopeQuery.returnDate,
+        returnDateStart:
+          (route.search_trip_type ?? scopeQuery.tripType ?? "OW") === "RT" && route.requested_return_date
+            ? undefined
+            : scopeQuery.returnDateStart,
+        returnDateEnd:
+          (route.search_trip_type ?? scopeQuery.tripType ?? "OW") === "RT" && route.requested_return_date
+            ? undefined
+            : scopeQuery.returnDateEnd,
+        departureDate: dateGroup.departure_date,
+        routeLimit: 1,
+        historyLimit: scopeQuery.historyLimit,
+        compactHistory: false
+      });
+
+      if (!drilldown.ok || !drilldown.data) {
+        throw new Error(drilldown.error ?? "Unable to load full capture history.");
+      }
+
+      const matchedRoute =
+        drilldown.data.routes.find((candidate) => routeMatchesDrilldown(route, candidate)) ??
+        drilldown.data.routes.find((candidate) => candidate.route_key === route.route_key);
+      const matchedDateGroup = matchedRoute?.date_groups.find((candidate) => candidate.departure_date === dateGroup.departure_date);
+
+      if (!matchedDateGroup) {
+        throw new Error("No detailed capture history was returned for this departure date.");
+      }
+
+      setLoadedDateGroups((current) => ({
+        ...current,
+        [rowKey]: matchedDateGroup
+      }));
+    } catch (error) {
+      setRowErrors((current) => ({
+        ...current,
+        [rowKey]: error instanceof Error ? error.message : "Unable to load full capture history."
+      }));
+    } finally {
+      setLoadingRows((current) => ({ ...current, [rowKey]: false }));
+    }
+  }
+
+  function toggleRow(route: RouteMonitorMatrixRoute, dateGroup: RouteMonitorMatrixDateGroup) {
+    const rowKey = dateGroupKey(route, dateGroup.departure_date);
+    const isExpanded = Boolean(expandedRows[rowKey]);
+    if (isExpanded) {
+      setExpandedRows((current) => ({ ...current, [rowKey]: false }));
+      return;
+    }
+
+    setExpandedRows((current) => ({ ...current, [rowKey]: true }));
+    const effectiveDateGroup = loadedDateGroups[rowKey] ?? dateGroup;
+    if (loadingRows[rowKey] || effectiveDateGroup.history_complete) {
+      return;
+    }
+    void loadRowHistory(route, effectiveDateGroup, rowKey);
   }
 
   function clearInteractiveFilters() {
@@ -648,15 +760,20 @@ export function RouteMonitorMatrix({
                             </thead>
                             <tbody>
                               {route.date_groups.map((dateGroup) => {
-                                const rowKey = `${route.route_key}-${dateGroup.departure_date}`;
+                                const rowKey = dateGroupKey(route, dateGroup.departure_date);
+                                const effectiveDateGroup = loadedDateGroups[rowKey] ?? dateGroup;
                                 const expanded = Boolean(expandedRows[rowKey]);
-                                const visibleCaptures = expanded ? dateGroup.captures : dateGroup.captures.slice(0, 1);
+                                const isLoadingHistory = Boolean(loadingRows[rowKey]);
+                                const visibleCaptures = expanded ? effectiveDateGroup.captures : effectiveDateGroup.captures.slice(0, 1);
+                                const captureCount = effectiveDateGroup.capture_count ?? effectiveDateGroup.captures.length;
+                                const canExpandHistory = captureCount > 1;
+                                const rowError = rowErrors[rowKey];
 
                                 return visibleCaptures.map((capture, captureIndex) => {
                                   const showDateMeta = captureIndex === 0;
                                   const expandLabel =
-                                    dateGroup.captures.length > 1
-                                      ? `${expanded ? "[-]" : `[+${dateGroup.captures.length - 1}]`} ${formatDhakaDateTime(capture.captured_at_utc)}`
+                                    canExpandHistory
+                                      ? `${expanded ? "[-]" : `[+${Math.max(captureCount - 1, 0)}]`} ${isLoadingHistory ? "Loading history..." : formatDhakaDateTime(capture.captured_at_utc)}`
                                       : formatDhakaDateTime(capture.captured_at_utc);
 
                                   return (
@@ -667,15 +784,22 @@ export function RouteMonitorMatrix({
                                       key={`${rowKey}-${capture.captured_at_utc}`}
                                     >
                                       <td className="sticky-col sticky-route-meta route-value">{showDateMeta ? dateGroup.departure_date : ""}</td>
-                                      <td className="sticky-col sticky-route-meta second route-value">{showDateMeta ? dateGroup.day_label : ""}</td>
+                                      <td className="sticky-col sticky-route-meta second route-value">{showDateMeta ? effectiveDateGroup.day_label : ""}</td>
                                       <td className="sticky-col sticky-route-meta third route-value">
-                                        {showDateMeta && dateGroup.captures.length > 1 ? (
-                                          <button className="history-toggle" data-expanded={expanded} onClick={() => toggleRow(rowKey)} type="button">
+                                        {showDateMeta && canExpandHistory ? (
+                                          <button
+                                            className="history-toggle"
+                                            data-expanded={expanded}
+                                            disabled={isLoadingHistory}
+                                            onClick={() => toggleRow(route, effectiveDateGroup)}
+                                            type="button"
+                                          >
                                             {expandLabel}
                                           </button>
                                         ) : (
                                           expandLabel
                                         )}
+                                        {showDateMeta && rowError ? <div className="fare-cell-meta">{rowError}</div> : null}
                                       </td>
                                       {route.flight_groups.flatMap((flight) => {
                                         const theme = themeForAirline(flight.airline);

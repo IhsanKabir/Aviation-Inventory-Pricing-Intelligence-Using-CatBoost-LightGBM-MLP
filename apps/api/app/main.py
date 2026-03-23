@@ -186,8 +186,10 @@ def route_monitor_matrix(
     return_date: date | None = None,
     return_date_start: date | None = None,
     return_date_end: date | None = None,
+    departure_date: date | None = None,
     route_limit: int = Query(default=8, ge=1, le=24),
     history_limit: int = Query(default=12, ge=1, le=48),
+    compact_history: bool = Query(default=True),
     response: Response = None,
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
@@ -203,8 +205,10 @@ def route_monitor_matrix(
         return_date=return_date,
         return_date_start=return_date_start,
         return_date_end=return_date_end,
+        departure_date=departure_date,
         route_limit=route_limit,
         history_limit=history_limit,
+        compact_history=compact_history,
     )
     if response is not None:
         _apply_reporting_metric_headers(response, reporting.get_request_metrics(), "route_matrix")

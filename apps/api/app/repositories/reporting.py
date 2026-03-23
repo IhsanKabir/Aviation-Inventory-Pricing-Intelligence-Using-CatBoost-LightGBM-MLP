@@ -132,6 +132,22 @@ def _route_matrix_history_cycle_limit(history_limit: int) -> int:
     return max(int(history_limit or 0) + 2, ROUTE_MATRIX_MIN_HISTORY_CYCLES)
 
 
+def _route_matrix_capture_display_limit(history_limit: int, compact_history: bool) -> int:
+    normalized_limit = max(int(history_limit or 0), 1)
+    if not compact_history:
+        return normalized_limit
+    return min(normalized_limit, 2)
+
+
+def _route_matrix_cycle_fetch_limit(history_limit: int, compact_history: bool) -> int:
+    if not compact_history:
+        return _route_matrix_history_cycle_limit(history_limit)
+    # The collapsed matrix only shows the latest two capture slices, so we can
+    # keep the cycle window tighter on first load and defer the deeper scan to
+    # the row-level drilldown request.
+    return max(_route_matrix_capture_display_limit(history_limit, compact_history) + 2, 6)
+
+
 def clear_request_metrics() -> None:
     _REQUEST_METRICS.set({})
 
@@ -2160,6 +2176,7 @@ def _build_route_monitor_matrix_from_aggregates(
     current_rows: Sequence[dict[str, Any]],
     history_rows: Sequence[dict[str, Any]],
     history_limit: int,
+    compact_history: bool = True,
 ) -> dict[str, Any]:
     if not current_rows:
         return {"cycle_id": resolved_cycle_id, "routes": []}
@@ -2281,9 +2298,8 @@ def _build_route_monitor_matrix_from_aggregates(
         }
         date_groups: list[dict[str, Any]] = []
         for dep_date in sorted(route_date_map.get(route_key, set())):
-            capture_times = sorted(captures_by_route_date.get((route_key, dep_date), set()), reverse=True)
-            if history_limit > 0:
-                capture_times = capture_times[:history_limit]
+            all_capture_times = sorted(captures_by_route_date.get((route_key, dep_date), set()), reverse=True)
+            capture_times = all_capture_times[: _route_matrix_capture_display_limit(history_limit, compact_history)]
             captures: list[dict[str, Any]] = []
             for captured_at_iso in capture_times:
                 cells = sorted(
@@ -2301,6 +2317,9 @@ def _build_route_monitor_matrix_from_aggregates(
                     "departure_date": dep_date,
                     "day_label": _departure_day_label(dep_date),
                     "captures": captures,
+                    "capture_count": len(all_capture_times),
+                    "captures_loaded": len(capture_times),
+                    "history_complete": len(capture_times) >= len(all_capture_times),
                 }
             )
 
@@ -2354,8 +2373,10 @@ def _get_route_monitor_matrix_from_bigquery(
     return_date: date | None = None,
     return_date_start: date | None = None,
     return_date_end: date | None = None,
+    departure_date: date | None = None,
     route_limit: int = 8,
     history_limit: int = 12,
+    compact_history: bool = True,
 ) -> dict[str, Any]:
     resolved_cycle_id = _resolve_cycle_id_bigquery(cycle_id)
     if not resolved_cycle_id:
@@ -2399,6 +2420,9 @@ def _get_route_monitor_matrix_from_bigquery(
         if destinations:
             route_filters.append("trip_destination IN UNNEST(@trip_destinations)")
             route_params.append(bigquery.ArrayQueryParameter("trip_destinations", "STRING", _normalize_codes(destinations)))
+    if departure_date:
+        route_filters.append("departure_date = @departure_date")
+        route_params.append(bigquery.ScalarQueryParameter("departure_date", "DATE", departure_date))
 
     selected_routes = _serialize_warehouse_rows(
         _run_bigquery_query(
@@ -2445,6 +2469,9 @@ def _get_route_monitor_matrix_from_bigquery(
         if return_date_end:
             current_filters.append("requested_return_date <= @return_date_end")
             current_params.append(bigquery.ScalarQueryParameter("return_date_end", "DATE", return_date_end))
+    if departure_date:
+        current_filters.append("departure_date = @departure_date")
+        current_params.append(bigquery.ScalarQueryParameter("departure_date", "DATE", departure_date))
 
     current_rows = _serialize_warehouse_rows(
         _run_bigquery_query(
@@ -2559,6 +2586,11 @@ def _get_route_monitor_matrix_from_bigquery(
         bigquery.ArrayQueryParameter("route_keys", "STRING", route_keys),
         bigquery.ScalarQueryParameter("min_date", "DATE", min_date),
         bigquery.ScalarQueryParameter("max_date", "DATE", max_date),
+        bigquery.ScalarQueryParameter(
+            "history_capture_limit",
+            "INT64",
+            _route_matrix_capture_display_limit(history_limit, compact_history),
+        ),
     ]
     history_filters = [
         "route_key IN UNNEST(@route_keys)",
@@ -2584,6 +2616,9 @@ def _get_route_monitor_matrix_from_bigquery(
         if return_date_end:
             history_filters.append("requested_return_date <= @return_date_end")
             history_params.append(bigquery.ScalarQueryParameter("return_date_end", "DATE", return_date_end))
+    if departure_date:
+        history_filters.append("departure_date = @departure_date")
+        history_params.append(bigquery.ScalarQueryParameter("departure_date", "DATE", departure_date))
 
     history_rows = _serialize_warehouse_rows(
         _run_bigquery_query(
@@ -2614,76 +2649,124 @@ def _get_route_monitor_matrix_from_bigquery(
                 cycle_id, captured_at_utc, airline, origin, destination,
                 flight_number, departure_utc, cabin
             )
+            aggregated_history AS (
+              SELECT
+                ho.cycle_id,
+                ho.captured_at_utc,
+                ho.airline,
+                ho.origin,
+                ho.destination,
+                ho.route_key,
+                ho.flight_number,
+                ho.departure_utc,
+                ho.departure_date,
+                FORMAT_TIMESTAMP('%H:%M', ho.departure_utc) AS departure_time,
+                ho.cabin,
+                COALESCE(ho.aircraft, '') AS aircraft,
+                ho.search_trip_type,
+                ho.requested_outbound_date,
+                ho.requested_return_date,
+                ho.trip_duration_days,
+                ho.trip_origin,
+                ho.trip_destination,
+                ho.trip_pair_key,
+                ho.leg_direction,
+                ho.leg_sequence,
+                ho.itinerary_leg_count,
+                MIN(ho.total_price_bdt) AS min_total_price_bdt,
+                MAX(ho.total_price_bdt) AS max_total_price_bdt,
+                MAX(
+                  COALESCE(
+                    CASE
+                      WHEN ho.tax_amount IS NOT NULL AND ho.tax_amount > 0 THEN ho.tax_amount
+                    END,
+                    CASE
+                      WHEN tl.tax_amount IS NOT NULL AND tl.tax_amount > 0 THEN tl.tax_amount
+                    END,
+                    CASE
+                      WHEN ho.base_fare_amount IS NOT NULL
+                        AND ho.total_price_bdt IS NOT NULL
+                        AND ho.total_price_bdt > ho.base_fare_amount
+                      THEN ho.total_price_bdt - ho.base_fare_amount
+                    END,
+                    ho.tax_amount,
+                    tl.tax_amount,
+                    GREATEST(ho.total_price_bdt - ho.base_fare_amount, 0)
+                  )
+                ) AS tax_amount,
+                ARRAY_AGG(COALESCE(ho.booking_class, ho.fare_basis) IGNORE NULLS ORDER BY ho.total_price_bdt ASC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS booking_class,
+                ARRAY_AGG(COALESCE(ho.booking_class, ho.fare_basis) IGNORE NULLS ORDER BY ho.total_price_bdt ASC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS min_booking_class,
+                ARRAY_AGG(COALESCE(ho.booking_class, ho.fare_basis) IGNORE NULLS ORDER BY ho.total_price_bdt DESC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS max_booking_class,
+                ARRAY_AGG(ho.seat_available IGNORE NULLS ORDER BY ho.total_price_bdt ASC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS seat_available,
+                ARRAY_AGG(ho.seat_available IGNORE NULLS ORDER BY ho.total_price_bdt ASC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS min_seat_available,
+                ARRAY_AGG(ho.seat_available IGNORE NULLS ORDER BY ho.total_price_bdt DESC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS max_seat_available,
+                MAX(ho.seat_capacity) AS seat_capacity,
+                MAX(ho.load_factor_pct) AS load_factor_pct,
+                LOGICAL_OR(IFNULL(ho.soldout, FALSE)) AS soldout
+              FROM history_offers ho
+              LEFT JOIN tax_lookup tl
+                ON tl.cycle_id = ho.cycle_id
+               AND tl.captured_at_utc = ho.captured_at_utc
+               AND tl.airline = ho.airline
+               AND tl.origin = ho.origin
+               AND tl.destination = ho.destination
+               AND tl.flight_number = ho.flight_number
+               AND tl.departure_utc = ho.departure_utc
+               AND tl.cabin = ho.cabin
+              GROUP BY
+                ho.cycle_id, ho.captured_at_utc, ho.airline, ho.origin, ho.destination, ho.route_key,
+                ho.flight_number, ho.departure_utc, ho.departure_date, departure_time, ho.cabin, aircraft,
+                ho.search_trip_type, ho.requested_outbound_date, ho.requested_return_date,
+                ho.trip_duration_days, ho.trip_origin, ho.trip_destination, ho.trip_pair_key, ho.leg_direction,
+                ho.leg_sequence, ho.itinerary_leg_count
+            ),
+            ranked_history AS (
+              SELECT
+                aggregated_history.*,
+                DENSE_RANK() OVER (
+                  PARTITION BY route_key, departure_date
+                  ORDER BY captured_at_utc DESC
+                ) AS capture_rank
+              FROM aggregated_history
+            )
             SELECT
-              ho.cycle_id,
-              ho.captured_at_utc,
-              ho.airline,
-              ho.origin,
-              ho.destination,
-              ho.route_key,
-              ho.flight_number,
-              ho.departure_utc,
-              ho.departure_date,
-              FORMAT_TIMESTAMP('%H:%M', ho.departure_utc) AS departure_time,
-              ho.cabin,
-              COALESCE(ho.aircraft, '') AS aircraft,
-              ho.search_trip_type,
-              ho.requested_outbound_date,
-              ho.requested_return_date,
-              ho.trip_duration_days,
-              ho.trip_origin,
-              ho.trip_destination,
-              ho.trip_pair_key,
-              ho.leg_direction,
-              ho.leg_sequence,
-              ho.itinerary_leg_count,
-              MIN(ho.total_price_bdt) AS min_total_price_bdt,
-              MAX(ho.total_price_bdt) AS max_total_price_bdt,
-              MAX(
-                COALESCE(
-                  CASE
-                    WHEN ho.tax_amount IS NOT NULL AND ho.tax_amount > 0 THEN ho.tax_amount
-                  END,
-                  CASE
-                    WHEN tl.tax_amount IS NOT NULL AND tl.tax_amount > 0 THEN tl.tax_amount
-                  END,
-                  CASE
-                    WHEN ho.base_fare_amount IS NOT NULL
-                      AND ho.total_price_bdt IS NOT NULL
-                      AND ho.total_price_bdt > ho.base_fare_amount
-                    THEN ho.total_price_bdt - ho.base_fare_amount
-                  END,
-                  ho.tax_amount,
-                  tl.tax_amount,
-                  GREATEST(ho.total_price_bdt - ho.base_fare_amount, 0)
-                )
-              ) AS tax_amount,
-              ARRAY_AGG(COALESCE(ho.booking_class, ho.fare_basis) IGNORE NULLS ORDER BY ho.total_price_bdt ASC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS booking_class,
-              ARRAY_AGG(COALESCE(ho.booking_class, ho.fare_basis) IGNORE NULLS ORDER BY ho.total_price_bdt ASC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS min_booking_class,
-              ARRAY_AGG(COALESCE(ho.booking_class, ho.fare_basis) IGNORE NULLS ORDER BY ho.total_price_bdt DESC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS max_booking_class,
-              ARRAY_AGG(ho.seat_available IGNORE NULLS ORDER BY ho.total_price_bdt ASC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS seat_available,
-              ARRAY_AGG(ho.seat_available IGNORE NULLS ORDER BY ho.total_price_bdt ASC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS min_seat_available,
-              ARRAY_AGG(ho.seat_available IGNORE NULLS ORDER BY ho.total_price_bdt DESC, ho.seat_available DESC LIMIT 1)[SAFE_OFFSET(0)] AS max_seat_available,
-              MAX(ho.seat_capacity) AS seat_capacity,
-              MAX(ho.load_factor_pct) AS load_factor_pct,
-              LOGICAL_OR(IFNULL(ho.soldout, FALSE)) AS soldout
-            FROM history_offers ho
-            LEFT JOIN tax_lookup tl
-              ON tl.cycle_id = ho.cycle_id
-             AND tl.captured_at_utc = ho.captured_at_utc
-             AND tl.airline = ho.airline
-             AND tl.origin = ho.origin
-             AND tl.destination = ho.destination
-             AND tl.flight_number = ho.flight_number
-             AND tl.departure_utc = ho.departure_utc
-             AND tl.cabin = ho.cabin
-            GROUP BY
-              ho.cycle_id, ho.captured_at_utc, ho.airline, ho.origin, ho.destination, ho.route_key,
-              ho.flight_number, ho.departure_utc, ho.departure_date, departure_time, ho.cabin, aircraft,
-              ho.search_trip_type, ho.requested_outbound_date, ho.requested_return_date,
-              ho.trip_duration_days, ho.trip_origin, ho.trip_destination, ho.trip_pair_key, ho.leg_direction,
-              ho.leg_sequence, ho.itinerary_leg_count
-            ORDER BY ho.captured_at_utc DESC, ho.route_key, ho.departure_date, departure_time, ho.airline, ho.flight_number
+              cycle_id,
+              captured_at_utc,
+              airline,
+              origin,
+              destination,
+              route_key,
+              flight_number,
+              departure_utc,
+              departure_date,
+              departure_time,
+              cabin,
+              aircraft,
+              search_trip_type,
+              requested_outbound_date,
+              requested_return_date,
+              trip_duration_days,
+              trip_origin,
+              trip_destination,
+              trip_pair_key,
+              leg_direction,
+              leg_sequence,
+              itinerary_leg_count,
+              min_total_price_bdt,
+              max_total_price_bdt,
+              tax_amount,
+              booking_class,
+              min_booking_class,
+              max_booking_class,
+              seat_available,
+              min_seat_available,
+              max_seat_available,
+              seat_capacity,
+              load_factor_pct,
+              soldout
+            FROM ranked_history
+            WHERE capture_rank <= @history_capture_limit
+            ORDER BY captured_at_utc DESC, route_key, departure_date, departure_time, airline, flight_number
             """,
             history_params,
         )
@@ -2695,6 +2778,7 @@ def _get_route_monitor_matrix_from_bigquery(
         current_rows=current_rows,
         history_rows=history_rows,
         history_limit=history_limit,
+        compact_history=compact_history,
     )
 
 
@@ -2763,8 +2847,10 @@ def get_route_monitor_matrix(
     return_date: date | None = None,
     return_date_start: date | None = None,
     return_date_end: date | None = None,
+    departure_date: date | None = None,
     route_limit: int = 8,
     history_limit: int = 12,
+    compact_history: bool = True,
 ) -> dict[str, Any]:
     started_at = time.perf_counter()
     normalized_trip_types = [value for value in _normalize_codes(trip_types) if value in {"OW", "RT"}]
@@ -2784,8 +2870,10 @@ def get_route_monitor_matrix(
                 return_date=return_date,
                 return_date_start=return_date_start,
                 return_date_end=return_date_end,
+                departure_date=departure_date,
                 route_limit=route_limit,
                 history_limit=history_limit,
+                compact_history=compact_history,
             )
             cached = _get_cached_response(cache_key, ROUTE_MATRIX_CACHE_TTL_SEC)
             if cached is not None:
@@ -2812,8 +2900,10 @@ def get_route_monitor_matrix(
                 return_date=return_date,
                 return_date_start=return_date_start,
                 return_date_end=return_date_end,
+                departure_date=departure_date,
                 route_limit=route_limit,
                 history_limit=history_limit,
+                compact_history=compact_history,
             )
             _set_request_metrics(
                 route_matrix_backend="bigquery",
@@ -2861,8 +2951,10 @@ def get_route_monitor_matrix(
         return_date=return_date,
         return_date_start=return_date_start,
         return_date_end=return_date_end,
+        departure_date=departure_date,
         route_limit=route_limit,
         history_limit=history_limit,
+        compact_history=compact_history,
     )
     cached = _get_cached_response(cache_key, ROUTE_MATRIX_CACHE_TTL_SEC)
     if cached is not None:
@@ -2897,6 +2989,9 @@ def get_route_monitor_matrix(
         if return_date_end:
             route_clauses.append("frm.requested_return_date <= :route_return_date_end")
             route_params["route_return_date_end"] = return_date_end.isoformat()
+    if departure_date:
+        route_clauses.append("fo.departure::date = :route_departure_date")
+        route_params["route_departure_date"] = departure_date.isoformat()
     if normalized_trip_types:
         _apply_in_filter(route_clauses, route_params, "COALESCE(frm.trip_origin, fo.origin)", origins, "route_trip_origin")
         _apply_in_filter(route_clauses, route_params, "COALESCE(frm.trip_destination, fo.destination)", destinations, "route_trip_destination")
@@ -2957,6 +3052,9 @@ def get_route_monitor_matrix(
         if return_date_end:
             current_clauses.append("frm.requested_return_date <= :matrix_return_date_end")
             current_params["matrix_return_date_end"] = return_date_end.isoformat()
+    if departure_date:
+        current_clauses.append("fo.departure::date = :matrix_departure_date")
+        current_params["matrix_departure_date"] = departure_date.isoformat()
 
     current_rows = session.execute(
         text(
@@ -3020,7 +3118,11 @@ def get_route_monitor_matrix(
 
     history_cycle_ids = [
         str(item.get("cycle_id") or "").strip()
-        for item in get_recent_cycles(session, limit=_route_matrix_history_cycle_limit(history_limit), comparable_only=True)
+        for item in get_recent_cycles(
+            session,
+            limit=_route_matrix_cycle_fetch_limit(history_limit, compact_history),
+            comparable_only=True,
+        )
         if str(item.get("cycle_id") or "").strip() and str(item.get("cycle_id") or "").strip() != resolved_cycle_id
     ]
     history_dicts: list[dict[str, Any]] = []
@@ -3034,7 +3136,7 @@ def get_route_monitor_matrix(
         history_params: dict[str, Any] = {
             "min_departure_ts": datetime.combine(min_date, datetime.min.time()),
             "max_departure_exclusive_ts": datetime.combine(max_date, datetime.min.time()) + timedelta(days=1),
-            "history_capture_limit": max(int(history_limit or 0), 1),
+            "history_capture_limit": _route_matrix_capture_display_limit(history_limit, compact_history),
         }
         _apply_route_pair_filter(history_clauses, history_params, "fo.origin", "fo.destination", route_pairs, "history_route")
         _apply_in_filter(history_clauses, history_params, "fo.scrape_id::text", history_cycle_ids, "history_cycle", uppercase=False)
@@ -3052,6 +3154,9 @@ def get_route_monitor_matrix(
             if return_date_end:
                 history_clauses.append("frm.requested_return_date <= :history_return_date_end")
                 history_params["history_return_date_end"] = return_date_end.isoformat()
+        if departure_date:
+            history_clauses.append("fo.departure::date = :history_departure_date")
+            history_params["history_departure_date"] = departure_date.isoformat()
 
         history_rows = session.execute(
             text(
@@ -3182,6 +3287,7 @@ def get_route_monitor_matrix(
         current_rows=current_dicts,
         history_rows=history_dicts,
         history_limit=history_limit,
+        compact_history=compact_history,
     )
     _set_request_metrics(
         route_matrix_backend="sql",
