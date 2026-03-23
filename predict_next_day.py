@@ -12,6 +12,7 @@ from sqlalchemy import create_engine, text
 from core.market_priors import apply_market_priors
 from core.holiday_features import add_holiday_features, get_holiday_feature_columns
 from core.booking_curve_features import add_booking_curve_features, get_booking_curve_feature_columns
+from core.route_characteristics import add_route_characteristics, estimate_competition_level, get_route_characteristics_columns
 from core.explainability import compute_shap_feature_importance, format_feature_importance_for_output
 from db import DATABASE_URL as DEFAULT_DATABASE_URL
 
@@ -50,6 +51,8 @@ HOLIDAY_FEATURE_COLS = [
 ]
 
 BOOKING_CURVE_FEATURE_COLS = get_booking_curve_feature_columns()
+
+ROUTE_CHARACTERISTIC_COLS = get_route_characteristics_columns()
 
 AIRLINE_MODEL_CODE = {"hybrid": 0.0, "hub_spoke": 1.0, "lcc": 2.0}
 TRIP_PURPOSE_CODE = {"general": 0.0, "labor_outbound": 1.0, "labor_return": 2.0, "tourism": 3.0}
@@ -405,6 +408,35 @@ def _apply_booking_curve_features_safe(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
 
+def _apply_route_characteristics_safe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Safely apply route characteristics to DataFrame.
+
+    Args:
+        df: Input DataFrame with 'origin' and 'destination' columns
+
+    Returns:
+        DataFrame with route characteristics added, or original DataFrame if error occurs
+    """
+    if df is None or df.empty:
+        return df
+    if "origin" not in df.columns or "destination" not in df.columns:
+        return df
+    try:
+        df = add_route_characteristics(df)
+        # Estimate competition level if airline column exists
+        if "airline" in df.columns:
+            df = estimate_competition_level(df, group_cols=["origin", "destination"])
+        return df
+    except Exception as e:
+        # If route characteristics extraction fails, add zero-filled columns
+        print(f"Warning: Route characteristics extraction failed: {e}")
+        for col in ROUTE_CHARACTERISTIC_COLS:
+            if col not in df.columns:
+                df[col] = 0
+        return df
+
+
 def _ml_feature_frame(part: pd.DataFrame, target: str):
     vals = pd.to_numeric(part[target], errors="coerce")
     work = pd.DataFrame(index=part.index)
@@ -437,6 +469,11 @@ def _ml_feature_frame(part: pd.DataFrame, target: str):
 
     # Add booking curve features (Phase 2 Priority 2)
     for col in BOOKING_CURVE_FEATURE_COLS:
+        if col in part.columns:
+            work[col] = pd.to_numeric(part[col], errors="coerce")
+
+    # Add route characteristic features (Phase 2 Priority 3)
+    for col in ROUTE_CHARACTERISTIC_COLS:
         if col in part.columns:
             work[col] = pd.to_numeric(part[col], errors="coerce")
 
@@ -1042,10 +1079,12 @@ def load_daily_frame(args):
             fallback = _apply_market_priors_safe(fallback)
             fallback = _apply_holiday_features_safe(fallback)
             fallback = _apply_booking_curve_features_safe(fallback)
+            fallback = _apply_route_characteristics_safe(fallback)
             return fallback
     df = _apply_market_priors_safe(df)
     df = _apply_holiday_features_safe(df)
     df = _apply_booking_curve_features_safe(df)
+    df = _apply_route_characteristics_safe(df)
     return df
 
 
@@ -1114,6 +1153,7 @@ def load_search_dynamic_frame(args):
     df = _apply_market_priors_safe(df)
     df = _apply_holiday_features_safe(df)
     df = _apply_booking_curve_features_safe(df)
+    df = _apply_route_characteristics_safe(df)
     return df
 
 
