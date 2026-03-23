@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, text
 
 from core.market_priors import apply_market_priors
 from core.holiday_features import add_holiday_features, get_holiday_feature_columns
+from core.explainability import compute_shap_feature_importance, format_feature_importance_for_output
 from db import DATABASE_URL as DEFAULT_DATABASE_URL
 
 
@@ -607,13 +608,15 @@ def _clip_to_bounds(value, lower, upper):
     return float(v)
 
 
-def _fit_predict_quantile(model_name: str, model_cls, quantile: float, train_x: pd.DataFrame, train_y: pd.Series, pred_x: pd.DataFrame, seed: int):
+def _fit_predict_quantile(model_name: str, model_cls, quantile: float, train_x: pd.DataFrame, train_y: pd.Series, pred_x: pd.DataFrame, seed: int, return_model=False):
     train_f, pred_f = _fill_ml_features(train_x, pred_x)
     y = pd.to_numeric(train_y, errors="coerce")
     mask = y.notna()
     train_f = train_f.loc[mask]
     y = y.loc[mask]
     if len(y) < 2:
+        if return_model:
+            return None, None, None
         return None
     sample_weight = _recency_weights(len(y))
     lower, upper = _robust_prediction_bounds(y)
@@ -629,7 +632,10 @@ def _fit_predict_quantile(model_name: str, model_cls, quantile: float, train_x: 
         )
         model.fit(train_f, y, sample_weight=sample_weight, verbose=False)
         pred = model.predict(pred_f)
-        return _clip_to_bounds(float(np.asarray(pred).reshape(-1)[0]), lower, upper)
+        result = _clip_to_bounds(float(np.asarray(pred).reshape(-1)[0]), lower, upper)
+        if return_model:
+            return result, model, train_f
+        return result
 
     if model_name == "lightgbm":
         model = model_cls(
@@ -646,8 +652,13 @@ def _fit_predict_quantile(model_name: str, model_cls, quantile: float, train_x: 
         )
         model.fit(train_f, y, sample_weight=sample_weight)
         pred = model.predict(pred_f)
-        return _clip_to_bounds(float(np.asarray(pred).reshape(-1)[0]), lower, upper)
+        result = _clip_to_bounds(float(np.asarray(pred).reshape(-1)[0]), lower, upper)
+        if return_model:
+            return result, model, train_f
+        return result
 
+    if return_model:
+        return None, None, None
     return None
 
 
@@ -804,11 +815,18 @@ def build_next_day_ml_predictions(
         row = {col: key[idx] for idx, col in enumerate(group_cols)}
         row["latest_report_day"] = last_day.date()
         row["predicted_for_day"] = next_day.date()
+
+        # Track q50 model for SHAP computation (Phase 2 Priority 1)
+        q50_model = None
+        q50_features = None
+
         for model_name, model_cls in model_classes.items():
             for q in quantiles:
                 col = f"pred_ml_{model_name}_{_quantile_suffix(q)}"
+                # Capture model and features for q50 CatBoost to compute SHAP
+                return_model = (q == 0.5 and model_name == "catboost")
                 try:
-                    pred = _fit_predict_quantile(
+                    result = _fit_predict_quantile(
                         model_name=model_name,
                         model_cls=model_cls,
                         quantile=q,
@@ -816,10 +834,35 @@ def build_next_day_ml_predictions(
                         train_y=y.loc[train_mask],
                         pred_x=pred_x,
                         seed=random_seed,
+                        return_model=return_model,
                     )
+                    if return_model and result is not None:
+                        pred, q50_model, q50_features = result
+                    else:
+                        pred = result
                 except Exception:
                     pred = None
                 row[col] = pred
+
+        # Compute SHAP feature importance for this prediction (Phase 2 Priority 1)
+        if q50_model is not None and q50_features is not None:
+            try:
+                importance_dict = compute_shap_feature_importance(
+                    q50_model, q50_features, model_type="tree"
+                )
+                shap_output = format_feature_importance_for_output(importance_dict, top_n=5)
+                row.update(shap_output)
+            except Exception:
+                # If SHAP fails, add empty columns
+                for i in range(1, 6):
+                    row[f"shap_feature_{i}"] = None
+                    row[f"shap_value_{i}"] = None
+        else:
+            # No model available, add empty SHAP columns
+            for i in range(1, 6):
+                row[f"shap_feature_{i}"] = None
+                row[f"shap_value_{i}"] = None
+
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -1722,6 +1765,10 @@ def main():
         next_day_df = _clip_prediction_columns(next_day_df, target=target, pred_cols=next_pred_cols)
         # Add prediction confidence bands
         next_day_df = add_prediction_confidence(next_day_df, target=target, route_eval=route_eval, group_cols=group_cols)
+
+    # SHAP feature importance is computed in build_next_day_ml_predictions() (Phase 2 Priority 1)
+    # Each prediction row includes shap_feature_1-5 and shap_value_1-5 columns
+
     trend_df = build_trend_summary(history_df, target=target, group_cols=group_cols)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
