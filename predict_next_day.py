@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, text
 
 from core.market_priors import apply_market_priors
 from core.holiday_features import add_holiday_features, get_holiday_feature_columns
+from core.booking_curve_features import add_booking_curve_features, get_booking_curve_feature_columns
 from core.explainability import compute_shap_feature_importance, format_feature_importance_for_output
 from db import DATABASE_URL as DEFAULT_DATABASE_URL
 
@@ -47,6 +48,8 @@ HOLIDAY_FEATURE_COLS = [
     "is_departure_holiday",
     "is_departure_high_demand",
 ]
+
+BOOKING_CURVE_FEATURE_COLS = get_booking_curve_feature_columns()
 
 AIRLINE_MODEL_CODE = {"hybrid": 0.0, "hub_spoke": 1.0, "lcc": 2.0}
 TRIP_PURPOSE_CODE = {"general": 0.0, "labor_outbound": 1.0, "labor_return": 2.0, "tourism": 3.0}
@@ -377,6 +380,31 @@ def _apply_holiday_features_safe(df: pd.DataFrame, date_column: str = "report_da
         return df
 
 
+def _apply_booking_curve_features_safe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Safely apply booking curve features to DataFrame.
+
+    Args:
+        df: Input DataFrame with 'report_day' and 'departure_day' columns
+
+    Returns:
+        DataFrame with booking curve features added, or original DataFrame if error occurs
+    """
+    if df is None or df.empty:
+        return df
+    if "report_day" not in df.columns or "departure_day" not in df.columns:
+        return df
+    try:
+        return add_booking_curve_features(df, search_date_col="report_day", departure_date_col="departure_day")
+    except Exception as e:
+        # If booking curve feature extraction fails, add zero-filled columns
+        print(f"Warning: Booking curve feature extraction failed: {e}")
+        for col in BOOKING_CURVE_FEATURE_COLS:
+            if col not in df.columns:
+                df[col] = 0
+        return df
+
+
 def _ml_feature_frame(part: pd.DataFrame, target: str):
     vals = pd.to_numeric(part[target], errors="coerce")
     work = pd.DataFrame(index=part.index)
@@ -404,6 +432,11 @@ def _ml_feature_frame(part: pd.DataFrame, target: str):
 
     # Add holiday features
     for col in HOLIDAY_FEATURE_COLS:
+        if col in part.columns:
+            work[col] = pd.to_numeric(part[col], errors="coerce")
+
+    # Add booking curve features (Phase 2 Priority 2)
+    for col in BOOKING_CURVE_FEATURE_COLS:
         if col in part.columns:
             work[col] = pd.to_numeric(part[col], errors="coerce")
 
@@ -1008,9 +1041,11 @@ def load_daily_frame(args):
         if not fallback.empty and fallback["report_day"].nunique() >= 2:
             fallback = _apply_market_priors_safe(fallback)
             fallback = _apply_holiday_features_safe(fallback)
+            fallback = _apply_booking_curve_features_safe(fallback)
             return fallback
     df = _apply_market_priors_safe(df)
     df = _apply_holiday_features_safe(df)
+    df = _apply_booking_curve_features_safe(df)
     return df
 
 
@@ -1078,6 +1113,7 @@ def load_search_dynamic_frame(args):
         df = pd.read_sql(sql, conn, params=params)
     df = _apply_market_priors_safe(df)
     df = _apply_holiday_features_safe(df)
+    df = _apply_booking_curve_features_safe(df)
     return df
 
 
