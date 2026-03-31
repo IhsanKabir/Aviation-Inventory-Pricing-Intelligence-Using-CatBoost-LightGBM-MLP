@@ -43,7 +43,7 @@ if defined BIGQUERY_PROJECT_ID if defined BIGQUERY_DATASET if not defined GOOGLE
 
 if exist "%RECOVERY_HELPER%" (
   echo [%date% %time%] ingestion cycle launch check>> "%LOGFILE%"
-  "%PYEXE%" "%RECOVERY_HELPER%" --mode guarded-run --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%OPERATIONAL_COMPLETION_BUFFER_MINUTES%" -- "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --skip-reports --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local >> "%LOGFILE%" 2>&1
+  "%PYEXE%" "%RECOVERY_HELPER%" --mode guarded-run --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%OPERATIONAL_COMPLETION_BUFFER_MINUTES%" -- "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --skip-bigquery-sync >> "%LOGFILE%" 2>&1
   set "RC=%ERRORLEVEL%"
   set "RESCHEDULED=0"
   if exist "%RESCHEDULER%" (
@@ -74,7 +74,7 @@ if exist "%RECOVERY_HELPER%" (
 )
 
 echo [%date% %time%] starting ingestion cycle>> "%LOGFILE%"
-"%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --skip-reports --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local >> "%LOGFILE%" 2>&1
+"%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --skip-bigquery-sync >> "%LOGFILE%" 2>&1
 set "RC=%ERRORLEVEL%"
 set "RESCHEDULED=0"
 if exist "%RESCHEDULER%" (

@@ -16,6 +16,7 @@ import { formatDhakaDate, formatDhakaDateTime, formatMoney, formatPercent, forma
 type ViewMode = "context" | "strict";
 type SignalKey = "increase" | "decrease" | "new" | "sold_out" | "unknown";
 type RouteMonitorScopeQuery = {
+  requestId?: string;
   cycleId?: string;
   airlines?: string[];
   origin?: string;
@@ -466,6 +467,7 @@ export function RouteMonitorMatrix({
 
     try {
       const drilldown = await getRouteMonitorMatrixPayload({
+        requestId: scopeQuery.requestId,
         cycleId: scopeQuery.cycleId,
         airlines: scopeQuery.airlines?.length ? scopeQuery.airlines : undefined,
         origins: [route.origin],

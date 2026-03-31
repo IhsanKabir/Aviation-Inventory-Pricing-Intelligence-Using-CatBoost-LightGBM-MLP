@@ -251,13 +251,17 @@ export function RouteScopeControls({
   tripScopeLabel,
   cycleOptions,
   airlineOptions,
-  routeOptions = EMPTY_ROUTE_OPTIONS
+  routeOptions = EMPTY_ROUTE_OPTIONS,
+  requestId,
+  accessGranted
 }: {
   initialState: ScopeState;
   tripScopeLabel: string;
   cycleOptions: CycleOption[];
   airlineOptions: string[];
   routeOptions?: RouteOption[];
+  requestId?: string;
+  accessGranted: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -360,12 +364,16 @@ export function RouteScopeControls({
     return false;
   }, [airportCodesAreValid, exactRouteMatch, normalizedDestination, normalizedOrigin]);
   const availabilityScopeReady = useMemo(
-    () => Boolean(airportCodesAreValid && normalizedOrigin && normalizedDestination && exactRouteMatch),
-    [airportCodesAreValid, exactRouteMatch, normalizedDestination, normalizedOrigin]
+    () => Boolean(accessGranted && airportCodesAreValid && normalizedOrigin && normalizedDestination && exactRouteMatch),
+    [accessGranted, airportCodesAreValid, exactRouteMatch, normalizedDestination, normalizedOrigin]
   );
   const availabilityDeferred = !availabilityScopeReady;
   const exportHref = useMemo(() => {
+    if (!accessGranted || !requestId) {
+      return null;
+    }
     const params: Record<string, string | string[] | undefined> = {
+      request_id: requestId,
       cycle_id: state.cycleId || undefined,
       airline: state.airlines.length ? state.airlines : undefined,
       origin: normalizeAirportCode(state.origin) || undefined,
@@ -382,7 +390,7 @@ export function RouteScopeControls({
       history_limit: state.historyLimit || undefined
     };
     return buildReportingExportUrl(params, ["routes"]);
-  }, [state]);
+  }, [accessGranted, requestId, state]);
   const availabilityQueryString = useMemo(
     () => (availabilityScopeReady ? buildAvailabilityQueryString(state) : null),
     [availabilityScopeReady, state]
@@ -507,7 +515,7 @@ export function RouteScopeControls({
     }));
 
     const path = deferredAvailabilityQueryString
-      ? `/api/v1/reporting/route-date-availability?${deferredAvailabilityQueryString}`
+      ? `/api/v1/reporting/route-date-availability?${deferredAvailabilityQueryString}${requestId ? `&request_id=${encodeURIComponent(requestId)}` : ""}`
       : "/api/v1/reporting/route-date-availability";
 
     fetch(`${getApiBaseUrl()}${path}`, {
@@ -546,7 +554,7 @@ export function RouteScopeControls({
       });
 
     return () => controller.abort();
-  }, [availabilityScopeReady, deferredAvailabilityQueryString]);
+  }, [availabilityScopeReady, deferredAvailabilityQueryString, requestId]);
 
   const hasPendingMatrixChanges = queryString !== searchParams.toString();
 
@@ -807,9 +815,15 @@ export function RouteScopeControls({
         <button className="button-link" data-pending={isPending} disabled={!matrixScopeReady || !hasPendingMatrixChanges} onClick={applyImmediately} type="button">
           Apply matrix scope
         </button>
-        <a className="button-link ghost" href={exportHref}>
-          Download Excel
-        </a>
+        {exportHref ? (
+          <a className="button-link ghost" href={exportHref}>
+            Download Excel
+          </a>
+        ) : (
+          <button className="button-link ghost" disabled type="button">
+            Download Excel
+          </button>
+        )}
         <button className="button-link ghost" data-pending={isPending} onClick={resetScope} type="button">
           Reset scope
         </button>
@@ -820,6 +834,11 @@ export function RouteScopeControls({
       </p>
       {hasPendingMatrixChanges ? (
         <p className="mono">Route suggestions refresh live. Apply matrix scope when you are ready to reload the heavy route table.</p>
+      ) : null}
+      {!accessGranted ? (
+        <div className="status-banner">
+          Live route data and export stay locked until this scope has an approved request. Route hints remain available so the user can define the scope before requesting access.
+        </div>
       ) : null}
       {availabilityState.loading ? (
         <p className="mono">Refreshing collected dates for the current scope...</p>

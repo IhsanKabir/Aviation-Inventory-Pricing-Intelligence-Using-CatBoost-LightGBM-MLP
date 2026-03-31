@@ -3,8 +3,9 @@ import path from "node:path";
 import { Suspense, cache } from "react";
 
 import { DataPanel } from "@/components/data-panel";
+import { ReportAccessRequestPanel } from "@/components/report-access-request-panel";
 import { RouteScopeControls } from "@/components/route-scope-controls";
-import { getAirlines, getRecentCycles } from "@/lib/api";
+import { getAirlines, getRecentCycles, getReportAccessRequest } from "@/lib/api";
 import { formatDhakaDateTime } from "@/lib/format";
 import { firstParam, manyParams, parseLimit, type RawSearchParams } from "@/lib/query";
 
@@ -161,6 +162,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
     firstParam(params, "return_scope") ??
     (returnDateStart || returnDateEnd ? "range" : returnDate ? "exact" : "any");
   const cycleId = firstParam(params, "cycle_id") ?? undefined;
+  const requestId = firstParam(params, "request_id") ?? undefined;
   const routeLimit = parseLimit(firstParam(params, "route_limit"), 5);
   const historyLimit = parseLimit(firstParam(params, "history_limit"), 6);
   const effectiveReturnDate = tripType === "RT" && returnScope === "exact" ? returnDate ?? undefined : undefined;
@@ -176,11 +178,13 @@ export default async function RoutesPage({ searchParams }: PageProps) {
     effectiveReturnDateEnd
   );
 
-  const [airlines, recentCycles, configuredRouteEntries] = await Promise.all([
+  const [airlines, recentCycles, configuredRouteEntries, accessRequest] = await Promise.all([
     getAirlines(),
     getRecentCycles(8),
-    loadConfiguredRouteEntries()
+    loadConfiguredRouteEntries(),
+    requestId ? getReportAccessRequest(requestId) : Promise.resolve({ ok: true, data: null as null, error: undefined })
   ]);
+  const accessGranted = accessRequest.ok && accessRequest.data?.status === "approved";
 
   const recentCycleOptions = uniqueByKey(recentCycles.data?.items ?? [], (item) => item.cycle_id ?? "");
   const airlineOptions = uniqueByKey(airlines.data?.items ?? [], (item) => item.airline)
@@ -209,6 +213,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
           copy="Route suggestions and collected dates refresh in the controls. Apply the heavy matrix only when you are ready to review the workbook-style table."
         >
           <RouteScopeControls
+            accessGranted={accessGranted}
             cycleOptions={recentCycleOptions.map((item) => ({
               cycleId: item.cycle_id ?? null,
               label: item.cycle_completed_at_utc ? formatDhakaDateTime(item.cycle_completed_at_utc) : "Latest"
@@ -228,27 +233,65 @@ export default async function RoutesPage({ searchParams }: PageProps) {
               historyLimit: String(historyLimit)
             }}
             airlineOptions={airlineOptions}
+            requestId={accessGranted ? requestId : undefined}
             routeOptions={initialRouteOptions}
             tripScopeLabel={tripScopeLabel}
           />
         </DataPanel>
 
-        <Suspense fallback={<RouteMonitorSectionFallback />}>
-          <RouteMonitorSection
-            cabin={cabin ?? undefined}
-            cycleId={cycleId}
-            destination={destination}
-            historyLimit={historyLimit}
-            origin={origin}
-            recentCycles={recentCycleOptions}
-            returnDate={effectiveReturnDate}
-            returnDateEnd={effectiveReturnDateEnd}
-            returnDateStart={effectiveReturnDateStart}
-            routeLimit={routeLimit}
-            selectedAirlines={selectedAirlines}
-            tripType={tripType}
+        <DataPanel
+          title="Data access request"
+          copy="Route data stays hidden until this scope is manually approved. Submit the date window you need, then refresh this page after approval."
+        >
+          <ReportAccessRequestPanel
+            request={accessRequest.ok ? accessRequest.data : null}
+            scope={{
+              cycleId,
+              airlines: selectedAirlines,
+              origin,
+              destination,
+              cabin: cabin ?? undefined,
+              tripType,
+              returnScope,
+              returnDate: effectiveReturnDate,
+              returnDateStart: effectiveReturnDateStart,
+              returnDateEnd: effectiveReturnDateEnd,
+              routeLimit,
+              historyLimit
+            }}
           />
-        </Suspense>
+        </DataPanel>
+
+        {accessGranted && requestId ? (
+          <Suspense fallback={<RouteMonitorSectionFallback />}>
+            <RouteMonitorSection
+              cabin={cabin ?? undefined}
+              cycleId={cycleId}
+              destination={destination}
+              historyLimit={historyLimit}
+              origin={origin}
+              recentCycles={recentCycleOptions}
+              requestId={requestId}
+              returnDate={effectiveReturnDate}
+              returnDateEnd={effectiveReturnDateEnd}
+              returnDateStart={effectiveReturnDateStart}
+              routeLimit={routeLimit}
+              selectedAirlines={selectedAirlines}
+              tripType={tripType}
+            />
+          </Suspense>
+        ) : (
+          <DataPanel
+            title="Route flight fare monitor"
+            copy="The heavy matrix stays locked until the current route request is approved."
+          >
+            <div className="empty-state">
+              {requestId
+                ? "This scope is not approved yet. Refresh after manual review, or change the scope and submit a new request."
+                : "Submit a route data request above to unlock the live route monitor for this scope."}
+            </div>
+          </DataPanel>
+        )}
       </div>
     </>
   );

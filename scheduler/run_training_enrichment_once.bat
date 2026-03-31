@@ -36,7 +36,7 @@ if not defined TRAINING_COMPLETION_BUFFER_MINUTES set "TRAINING_COMPLETION_BUFFE
 if not defined TRAINING_COMPLETION_BUFFER_MINUTES set "TRAINING_COMPLETION_BUFFER_MINUTES=120"
 if not defined TRAINING_PREDICTION_ML_MODELS set "TRAINING_PREDICTION_ML_MODELS=catboost,lightgbm"
 if not defined TRAINING_PREDICTION_DL_MODELS set "TRAINING_PREDICTION_DL_MODELS=mlp"
-if not defined TRAINING_SKIP_BIGQUERY_SYNC set "TRAINING_SKIP_BIGQUERY_SYNC=0"
+if not defined TRAINING_SKIP_BIGQUERY_SYNC set "TRAINING_SKIP_BIGQUERY_SYNC=1"
 
 if not defined BIGQUERY_PROJECT_ID (
   echo [%date% %time%] warning: BIGQUERY_PROJECT_ID not set; automatic BigQuery sync will be skipped>> "%LOGFILE%"
@@ -78,9 +78,9 @@ if exist "%RECOVERY_HELPER%" (
 
 echo [%date% %time%] starting training enrichment cycle>> "%LOGFILE%"
 if /I "%TRAINING_SKIP_BIGQUERY_SYNC%"=="1" (
-  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --trip-plan-mode training --skip-reports --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --prediction-ml-models "%TRAINING_PREDICTION_ML_MODELS%" --prediction-dl-models "%TRAINING_PREDICTION_DL_MODELS%" --skip-bigquery-sync >> "%LOGFILE%" 2>&1
+  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --trip-plan-mode training --report-format xlsx --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --prediction-ml-models "%TRAINING_PREDICTION_ML_MODELS%" --prediction-dl-models "%TRAINING_PREDICTION_DL_MODELS%" --skip-bigquery-sync >> "%LOGFILE%" 2>&1
 ) else (
-  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --trip-plan-mode training --skip-reports --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --prediction-ml-models "%TRAINING_PREDICTION_ML_MODELS%" --prediction-dl-models "%TRAINING_PREDICTION_DL_MODELS%" >> "%LOGFILE%" 2>&1
+  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --trip-plan-mode training --report-format xlsx --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --prediction-ml-models "%TRAINING_PREDICTION_ML_MODELS%" --prediction-dl-models "%TRAINING_PREDICTION_DL_MODELS%" >> "%LOGFILE%" 2>&1
 )
 set "RC=%ERRORLEVEL%"
 set "RESCHEDULED=0"

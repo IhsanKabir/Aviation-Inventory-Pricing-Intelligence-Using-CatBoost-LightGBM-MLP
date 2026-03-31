@@ -542,12 +542,29 @@ export type ForecastingPayload = {
 };
 
 export type SnapshotQuery = {
+  requestId?: string;
   cycleId?: string;
   airlines?: string[];
   origins?: string[];
   destinations?: string[];
   cabins?: string[];
   limit?: number;
+};
+
+export type ReportAccessRequest = {
+  request_id: string;
+  page_key: string;
+  status: "pending" | "approved" | "rejected" | "payment_required";
+  requester_name?: string | null;
+  requester_contact?: string | null;
+  requested_start_date?: string | null;
+  requested_end_date?: string | null;
+  notes?: string | null;
+  request_scope?: Record<string, unknown> | null;
+  decision_note?: string | null;
+  decided_at_utc?: string | null;
+  created_at_utc?: string | null;
+  updated_at_utc?: string | null;
 };
 
 type FetchResult<T> = {
@@ -689,6 +706,7 @@ export async function getCycleHealth() {
 export async function getCurrentSnapshotPayload(query: SnapshotQuery) {
   return fetchJsonWithRevalidate<SnapshotPayload>(
     buildPath("/api/v1/reporting/current-snapshot", {
+      request_id: query.requestId,
       cycle_id: query.cycleId,
       airline: query.airlines,
       origin: query.origins,
@@ -714,6 +732,7 @@ export async function getRouteMonitorMatrixPayload(
 ) {
   return fetchJsonWithRevalidate<RouteMonitorMatrixPayload>(
     buildPath("/api/v1/reporting/route-monitor-matrix", {
+      request_id: query.requestId,
       cycle_id: query.cycleId,
       airline: query.airlines,
       origin: query.origins,
@@ -739,6 +758,7 @@ export async function getRouteDateAvailabilityPayload(
 ) {
   return fetchJsonWithRevalidate<RouteDateAvailabilityPayload>(
     buildPath("/api/v1/reporting/route-date-availability", {
+      request_id: query.requestId,
       cycle_id: query.cycleId,
       airline: query.airlines,
       origin: query.origins,
@@ -762,6 +782,7 @@ export async function getAirlineOperationsPayload(
 ) {
   return fetchJsonWithRevalidate<AirlineOperationsPayload>(
     buildPath("/api/v1/reporting/airline-operations", {
+      request_id: query.requestId,
       cycle_id: query.cycleId,
       airline: query.airlines,
       origin: query.origins,
@@ -780,6 +801,7 @@ export async function getAirlineOperationsPayload(
 export async function getPenaltyPayload(query: SnapshotQuery) {
   return fetchJsonWithRevalidate<PenaltyPayload>(
     buildPath("/api/v1/reporting/penalties", {
+      request_id: query.requestId,
       cycle_id: query.cycleId,
       airline: query.airlines,
       origin: query.origins,
@@ -798,6 +820,7 @@ export async function getTaxPayload(
 ) {
   return fetchJsonWithRevalidate<TaxPayload>(
     buildPath("/api/v1/reporting/taxes", {
+      request_id: query.requestId,
       cycle_id: query.cycleId,
       airline: query.airlines,
       origin: query.origins,
@@ -866,4 +889,8 @@ export async function getChangeDashboardPayload(query: {
 
 export async function getForecastingPayload() {
   return fetchJsonWithRevalidate<ForecastingPayload>("/api/v1/reporting/forecasting/latest", 300);
+}
+
+export async function getReportAccessRequest(requestId: string) {
+  return fetchJsonWithRevalidate<ReportAccessRequest>(`/api/v1/access-requests/${encodeURIComponent(requestId)}`, 5);
 }

@@ -55,6 +55,59 @@ class OutputWriter:
             return None
 
     @staticmethod
+    def _dominant_integer(values) -> int:
+        cleaned = []
+        for value in values or []:
+            if OutputWriter._is_na(value):
+                continue
+            try:
+                cleaned.append(int(value))
+            except Exception:
+                continue
+        if not cleaned:
+            return 0
+        freq = pd.Series(cleaned, dtype="int64").value_counts()
+        if freq.empty:
+            return 0
+        max_freq = int(freq.max())
+        candidates = [int(idx) for idx, count in freq.items() if int(count) == max_freq]
+        return max(candidates) if candidates else 0
+
+    @staticmethod
+    def _daily_flight_counts(frame: pd.DataFrame) -> pd.Series:
+        if frame is None or frame.empty or "flight_date" not in frame.columns or "flight_key" not in frame.columns:
+            return pd.Series(dtype="int64")
+        base = frame[["flight_date", "flight_key"]].dropna(subset=["flight_date", "flight_key"]).copy()
+        if base.empty:
+            return pd.Series(dtype="int64")
+        return base.groupby("flight_date")["flight_key"].nunique().sort_index()
+
+    @staticmethod
+    def _typical_weekday_count_sum(frame: pd.DataFrame, day_order: list[str]) -> int:
+        if (
+            frame is None
+            or frame.empty
+            or "flight_date" not in frame.columns
+            or "flight_key" not in frame.columns
+            or "day_name" not in frame.columns
+        ):
+            return 0
+        base = frame[["day_name", "flight_date", "flight_key"]].dropna(subset=["day_name", "flight_date", "flight_key"]).copy()
+        if base.empty:
+            return 0
+        daily = (
+            base.groupby(["day_name", "flight_date"])["flight_key"]
+            .nunique()
+            .reset_index(name="flight_count")
+        )
+        weekday_typical = (
+            daily.groupby("day_name")["flight_count"]
+            .agg(lambda s: OutputWriter._dominant_integer(list(s)))
+            .to_dict()
+        )
+        return int(sum(int(weekday_typical.get(day, 0) or 0) for day in day_order))
+
+    @staticmethod
     def _bool_label(value):
         if OutputWriter._is_na(value):
             return "--"
@@ -91,6 +144,8 @@ class OutputWriter:
     @staticmethod
     def _join_limited(values, limit=8):
         vals = [str(v) for v in values if str(v).strip()]
+        if limit is None:
+            return ", ".join(vals)
         if len(vals) <= limit:
             return ", ".join(vals)
         return ", ".join(vals[:limit]) + f" (+{len(vals) - limit})"
@@ -627,6 +682,7 @@ class OutputWriter:
 
     def _write_airline_ops_compare(self, workbook, df: pd.DataFrame):
         sheet = workbook.add_worksheet("Airline Ops Compare")
+        day_order = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
         cfg = self._style_cfg()
         sheet.set_zoom(cfg["zoom"])
         sheet.set_default_row(cfg["default_row"])
@@ -652,6 +708,7 @@ class OutputWriter:
         working["route"] = working["route"].astype(str)
         working["departure_time"] = working["departure_time"].astype(str)
         working["flight_date"] = pd.to_datetime(working["flight_date"], errors="coerce")
+        working["day_name"] = working["flight_date"].dt.day_name()
         working["aircraft"] = working["aircraft"].fillna("Aircraft NA").astype(str)
         if "departure" in working.columns:
             working["departure"] = pd.to_datetime(working["departure"], errors="coerce")
@@ -690,7 +747,10 @@ class OutputWriter:
             sheet.write(2, legend_col, airline, fmt_airline_header.get(airline, fmt_header))
             legend_col += 1
         sheet.write(2, legend_col, "Heatmap columns: Daily / Weekly", fmt_cell)
-        legend_note = "LB = peak concurrent flights from observed search results (lower bound, not exact fleet). Fleet Coverage = LB / Website Fleet Count."
+        legend_note = (
+            "LB = peak concurrent flights from observed search results (lower bound, not exact fleet). "
+            "Fleet Coverage = LB / Website Fleet Count. Daily/Weekly counts use typical integer flights from observed dates, not fractional averages."
+        )
         sheet.merge_range(3, 0, 3, max(6, legend_col + 2), legend_note, fmt_note)
         self._write_methodology_note(sheet, 0, max(10, legend_col + 4), workbook)
 
@@ -712,8 +772,8 @@ class OutputWriter:
             "Fleet Coverage (LB/Website)",
             "Known Seat Capacities",
             "Observed Routes",
-            "Observed Daily Flights (avg)",
-            "Observed Weekly Flights (est)",
+            "Typical Daily Flights",
+            "Typical Weekly Flights",
             "First/Last Departure",
         ]
         fleet_start_row = row
@@ -727,10 +787,9 @@ class OutputWriter:
                 first_dep = dep_times[0] if dep_times else "--"
                 last_dep = dep_times[-1] if dep_times else "--"
                 route_n = int(sub["route"].nunique())
-                day_n = int(sub["flight_date"].dropna().nunique())
-                obs_rows = int(len(sub))
-                daily_avg = round(obs_rows / day_n, 2) if day_n else 0.0
-                weekly_est = round(daily_avg * 7.0, 2)
+                daily_counts = self._daily_flight_counts(sub)
+                typical_daily = self._dominant_integer(daily_counts.tolist())
+                typical_weekly = self._typical_weekday_count_sum(sub, day_order)
 
                 known_rows = inventory_map.get(airline, [])
                 known_types = self._join_limited([r.get("aircraft_type") for r in known_rows], limit=8) if known_rows else "--"
@@ -757,14 +816,14 @@ class OutputWriter:
                     value = known_caps
                 elif metric == "Observed Routes":
                     value = route_n
-                elif metric == "Observed Daily Flights (avg)":
-                    value = daily_avg
-                elif metric == "Observed Weekly Flights (est)":
-                    value = weekly_est
+                elif metric == "Typical Daily Flights":
+                    value = typical_daily
+                elif metric == "Typical Weekly Flights":
+                    value = typical_weekly
                 elif metric == "First/Last Departure":
                     value = f"{first_dep} - {last_dep}"
 
-                if metric in {"Website Fleet Count", "Search Fleet (LB)", "Fleet Coverage (LB/Website)", "Observed Routes", "Observed Daily Flights (avg)", "Observed Weekly Flights (est)"}:
+                if metric in {"Website Fleet Count", "Search Fleet (LB)", "Fleet Coverage (LB/Website)", "Observed Routes", "Typical Daily Flights", "Typical Weekly Flights"}:
                     fmt = fmt_airline_center.get(airline, fmt_center)
                 else:
                     fmt = fmt_airline_cell.get(airline, fmt_cell)
@@ -775,8 +834,8 @@ class OutputWriter:
         for idx in range(len(airlines)):
             col = 1 + idx
             # Highlight comparative magnitude on frequency rows
-            daily_row = fleet_metric_row_index.get("Observed Daily Flights (avg)")
-            weekly_row = fleet_metric_row_index.get("Observed Weekly Flights (est)")
+            daily_row = fleet_metric_row_index.get("Typical Daily Flights")
+            weekly_row = fleet_metric_row_index.get("Typical Weekly Flights")
             if daily_row is not None and weekly_row is not None:
                 sheet.conditional_format(daily_row, col, weekly_row, col, {"type": "3_color_scale"})
 
@@ -787,14 +846,34 @@ class OutputWriter:
         sheet.write(row, 0, "B) Route Operations (Side-by-Side)", fmt_section)
         row += 1
 
-        grp = (
+        route_daily_counts = (
+            working.dropna(subset=["flight_date"])
+            .groupby(["airline", "route", "flight_date", "day_name"], as_index=False)
+            .agg(daily_flights=("flight_key", "nunique"))
+        )
+        route_typical_weekday = (
+            route_daily_counts.groupby(["airline", "route", "day_name"], as_index=False)
+            .agg(typical_flights=("daily_flights", lambda s: self._dominant_integer(list(s))))
+        )
+        route_weekly = (
+            route_typical_weekday.groupby(["airline", "route"], as_index=False)
+            .agg(typical_weekly_flights=("typical_flights", "sum"))
+        )
+        route_timings = (
             working.groupby(["airline", "route"], as_index=False)
             .agg(
-                operating_days=("flight_date", lambda s: int(s.dropna().nunique())),
-                observed_flights=("flight_key", "count"),
                 timings=("departure_time", lambda s: sorted({str(v) for v in s if str(v).strip()})),
                 aircraft_types=("aircraft", lambda s: sorted({str(v) for v in s if str(v).strip()})),
             )
+        )
+        grp = (
+            route_daily_counts.groupby(["airline", "route"], as_index=False)
+            .agg(
+                operating_days=("flight_date", lambda s: int(s.dropna().nunique())),
+                typical_daily_flights=("daily_flights", lambda s: self._dominant_integer(list(s))),
+            )
+            .merge(route_weekly, on=["airline", "route"], how="left")
+            .merge(route_timings, on=["airline", "route"], how="left")
         )
         route_rows = sorted(grp["route"].dropna().unique().tolist())
 
@@ -828,9 +907,8 @@ class OutputWriter:
                 else:
                     rec = m.iloc[0]
                     op_days = int(rec["operating_days"]) if pd.notna(rec["operating_days"]) else 0
-                    observed = int(rec["observed_flights"]) if pd.notna(rec["observed_flights"]) else 0
-                    daily_avg = round(observed / op_days, 2) if op_days else 0.0
-                    weekly_est = round(daily_avg * 7.0, 2)
+                    daily_avg = int(rec["typical_daily_flights"]) if pd.notna(rec.get("typical_daily_flights")) else 0
+                    weekly_est = int(rec["typical_weekly_flights"]) if pd.notna(rec.get("typical_weekly_flights")) else 0
                     timings = self._join_limited(rec["timings"], limit=8)
                 sheet.write(row, col, daily_avg, fmt_airline_center.get(airline, fmt_center))
                 sheet.write(row, col + 1, weekly_est, fmt_airline_center.get(airline, fmt_center))
@@ -848,21 +926,17 @@ class OutputWriter:
                 sheet.conditional_format(routes_start_row, base + 1, routes_end_row, base + 1, {"type": "3_color_scale"})
 
         # -------------------------
-        # Section C: Route x Day operations (summed flights + timings)
+        # Section C: Route x Day operations (typical flights + timings)
         # -------------------------
         row += 2
-        sheet.write(row, 0, "C) Route-Day Operations (Summed Flights + Timings)", fmt_section)
+        sheet.write(row, 0, "C) Route-Day Operations (Typical Integer Flights + Timings)", fmt_section)
         row += 1
 
-        day_order = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-        working["day_name"] = working["flight_date"].dt.day_name()
-        day_grp = (
+        day_timings = (
             working.groupby(["route", "day_name", "airline"], as_index=False)
-            .agg(
-                flights=("flight_key", "count"),
-                timings=("departure_time", lambda s: sorted({str(v) for v in s if str(v).strip()})),
-            )
+            .agg(timings=("departure_time", lambda s: sorted({str(v) for v in s if str(v).strip()})))
         )
+        day_grp = route_typical_weekday.merge(day_timings, on=["route", "day_name", "airline"], how="left")
         route_list = sorted(day_grp["route"].dropna().astype(str).unique().tolist())
 
         sheet.write(row, 0, "Route", fmt_header)
@@ -879,14 +953,14 @@ class OutputWriter:
                     value = "--"
                     fmt = fmt_gray
                 else:
-                    total = int(pd.to_numeric(block["flights"], errors="coerce").fillna(0).sum())
+                    total = int(pd.to_numeric(block["typical_flights"], errors="coerce").fillna(0).sum())
                     entries = []
                     for _, rec in block.sort_values("airline").iterrows():
                         ac = str(rec.get("airline") or "").upper()
-                        fl = int(rec.get("flights") or 0)
-                        tms = self._join_limited(rec.get("timings") or [], limit=4)
+                        fl = int(rec.get("typical_flights") or 0)
+                        tms = self._join_limited(rec.get("timings") or [], limit=None)
                         entries.append(f"{ac}:{fl}[{tms}]")
-                    details = self._join_limited(entries, limit=5)
+                    details = self._join_limited(entries, limit=None)
                     value = f"Î£{total} | {details}"
                     fmt = fmt_cell
                 sheet.write(row, 1 + i, value, fmt)

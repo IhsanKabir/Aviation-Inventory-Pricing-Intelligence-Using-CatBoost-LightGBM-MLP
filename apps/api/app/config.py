@@ -25,6 +25,7 @@ class Settings:
     bigquery_project_id: str | None
     bigquery_dataset: str | None
     forecasting_source: str
+    report_access_admin_token: str | None
 
 
 def load_settings() -> Settings:
@@ -67,6 +68,7 @@ def load_settings() -> Settings:
         bigquery_project_id=(os.getenv("BIGQUERY_PROJECT_ID", "").strip() or None),
         bigquery_dataset=(os.getenv("BIGQUERY_DATASET", "").strip() or None),
         forecasting_source=os.getenv("API_FORECASTING_SOURCE", "bigquery").strip().lower() or "bigquery",
+        report_access_admin_token=(os.getenv("REPORT_ACCESS_ADMIN_TOKEN", "").strip() or None),
     )
 
 

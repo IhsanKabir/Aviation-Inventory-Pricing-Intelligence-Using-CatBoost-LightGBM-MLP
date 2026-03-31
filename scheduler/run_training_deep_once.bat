@@ -36,7 +36,7 @@ if not defined DEEP_COMPLETION_BUFFER_MINUTES set "DEEP_COMPLETION_BUFFER_MINUTE
 if not defined DEEP_COMPLETION_BUFFER_MINUTES set "DEEP_COMPLETION_BUFFER_MINUTES=120"
 if not defined DEEP_PREDICTION_ML_MODELS set "DEEP_PREDICTION_ML_MODELS=catboost,lightgbm"
 if not defined DEEP_PREDICTION_DL_MODELS set "DEEP_PREDICTION_DL_MODELS=mlp"
-if not defined DEEP_SKIP_BIGQUERY_SYNC set "DEEP_SKIP_BIGQUERY_SYNC=0"
+if not defined DEEP_SKIP_BIGQUERY_SYNC set "DEEP_SKIP_BIGQUERY_SYNC=1"
 
 if not defined BIGQUERY_PROJECT_ID (
   echo [%date% %time%] warning: BIGQUERY_PROJECT_ID not set; automatic BigQuery sync will be skipped>> "%LOGFILE%"
@@ -73,9 +73,9 @@ if exist "%RECOVERY_HELPER%" (
 
 echo [%date% %time%] starting deep training cycle>> "%LOGFILE%"
 if /I "%DEEP_SKIP_BIGQUERY_SYNC%"=="1" (
-  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --trip-plan-mode deep --skip-reports --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --prediction-ml-models "%DEEP_PREDICTION_ML_MODELS%" --prediction-dl-models "%DEEP_PREDICTION_DL_MODELS%" --skip-bigquery-sync >> "%LOGFILE%" 2>&1
+  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --trip-plan-mode deep --report-format xlsx --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --prediction-ml-models "%DEEP_PREDICTION_ML_MODELS%" --prediction-dl-models "%DEEP_PREDICTION_DL_MODELS%" --skip-bigquery-sync >> "%LOGFILE%" 2>&1
 ) else (
-  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --trip-plan-mode deep --skip-reports --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --prediction-ml-models "%DEEP_PREDICTION_ML_MODELS%" --prediction-dl-models "%DEEP_PREDICTION_DL_MODELS%" >> "%LOGFILE%" 2>&1
+  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --trip-plan-mode deep --report-format xlsx --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --prediction-ml-models "%DEEP_PREDICTION_ML_MODELS%" --prediction-dl-models "%DEEP_PREDICTION_DL_MODELS%" >> "%LOGFILE%" 2>&1
 )
 set "RC=%ERRORLEVEL%"
 if "!RC!"=="0" (

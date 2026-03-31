@@ -4,15 +4,16 @@ import logging
 import time
 from datetime import date
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .db import get_optional_db
-from .repositories import exporting, reporting
+from .db import engine, get_optional_db
+from .repositories import access_requests, exporting, reporting
 
 LOG = logging.getLogger("api.http")
 
@@ -34,6 +35,32 @@ app.add_middleware(
 
 if settings.gzip_enabled:
     app.add_middleware(GZipMiddleware, minimum_size=settings.gzip_minimum_size)
+
+
+class AccessRequestCreateBody(BaseModel):
+    page_key: str = Field(default="routes")
+    requester_name: str | None = None
+    requester_contact: str | None = None
+    requested_start_date: date | None = None
+    requested_end_date: date | None = None
+    notes: str | None = None
+    request_scope: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_dates(self):
+        if self.requested_start_date and self.requested_end_date and self.requested_end_date < self.requested_start_date:
+            raise ValueError("requested_end_date must be on or after requested_start_date")
+        return self
+
+
+class AccessRequestUpdateBody(BaseModel):
+    status: str
+    decision_note: str | None = None
+
+
+@app.on_event("startup")
+def startup() -> None:
+    access_requests.ensure_tables(engine)
 
 
 @app.middleware("http")
@@ -72,6 +99,19 @@ def _apply_reporting_metric_headers(response: Response, metrics: dict, prefix: s
         response.headers[f"{header_prefix}{suffix}"] = str(value)
 
 
+def _require_access_request_db(db: Session | None) -> Session:
+    if db is None:
+        raise HTTPException(status_code=503, detail="Access-request storage is not configured on this API instance.")
+    return db
+
+
+def _require_admin_token(x_admin_token: str | None) -> None:
+    if not settings.report_access_admin_token:
+        raise HTTPException(status_code=503, detail="Admin approval token is not configured.")
+    if x_admin_token != settings.report_access_admin_token:
+        raise HTTPException(status_code=403, detail="Invalid admin approval token.")
+
+
 @app.get("/", include_in_schema=False)
 def root() -> RedirectResponse:
     return RedirectResponse(url="/docs", status_code=307)
@@ -97,6 +137,63 @@ def api_root() -> JSONResponse:
 @app.get("/health")
 def health(db: Session | None = Depends(get_optional_db)) -> dict:
     return reporting.get_health(db)
+
+
+@app.post("/api/v1/access-requests")
+def create_access_request(
+    body: AccessRequestCreateBody,
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    required_db = _require_access_request_db(db)
+    try:
+        payload = access_requests.create_request(
+            required_db,
+            page_key=body.page_key,
+            requester_name=body.requester_name,
+            requester_contact=body.requester_contact,
+            requested_start_date=body.requested_start_date,
+            requested_end_date=body.requested_end_date,
+            notes=body.notes,
+            request_scope=body.request_scope,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return payload
+
+
+@app.get("/api/v1/access-requests/{request_id}")
+def get_access_request(
+    request_id: str,
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    required_db = _require_access_request_db(db)
+    payload = access_requests.get_request(required_db, request_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Access request not found.")
+    return payload
+
+
+@app.patch("/api/v1/access-requests/{request_id}")
+def update_access_request(
+    request_id: str,
+    body: AccessRequestUpdateBody,
+    x_admin_token: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    _require_admin_token(x_admin_token)
+    required_db = _require_access_request_db(db)
+    try:
+        payload = access_requests.update_request_status(
+            required_db,
+            request_id=request_id,
+            status=body.status,
+            decision_note=body.decision_note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not payload:
+        raise HTTPException(status_code=404, detail="Access request not found.")
+    return payload
 
 
 @app.get("/api/v1/reporting/cycle-health")
@@ -178,6 +275,7 @@ def current_snapshot(
 
 @app.get("/api/v1/reporting/route-monitor-matrix")
 def route_monitor_matrix(
+    request_id: str | None = None,
     cycle_id: str | None = None,
     airline: list[str] | None = Query(default=None),
     origin: list[str] | None = Query(default=None),
@@ -194,9 +292,33 @@ def route_monitor_matrix(
     response: Response = None,
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
+    required_db = _require_access_request_db(db)
+    try:
+        access_requests.require_approved_request(
+            required_db,
+            request_id=request_id,
+            page_key="routes",
+            scope={
+                "cycle_id": cycle_id,
+                "airline": airline,
+                "origin": origin,
+                "destination": destination,
+                "cabin": cabin,
+                "trip_type": trip_type,
+                "return_date": return_date.isoformat() if return_date else None,
+                "return_date_start": return_date_start.isoformat() if return_date_start else None,
+                "return_date_end": return_date_end.isoformat() if return_date_end else None,
+                "route_limit": route_limit,
+                "history_limit": history_limit,
+            },
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     reporting.clear_request_metrics()
     payload = reporting.get_route_monitor_matrix(
-        db,
+        required_db,
         cycle_id=cycle_id,
         airlines=airline,
         origins=origin,
@@ -218,6 +340,7 @@ def route_monitor_matrix(
 
 @app.get("/api/v1/reporting/route-date-availability")
 def route_date_availability(
+    request_id: str | None = None,
     cycle_id: str | None = None,
     airline: list[str] | None = Query(default=None),
     origin: list[str] | None = Query(default=None),
@@ -227,9 +350,28 @@ def route_date_availability(
     response: Response = None,
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
+    required_db = _require_access_request_db(db)
+    try:
+        access_requests.require_approved_request(
+            required_db,
+            request_id=request_id,
+            page_key="routes",
+            scope={
+                "cycle_id": cycle_id,
+                "airline": airline,
+                "origin": origin,
+                "destination": destination,
+                "cabin": cabin,
+                "trip_type": trip_type,
+            },
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     reporting.clear_request_metrics()
     payload = reporting.get_route_date_availability(
-        db,
+        required_db,
         cycle_id=cycle_id,
         airlines=airline,
         origins=origin,
@@ -402,6 +544,7 @@ def forecasting_latest() -> dict:
 @app.get("/api/v1/reporting/export.xlsx")
 def export_reporting_workbook(
     include: list[str] | None = Query(default=None),
+    request_id: str | None = None,
     cycle_id: str | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -420,9 +563,33 @@ def export_reporting_workbook(
     limit: int = Query(default=settings.default_limit, ge=1),
     db: Session | None = Depends(get_optional_db),
 ) -> StreamingResponse:
+    requested_sections = tuple(include or ())
+    if "routes" in requested_sections:
+        required_db = _require_access_request_db(db)
+        try:
+            access_requests.require_approved_request(
+                required_db,
+                request_id=request_id,
+                page_key="routes",
+                scope={
+                    "cycle_id": cycle_id,
+                    "airline": airline,
+                    "origin": origin,
+                    "destination": destination,
+                    "cabin": cabin,
+                    "trip_type": trip_type,
+                    "return_date": return_date.isoformat() if return_date else None,
+                    "route_limit": route_limit,
+                    "history_limit": history_limit,
+                },
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
     payload, filename = exporting.build_reporting_workbook(
         db,
-        sections=include or (),
+        sections=requested_sections,
         cycle_id=cycle_id,
         airlines=airline,
         origins=origin,

@@ -157,6 +157,7 @@ export function RouteMonitorSectionFallback() {
 }
 
 export async function RouteMonitorSection({
+  requestId,
   cycleId,
   selectedAirlines,
   origin,
@@ -170,6 +171,7 @@ export async function RouteMonitorSection({
   historyLimit,
   recentCycles
 }: {
+  requestId: string;
   cycleId?: string;
   selectedAirlines: string[];
   origin?: string;
@@ -184,6 +186,7 @@ export async function RouteMonitorSection({
   recentCycles: CycleSummary[];
 }) {
   const matrix = await getRouteMonitorMatrixPayload({
+    requestId,
     cycleId,
     airlines: selectedAirlines.length ? selectedAirlines : undefined,
     origins: origin ? [origin] : undefined,
@@ -266,6 +269,7 @@ export async function RouteMonitorSection({
             initialAirlines={selectedAirlines}
             payload={matrix.data!}
             scopeQuery={{
+              requestId,
               cycleId,
               airlines: selectedAirlines,
               origin,
