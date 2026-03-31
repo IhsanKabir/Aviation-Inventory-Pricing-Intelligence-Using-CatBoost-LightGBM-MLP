@@ -11,6 +11,9 @@ from sqlalchemy import create_engine, text
 
 from core.market_priors import apply_market_priors
 from core.holiday_features import add_holiday_features, get_holiday_feature_columns
+from core.booking_curve_features import add_booking_curve_features, get_booking_curve_feature_columns
+from core.route_characteristics import add_route_characteristics, estimate_competition_level, get_route_characteristics_columns
+from core.explainability import compute_shap_feature_importance, format_feature_importance_for_output
 from db import DATABASE_URL as DEFAULT_DATABASE_URL
 
 
@@ -46,6 +49,10 @@ HOLIDAY_FEATURE_COLS = [
     "is_departure_holiday",
     "is_departure_high_demand",
 ]
+
+BOOKING_CURVE_FEATURE_COLS = get_booking_curve_feature_columns()
+
+ROUTE_CHARACTERISTIC_COLS = get_route_characteristics_columns()
 
 AIRLINE_MODEL_CODE = {"hybrid": 0.0, "hub_spoke": 1.0, "lcc": 2.0}
 TRIP_PURPOSE_CODE = {"general": 0.0, "labor_outbound": 1.0, "labor_return": 2.0, "tourism": 3.0}
@@ -376,6 +383,60 @@ def _apply_holiday_features_safe(df: pd.DataFrame, date_column: str = "report_da
         return df
 
 
+def _apply_booking_curve_features_safe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Safely apply booking curve features to DataFrame.
+
+    Args:
+        df: Input DataFrame with 'report_day' and 'departure_day' columns
+
+    Returns:
+        DataFrame with booking curve features added, or original DataFrame if error occurs
+    """
+    if df is None or df.empty:
+        return df
+    if "report_day" not in df.columns or "departure_day" not in df.columns:
+        return df
+    try:
+        return add_booking_curve_features(df, search_date_col="report_day", departure_date_col="departure_day")
+    except Exception as e:
+        # If booking curve feature extraction fails, add zero-filled columns
+        print(f"Warning: Booking curve feature extraction failed: {e}")
+        for col in BOOKING_CURVE_FEATURE_COLS:
+            if col not in df.columns:
+                df[col] = 0
+        return df
+
+
+def _apply_route_characteristics_safe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Safely apply route characteristics to DataFrame.
+
+    Args:
+        df: Input DataFrame with 'origin' and 'destination' columns
+
+    Returns:
+        DataFrame with route characteristics added, or original DataFrame if error occurs
+    """
+    if df is None or df.empty:
+        return df
+    if "origin" not in df.columns or "destination" not in df.columns:
+        return df
+    try:
+        df = add_route_characteristics(df)
+        # Estimate competition level if airline column exists
+        if "airline" in df.columns:
+            df = estimate_competition_level(df, group_cols=["origin", "destination"])
+        return df
+    except Exception as e:
+        # If route characteristics extraction fails, add zero-filled columns
+        print(f"Warning: Route characteristics extraction failed: {e}")
+        for col in ROUTE_CHARACTERISTIC_COLS:
+            if col not in df.columns:
+                df[col] = 0
+        return df
+
+
 def _ml_feature_frame(part: pd.DataFrame, target: str):
     vals = pd.to_numeric(part[target], errors="coerce")
     work = pd.DataFrame(index=part.index)
@@ -403,6 +464,16 @@ def _ml_feature_frame(part: pd.DataFrame, target: str):
 
     # Add holiday features
     for col in HOLIDAY_FEATURE_COLS:
+        if col in part.columns:
+            work[col] = pd.to_numeric(part[col], errors="coerce")
+
+    # Add booking curve features (Phase 2 Priority 2)
+    for col in BOOKING_CURVE_FEATURE_COLS:
+        if col in part.columns:
+            work[col] = pd.to_numeric(part[col], errors="coerce")
+
+    # Add route characteristic features (Phase 2 Priority 3)
+    for col in ROUTE_CHARACTERISTIC_COLS:
         if col in part.columns:
             work[col] = pd.to_numeric(part[col], errors="coerce")
 
@@ -607,13 +678,15 @@ def _clip_to_bounds(value, lower, upper):
     return float(v)
 
 
-def _fit_predict_quantile(model_name: str, model_cls, quantile: float, train_x: pd.DataFrame, train_y: pd.Series, pred_x: pd.DataFrame, seed: int):
+def _fit_predict_quantile(model_name: str, model_cls, quantile: float, train_x: pd.DataFrame, train_y: pd.Series, pred_x: pd.DataFrame, seed: int, return_model=False):
     train_f, pred_f = _fill_ml_features(train_x, pred_x)
     y = pd.to_numeric(train_y, errors="coerce")
     mask = y.notna()
     train_f = train_f.loc[mask]
     y = y.loc[mask]
     if len(y) < 2:
+        if return_model:
+            return None, None, None
         return None
     sample_weight = _recency_weights(len(y))
     lower, upper = _robust_prediction_bounds(y)
@@ -629,7 +702,10 @@ def _fit_predict_quantile(model_name: str, model_cls, quantile: float, train_x: 
         )
         model.fit(train_f, y, sample_weight=sample_weight, verbose=False)
         pred = model.predict(pred_f)
-        return _clip_to_bounds(float(np.asarray(pred).reshape(-1)[0]), lower, upper)
+        result = _clip_to_bounds(float(np.asarray(pred).reshape(-1)[0]), lower, upper)
+        if return_model:
+            return result, model, train_f
+        return result
 
     if model_name == "lightgbm":
         model = model_cls(
@@ -646,8 +722,13 @@ def _fit_predict_quantile(model_name: str, model_cls, quantile: float, train_x: 
         )
         model.fit(train_f, y, sample_weight=sample_weight)
         pred = model.predict(pred_f)
-        return _clip_to_bounds(float(np.asarray(pred).reshape(-1)[0]), lower, upper)
+        result = _clip_to_bounds(float(np.asarray(pred).reshape(-1)[0]), lower, upper)
+        if return_model:
+            return result, model, train_f
+        return result
 
+    if return_model:
+        return None, None, None
     return None
 
 
@@ -804,11 +885,18 @@ def build_next_day_ml_predictions(
         row = {col: key[idx] for idx, col in enumerate(group_cols)}
         row["latest_report_day"] = last_day.date()
         row["predicted_for_day"] = next_day.date()
+
+        # Track q50 model for SHAP computation (Phase 2 Priority 1)
+        q50_model = None
+        q50_features = None
+
         for model_name, model_cls in model_classes.items():
             for q in quantiles:
                 col = f"pred_ml_{model_name}_{_quantile_suffix(q)}"
+                # Capture model and features for q50 CatBoost to compute SHAP
+                return_model = (q == 0.5 and model_name == "catboost")
                 try:
-                    pred = _fit_predict_quantile(
+                    result = _fit_predict_quantile(
                         model_name=model_name,
                         model_cls=model_cls,
                         quantile=q,
@@ -816,10 +904,35 @@ def build_next_day_ml_predictions(
                         train_y=y.loc[train_mask],
                         pred_x=pred_x,
                         seed=random_seed,
+                        return_model=return_model,
                     )
+                    if return_model and result is not None:
+                        pred, q50_model, q50_features = result
+                    else:
+                        pred = result
                 except Exception:
                     pred = None
                 row[col] = pred
+
+        # Compute SHAP feature importance for this prediction (Phase 2 Priority 1)
+        if q50_model is not None and q50_features is not None:
+            try:
+                importance_dict = compute_shap_feature_importance(
+                    q50_model, q50_features, model_type="tree"
+                )
+                shap_output = format_feature_importance_for_output(importance_dict, top_n=5)
+                row.update(shap_output)
+            except Exception:
+                # If SHAP fails, add empty columns
+                for i in range(1, 6):
+                    row[f"shap_feature_{i}"] = None
+                    row[f"shap_value_{i}"] = None
+        else:
+            # No model available, add empty SHAP columns
+            for i in range(1, 6):
+                row[f"shap_feature_{i}"] = None
+                row[f"shap_value_{i}"] = None
+
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -965,9 +1078,13 @@ def load_daily_frame(args):
         if not fallback.empty and fallback["report_day"].nunique() >= 2:
             fallback = _apply_market_priors_safe(fallback)
             fallback = _apply_holiday_features_safe(fallback)
+            fallback = _apply_booking_curve_features_safe(fallback)
+            fallback = _apply_route_characteristics_safe(fallback)
             return fallback
     df = _apply_market_priors_safe(df)
     df = _apply_holiday_features_safe(df)
+    df = _apply_booking_curve_features_safe(df)
+    df = _apply_route_characteristics_safe(df)
     return df
 
 
@@ -1035,6 +1152,8 @@ def load_search_dynamic_frame(args):
         df = pd.read_sql(sql, conn, params=params)
     df = _apply_market_priors_safe(df)
     df = _apply_holiday_features_safe(df)
+    df = _apply_booking_curve_features_safe(df)
+    df = _apply_route_characteristics_safe(df)
     return df
 
 
@@ -1722,6 +1841,10 @@ def main():
         next_day_df = _clip_prediction_columns(next_day_df, target=target, pred_cols=next_pred_cols)
         # Add prediction confidence bands
         next_day_df = add_prediction_confidence(next_day_df, target=target, route_eval=route_eval, group_cols=group_cols)
+
+    # SHAP feature importance is computed in build_next_day_ml_predictions() (Phase 2 Priority 1)
+    # Each prediction row includes shap_feature_1-5 and shap_value_1-5 columns
+
     trend_df = build_trend_summary(history_df, target=target, group_cols=group_cols)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
