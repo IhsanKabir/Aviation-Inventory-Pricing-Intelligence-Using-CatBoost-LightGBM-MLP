@@ -30,6 +30,76 @@ def _parse_iso_date_list(values: list[Any]) -> list[str]:
     return parsed
 
 
+def _drop_past_iso_dates(values: list[str], *, today: date) -> list[str]:
+    kept: list[str] = []
+    for value in values or []:
+        normalized = normalize_iso_date(value)
+        if not normalized:
+            continue
+        try:
+            parsed = date.fromisoformat(normalized)
+        except Exception:
+            continue
+        if parsed < today:
+            continue
+        if normalized not in kept:
+            kept.append(normalized)
+    return kept
+
+
+def _has_future_iso_date(values: list[str], *, today: date) -> bool:
+    for value in values or []:
+        normalized = normalize_iso_date(value)
+        if not normalized:
+            continue
+        try:
+            parsed = date.fromisoformat(normalized)
+        except Exception:
+            continue
+        if parsed > today:
+            return True
+    return False
+
+
+def _ensure_at_least_one_future_iso_date(values: list[str], *, today: date) -> list[str]:
+    normalized = _drop_past_iso_dates(values, today=today)
+    if _has_future_iso_date(normalized, today=today):
+        return normalized
+    fallback = (today + timedelta(days=1)).isoformat()
+    if fallback not in normalized:
+        normalized.append(fallback)
+    return normalized
+
+
+def _ensure_weekday_coverage(values: list[str], *, today: date) -> list[str]:
+    normalized = _drop_past_iso_dates(values, today=today)
+    present_weekdays: set[int] = set()
+    anchor_date = today
+    for value in normalized:
+        try:
+            parsed = date.fromisoformat(value)
+        except Exception:
+            continue
+        present_weekdays.add(parsed.weekday())
+        if parsed > anchor_date:
+            anchor_date = parsed
+
+    additions: list[str] = []
+    anchor_weekday = anchor_date.weekday()
+    for weekday in range(7):
+        if weekday in present_weekdays:
+            continue
+        delta = (weekday - anchor_weekday) % 7
+        if delta == 0:
+            delta = 7
+        candidate = (anchor_date + timedelta(days=delta)).isoformat()
+        if candidate not in normalized and candidate not in additions:
+            additions.append(candidate)
+
+    additions.sort()
+    return normalized + additions
+
+
 def _parse_offset_csv(raw: Any) -> list[int]:
     values: list[int] = []
     seen: set[int] = set()
@@ -61,33 +131,39 @@ def _expand_offset_range(start_raw: Any, end_raw: Any) -> list[int]:
 
 def _extract_dates_from_obj(obj: Any, today: date) -> list[str]:
     if isinstance(obj, list):
-        return _parse_iso_date_list(obj)
+        return _drop_past_iso_dates(_parse_iso_date_list(obj), today=today)
 
     if not isinstance(obj, dict):
         return []
 
     if isinstance(obj.get("dates"), list):
-        parsed = _parse_iso_date_list(obj["dates"])
+        parsed = _drop_past_iso_dates(_parse_iso_date_list(obj["dates"]), today=today)
         if parsed:
             return parsed
     if isinstance(obj.get("dates"), str):
-        parsed = _parse_iso_date_list(str(obj["dates"]).split(","))
+        parsed = _drop_past_iso_dates(_parse_iso_date_list(str(obj["dates"]).split(",")), today=today)
         if parsed:
             return parsed
 
     if obj.get("date_start") and obj.get("date_end"):
-        parsed = expand_iso_date_range(obj.get("date_start"), obj.get("date_end"))
+        parsed = _drop_past_iso_dates(expand_iso_date_range(obj.get("date_start"), obj.get("date_end")), today=today)
         if parsed:
             return parsed
     elif obj.get("date_start") or obj.get("date_end"):
-        parsed = _parse_iso_date_list([obj.get("date_start") or obj.get("date_end")])
+        parsed = _drop_past_iso_dates(
+            _parse_iso_date_list([obj.get("date_start") or obj.get("date_end")]),
+            today=today,
+        )
         if parsed:
             return parsed
 
     if isinstance(obj.get("date_range"), dict):
-        parsed = expand_iso_date_range(
-            obj["date_range"].get("start") or obj["date_range"].get("date_start"),
-            obj["date_range"].get("end") or obj["date_range"].get("date_end"),
+        parsed = _drop_past_iso_dates(
+            expand_iso_date_range(
+                obj["date_range"].get("start") or obj["date_range"].get("date_start"),
+                obj["date_range"].get("end") or obj["date_range"].get("date_end"),
+            ),
+            today=today,
         )
         if parsed:
             return parsed
@@ -97,9 +173,12 @@ def _extract_dates_from_obj(obj: Any, today: date) -> list[str]:
         for item in obj["date_ranges"]:
             if not isinstance(item, dict):
                 continue
-            parsed = expand_iso_date_range(
-                item.get("start") or item.get("date_start"),
-                item.get("end") or item.get("date_end"),
+            parsed = _drop_past_iso_dates(
+                expand_iso_date_range(
+                    item.get("start") or item.get("date_start"),
+                    item.get("end") or item.get("date_end"),
+                ),
+                today=today,
             )
             for value in parsed:
                 if value not in merged:
@@ -159,6 +238,7 @@ def _extract_dates_from_obj(obj: Any, today: date) -> list[str]:
 def _extract_return_selectors_from_obj(
     obj: Any,
     *,
+    today: date,
     source_label: str,
     logger: logging.Logger | None = None,
 ) -> tuple[list[str], list[int]]:
@@ -171,7 +251,9 @@ def _extract_return_selectors_from_obj(
     def _add_dates(values: list[str]) -> None:
         for value in values:
             if value and value not in return_dates:
-                return_dates.append(value)
+                normalized = _drop_past_iso_dates([value], today=today)
+                if normalized and normalized[0] not in return_dates:
+                    return_dates.append(normalized[0])
 
     def _add_offsets(values: list[int]) -> None:
         for value in values:
@@ -637,6 +719,7 @@ def load_route_trip_overrides(
             outbound_dates = _extract_dates_from_obj(effective_item, today=today)
             return_dates, return_offsets = _extract_return_selectors_from_obj(
                 effective_item,
+                today=today,
                 source_label=f"{path}[{index}]",
                 logger=logger,
             )
@@ -699,6 +782,7 @@ def match_route_trip_override(
 
 def resolve_route_trip_plan(
     *,
+    today: date,
     base_outbound_dates: list[str],
     base_trip_type: str,
     base_return_dates: list[str],
@@ -726,6 +810,9 @@ def resolve_route_trip_plan(
 
     if limit_dates and limit_dates > 0:
         outbound_dates = outbound_dates[:limit_dates]
+
+    outbound_dates = _ensure_at_least_one_future_iso_date(outbound_dates, today=today)
+    outbound_dates = _ensure_weekday_coverage(outbound_dates, today=today)
 
     if trip_type == TRIP_TYPE_ONE_WAY:
         return_dates = []

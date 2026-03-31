@@ -14,6 +14,55 @@ from core.trip_config import (
 
 
 class RouteTripConfigTests(unittest.TestCase):
+    def test_load_route_trip_overrides_drops_past_absolute_outbound_dates(self):
+        payload = {
+            "routes": [
+                {
+                    "airline": "BG",
+                    "route": "DAC-CXB",
+                    "trip_type": "OW",
+                    "dates": ["2026-03-09", "2026-03-10", "2026-03-11", "2026-03-15"],
+                }
+            ]
+        }
+        temp_dir = Path("output/test_tmp")
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        path = temp_dir / f"route_trip_windows_{uuid4().hex}.json"
+        try:
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            overrides = load_route_trip_overrides(path, today=date(2026, 3, 10))
+        finally:
+            if path.exists():
+                path.unlink()
+
+        self.assertEqual(1, len(overrides))
+        self.assertEqual(["2026-03-10", "2026-03-11", "2026-03-15"], overrides[0]["outbound_dates"])
+
+    def test_load_route_trip_overrides_drops_past_absolute_return_dates(self):
+        payload = {
+            "routes": [
+                {
+                    "airline": "BG",
+                    "route": "DAC-CXB",
+                    "trip_type": "RT",
+                    "dates": ["2026-03-10"],
+                    "return_dates": ["2026-03-09", "2026-03-10", "2026-03-12"],
+                }
+            ]
+        }
+        temp_dir = Path("output/test_tmp")
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        path = temp_dir / f"route_trip_windows_{uuid4().hex}.json"
+        try:
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            overrides = load_route_trip_overrides(path, today=date(2026, 3, 10))
+        finally:
+            if path.exists():
+                path.unlink()
+
+        self.assertEqual(1, len(overrides))
+        self.assertEqual(["2026-03-10", "2026-03-12"], overrides[0]["return_dates"])
+
     def test_load_route_trip_overrides_supports_route_string_and_offsets(self):
         payload = {
             "routes": [
@@ -541,6 +590,7 @@ class RouteTripConfigTests(unittest.TestCase):
         }
 
         plan = resolve_route_trip_plan(
+            today=date(2026, 3, 10),
             base_outbound_dates=["2026-03-10"],
             base_trip_type="OW",
             base_return_dates=[],
@@ -550,13 +600,34 @@ class RouteTripConfigTests(unittest.TestCase):
         )
 
         self.assertEqual("RT", plan["trip_type"])
-        self.assertEqual(["2026-03-12", "2026-03-13"], plan["outbound_dates"])
+        self.assertEqual(
+            [
+                "2026-03-12",
+                "2026-03-13",
+                "2026-03-14",
+                "2026-03-15",
+                "2026-03-16",
+                "2026-03-17",
+                "2026-03-18",
+            ],
+            plan["outbound_dates"],
+        )
         self.assertEqual(
             [
                 {"departure_date": "2026-03-12", "return_date": "2026-03-14", "trip_type": "RT"},
                 {"departure_date": "2026-03-12", "return_date": "2026-03-17", "trip_type": "RT"},
                 {"departure_date": "2026-03-13", "return_date": "2026-03-15", "trip_type": "RT"},
                 {"departure_date": "2026-03-13", "return_date": "2026-03-18", "trip_type": "RT"},
+                {"departure_date": "2026-03-14", "return_date": "2026-03-16", "trip_type": "RT"},
+                {"departure_date": "2026-03-14", "return_date": "2026-03-19", "trip_type": "RT"},
+                {"departure_date": "2026-03-15", "return_date": "2026-03-17", "trip_type": "RT"},
+                {"departure_date": "2026-03-15", "return_date": "2026-03-20", "trip_type": "RT"},
+                {"departure_date": "2026-03-16", "return_date": "2026-03-18", "trip_type": "RT"},
+                {"departure_date": "2026-03-16", "return_date": "2026-03-21", "trip_type": "RT"},
+                {"departure_date": "2026-03-17", "return_date": "2026-03-19", "trip_type": "RT"},
+                {"departure_date": "2026-03-17", "return_date": "2026-03-22", "trip_type": "RT"},
+                {"departure_date": "2026-03-18", "return_date": "2026-03-20", "trip_type": "RT"},
+                {"departure_date": "2026-03-18", "return_date": "2026-03-23", "trip_type": "RT"},
             ],
             plan["search_windows"],
         )
@@ -574,6 +645,7 @@ class RouteTripConfigTests(unittest.TestCase):
         }
 
         plan = resolve_route_trip_plan(
+            today=date(2026, 3, 10),
             base_outbound_dates=["2026-03-10", "2026-03-12"],
             base_trip_type="RT",
             base_return_dates=["2026-03-15"],
@@ -587,8 +659,108 @@ class RouteTripConfigTests(unittest.TestCase):
             [
                 {"departure_date": "2026-03-10", "return_date": None, "trip_type": "OW"},
                 {"departure_date": "2026-03-12", "return_date": None, "trip_type": "OW"},
+                {"departure_date": "2026-03-13", "return_date": None, "trip_type": "OW"},
+                {"departure_date": "2026-03-14", "return_date": None, "trip_type": "OW"},
+                {"departure_date": "2026-03-15", "return_date": None, "trip_type": "OW"},
+                {"departure_date": "2026-03-16", "return_date": None, "trip_type": "OW"},
+                {"departure_date": "2026-03-18", "return_date": None, "trip_type": "OW"},
             ],
             plan["search_windows"],
+        )
+
+    def test_resolve_route_trip_plan_adds_future_anchor_when_only_today_remains(self):
+        plan = resolve_route_trip_plan(
+            today=date(2026, 3, 31),
+            base_outbound_dates=["2026-03-31"],
+            base_trip_type="OW",
+            base_return_dates=[],
+            base_return_offsets=[],
+            route_override=None,
+            limit_dates=1,
+        )
+
+        self.assertEqual(
+            [
+                "2026-03-31",
+                "2026-04-01",
+                "2026-04-02",
+                "2026-04-03",
+                "2026-04-04",
+                "2026-04-05",
+                "2026-04-06",
+            ],
+            plan["outbound_dates"],
+        )
+        self.assertEqual(
+            [
+                {"departure_date": "2026-03-31", "return_date": None, "trip_type": "OW"},
+                {"departure_date": "2026-04-01", "return_date": None, "trip_type": "OW"},
+                {"departure_date": "2026-04-02", "return_date": None, "trip_type": "OW"},
+                {"departure_date": "2026-04-03", "return_date": None, "trip_type": "OW"},
+                {"departure_date": "2026-04-04", "return_date": None, "trip_type": "OW"},
+                {"departure_date": "2026-04-05", "return_date": None, "trip_type": "OW"},
+                {"departure_date": "2026-04-06", "return_date": None, "trip_type": "OW"},
+            ],
+            plan["search_windows"],
+        )
+
+    def test_resolve_route_trip_plan_drops_past_override_dates_and_keeps_future_anchor(self):
+        route_override = {
+            "airline": "BG",
+            "origin": "DAC",
+            "destination": "CXB",
+            "trip_type": "OW",
+            "outbound_dates": ["2026-03-10", "2026-03-31"],
+            "return_dates": [],
+            "return_offsets": [],
+            "source": "route_trip_windows.json[0]",
+        }
+
+        plan = resolve_route_trip_plan(
+            today=date(2026, 3, 31),
+            base_outbound_dates=["2026-03-31"],
+            base_trip_type="OW",
+            base_return_dates=[],
+            base_return_offsets=[],
+            route_override=route_override,
+            limit_dates=None,
+        )
+
+        self.assertEqual(
+            [
+                "2026-03-31",
+                "2026-04-01",
+                "2026-04-02",
+                "2026-04-03",
+                "2026-04-04",
+                "2026-04-05",
+                "2026-04-06",
+            ],
+            plan["outbound_dates"],
+        )
+
+    def test_resolve_route_trip_plan_extends_missing_weekdays(self):
+        plan = resolve_route_trip_plan(
+            today=date(2026, 3, 31),
+            base_outbound_dates=["2026-04-01", "2026-04-03"],
+            base_trip_type="OW",
+            base_return_dates=[],
+            base_return_offsets=[],
+            route_override=None,
+            limit_dates=None,
+        )
+
+        self.assertEqual(
+            [
+                "2026-04-01",
+                "2026-04-03",
+                "2026-04-04",
+                "2026-04-05",
+                "2026-04-06",
+                "2026-04-07",
+                "2026-04-09",
+            ],
+            plan["outbound_dates"],
         )
 
 

@@ -108,6 +108,131 @@ class OutputWriter:
         return int(sum(int(weekday_typical.get(day, 0) or 0) for day in day_order))
 
     @staticmethod
+    def _date_span_summary(frame: pd.DataFrame) -> str:
+        if frame is None or frame.empty or "flight_date" not in frame.columns:
+            return "--"
+        dates = pd.to_datetime(frame["flight_date"], errors="coerce").dropna()
+        if dates.empty:
+            return "--"
+        dep_min = dates.min()
+        dep_max = dates.max()
+        day_count = int(dates.dt.normalize().nunique())
+        if pd.isna(dep_min) or pd.isna(dep_max):
+            return "--"
+        if dep_min.date() == dep_max.date():
+            return f"{dep_min.strftime('%d %b %Y')} ({day_count} date)"
+        return f"{dep_min.strftime('%d %b')} to {dep_max.strftime('%d %b')} ({day_count} dates)"
+
+    @staticmethod
+    def _future_pattern_signal(frame: pd.DataFrame, day_order: list[str]) -> str:
+        required = {"day_name", "flight_date", "flight_key", "departure_time"}
+        if frame is None or frame.empty or not required.issubset(set(frame.columns)):
+            return "--"
+
+        base = frame[["day_name", "flight_date", "flight_key", "departure_time"]].copy()
+        base["flight_date"] = pd.to_datetime(base["flight_date"], errors="coerce")
+        base["departure_time"] = base["departure_time"].astype(str).str.strip().str.slice(0, 5)
+        base.loc[base["departure_time"].isin({"", "None", "nan", "NaT"}), "departure_time"] = pd.NA
+        base = base.dropna(subset=["day_name", "flight_date", "flight_key"])
+        if base.empty:
+            return "--"
+
+        daily_counts = (
+            base.groupby(["day_name", "flight_date"])["flight_key"]
+            .nunique()
+            .reset_index(name="flight_count")
+        )
+        count_var_days = []
+        for day_name, grp in daily_counts.groupby("day_name", sort=False):
+            values = sorted({int(v) for v in pd.to_numeric(grp["flight_count"], errors="coerce").dropna().tolist()})
+            if len(values) > 1:
+                count_var_days.append(str(day_name))
+
+        timing_view = base.dropna(subset=["departure_time"]).copy()
+        time_var_days = []
+        if not timing_view.empty:
+            timing_sets = (
+                timing_view.groupby(["day_name", "flight_date"])["departure_time"]
+                .agg(lambda s: tuple(sorted({str(v) for v in s if str(v).strip()})))
+                .reset_index(name="timings")
+            )
+            for day_name, grp in timing_sets.groupby("day_name", sort=False):
+                timing_patterns = {tuple(v) for v in grp["timings"].tolist() if isinstance(v, tuple)}
+                if len(timing_patterns) > 1:
+                    time_var_days.append(str(day_name))
+
+        day_rank = {day: idx for idx, day in enumerate(day_order or [])}
+
+        def _abbr(days):
+            ordered = sorted({str(d) for d in days}, key=lambda d: day_rank.get(d, 999))
+            return ", ".join([d[:3] for d in ordered])
+
+        count_text = "Count: Stable"
+        time_text = "Times: Stable"
+        if count_var_days:
+            count_text = f"Count: {_abbr(count_var_days)}"
+        if time_var_days:
+            time_text = f"Times: {_abbr(time_var_days)}"
+        return f"{count_text} | {time_text}"
+
+    @staticmethod
+    def _build_ops_baseline_frame(
+        current_df: pd.DataFrame,
+        history_df: pd.DataFrame | None = None,
+    ) -> tuple[pd.DataFrame, str]:
+        """
+        Build a deduplicated flight-occurrence frame for ops reporting.
+
+        Prefer historical capture observations when available so schedule-style
+        counts reflect the usual route pattern rather than only the latest
+        comparison slice. Each flight/date/time is counted once regardless of
+        how many captures saw it.
+        """
+        candidates = []
+        if isinstance(history_df, pd.DataFrame) and not history_df.empty:
+            candidates.append(("historical capture dates", history_df.copy()))
+        candidates.append(("current comparison slice", current_df.copy()))
+
+        required = {"airline", "route", "flight_number", "flight_date", "departure_time"}
+        for source_label, frame in candidates:
+            if frame is None or frame.empty or not required.issubset(set(frame.columns)):
+                continue
+            work = frame.copy()
+            work["airline"] = work["airline"].astype(str).str.upper().str.strip()
+            work["route"] = work["route"].astype(str).str.strip()
+            work["flight_number"] = work["flight_number"].astype(str).str.strip()
+            work["flight_date"] = pd.to_datetime(work["flight_date"], errors="coerce")
+            work["departure_time"] = work["departure_time"].astype(str).str.strip().str.slice(0, 5)
+            work.loc[work["departure_time"].isin({"", "None", "nan", "NaT"}), "departure_time"] = pd.NA
+            work = work.dropna(subset=["airline", "route", "flight_number", "flight_date", "departure_time"]).copy()
+            if work.empty:
+                continue
+
+            work["day_name"] = work["flight_date"].dt.day_name()
+            if "aircraft" not in work.columns:
+                work["aircraft"] = pd.NA
+            work["aircraft"] = work["aircraft"].fillna("Aircraft NA").astype(str)
+            if "departure" in work.columns:
+                work["departure"] = pd.to_datetime(work["departure"], errors="coerce")
+            if "arrival" in work.columns:
+                work["arrival"] = pd.to_datetime(work["arrival"], errors="coerce")
+
+            work["flight_key"] = (
+                work["airline"].astype(str)
+                + "|"
+                + work["flight_number"].astype(str)
+                + "|"
+                + work["departure_time"].astype(str)
+            )
+            work = work.drop_duplicates(
+                subset=["route", "airline", "flight_number", "flight_date", "departure_time"],
+                keep="last",
+            ).copy()
+            return work, source_label
+
+        return pd.DataFrame(columns=["airline", "route", "flight_number", "flight_date", "departure_time", "day_name", "aircraft", "flight_key"]), "no usable ops baseline"
+
+    @staticmethod
     def _bool_label(value):
         if OutputWriter._is_na(value):
             return "--"
@@ -680,7 +805,12 @@ class OutputWriter:
         sheet.set_column(data_start_col, data_start_col + len(date_cols) - 1, 10, None, {"hidden": True})
         sheet.freeze_panes(3, 0)
 
-    def _write_airline_ops_compare(self, workbook, df: pd.DataFrame):
+    def _write_airline_ops_compare(
+        self,
+        workbook,
+        df: pd.DataFrame,
+        full_capture_history: pd.DataFrame | None = None,
+    ):
         sheet = workbook.add_worksheet("Airline Ops Compare")
         day_order = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
         cfg = self._style_cfg()
@@ -703,17 +833,11 @@ class OutputWriter:
             sheet.write(2, 0, "Insufficient columns to build comparison sheet.", fmt_cell)
             return
 
-        working = df.copy()
-        working["airline"] = working["airline"].astype(str).str.upper()
-        working["route"] = working["route"].astype(str)
-        working["departure_time"] = working["departure_time"].astype(str)
-        working["flight_date"] = pd.to_datetime(working["flight_date"], errors="coerce")
-        working["day_name"] = working["flight_date"].dt.day_name()
-        working["aircraft"] = working["aircraft"].fillna("Aircraft NA").astype(str)
-        if "departure" in working.columns:
-            working["departure"] = pd.to_datetime(working["departure"], errors="coerce")
-        if "arrival" in working.columns:
-            working["arrival"] = pd.to_datetime(working["arrival"], errors="coerce")
+        working, ops_source_label = self._build_ops_baseline_frame(df, full_capture_history)
+        if working.empty:
+            sheet.write(0, 0, "Airline Ops Compare", fmt_title)
+            sheet.write(2, 0, "No historical/current flight observations available to build operations sheet.", fmt_cell)
+            return
 
         airlines = sorted([a for a in working["airline"].dropna().unique() if str(a).strip()])
         airline_theme = self._airline_theme_map(airlines)
@@ -749,7 +873,8 @@ class OutputWriter:
         sheet.write(2, legend_col, "Heatmap columns: Daily / Weekly", fmt_cell)
         legend_note = (
             "LB = peak concurrent flights from observed search results (lower bound, not exact fleet). "
-            "Fleet Coverage = LB / Website Fleet Count. Daily/Weekly counts use typical integer flights from observed dates, not fractional averages."
+            "Fleet Coverage = LB / Website Fleet Count. Daily/Weekly counts use typical integer flights from observed dates, not fractional averages. "
+            f"Ops baseline source: {ops_source_label}."
         )
         sheet.merge_range(3, 0, 3, max(6, legend_col + 2), legend_note, fmt_note)
         self._write_methodology_note(sheet, 0, max(10, legend_col + 4), workbook)
@@ -772,8 +897,10 @@ class OutputWriter:
             "Fleet Coverage (LB/Website)",
             "Known Seat Capacities",
             "Observed Routes",
+            "Date Span",
             "Typical Daily Flights",
             "Typical Weekly Flights",
+            "Future Pattern",
             "First/Last Departure",
         ]
         fleet_start_row = row
@@ -790,6 +917,8 @@ class OutputWriter:
                 daily_counts = self._daily_flight_counts(sub)
                 typical_daily = self._dominant_integer(daily_counts.tolist())
                 typical_weekly = self._typical_weekday_count_sum(sub, day_order)
+                date_span = self._date_span_summary(sub)
+                future_pattern = self._future_pattern_signal(sub, day_order)
 
                 known_rows = inventory_map.get(airline, [])
                 known_types = self._join_limited([r.get("aircraft_type") for r in known_rows], limit=8) if known_rows else "--"
@@ -816,10 +945,14 @@ class OutputWriter:
                     value = known_caps
                 elif metric == "Observed Routes":
                     value = route_n
+                elif metric == "Date Span":
+                    value = date_span
                 elif metric == "Typical Daily Flights":
                     value = typical_daily
                 elif metric == "Typical Weekly Flights":
                     value = typical_weekly
+                elif metric == "Future Pattern":
+                    value = future_pattern
                 elif metric == "First/Last Departure":
                     value = f"{first_dep} - {last_dep}"
 
@@ -843,7 +976,16 @@ class OutputWriter:
         # Section B: Route comparison side-by-side
         # -------------------------
         row += 2
-        sheet.write(row, 0, "B) Route Operations (Side-by-Side)", fmt_section)
+        sheet.write(row, 0, "B) Route Operations Baseline (Historical + Future-Dated)", fmt_section)
+        row += 1
+        sheet.merge_range(
+            row,
+            0,
+            row,
+            max(6, len(airlines) * 5),
+            "Daily/Weekly show the usual pattern for each airline-route from historical observations. Pattern highlights whether future departure dates stay stable or vary.",
+            fmt_note,
+        )
         row += 1
 
         route_daily_counts = (
@@ -866,6 +1008,17 @@ class OutputWriter:
                 aircraft_types=("aircraft", lambda s: sorted({str(v) for v in s if str(v).strip()})),
             )
         )
+        route_span_pattern_rows = []
+        for (airline_code, route_code), grp in working.groupby(["airline", "route"], sort=False):
+            route_span_pattern_rows.append(
+                {
+                    "airline": airline_code,
+                    "route": route_code,
+                    "date_span": self._date_span_summary(grp),
+                    "future_pattern": self._future_pattern_signal(grp, day_order),
+                }
+            )
+        route_span_pattern = pd.DataFrame(route_span_pattern_rows)
         grp = (
             route_daily_counts.groupby(["airline", "route"], as_index=False)
             .agg(
@@ -873,6 +1026,7 @@ class OutputWriter:
                 typical_daily_flights=("daily_flights", lambda s: self._dominant_integer(list(s))),
             )
             .merge(route_weekly, on=["airline", "route"], how="left")
+            .merge(route_span_pattern, on=["airline", "route"], how="left")
             .merge(route_timings, on=["airline", "route"], how="left")
         )
         route_rows = sorted(grp["route"].dropna().unique().tolist())
@@ -881,12 +1035,12 @@ class OutputWriter:
         sheet.write(row, 0, "Route", fmt_header)
         col = 1
         for airline in airlines:
-            sheet.merge_range(row, col, row, col + 3, airline, fmt_airline_header.get(airline, fmt_header))
-            col += 4
+            sheet.merge_range(row, col, row, col + 4, airline, fmt_airline_header.get(airline, fmt_header))
+            col += 5
         row += 1
         sheet.write(row, 0, "Route", fmt_header)
         col = 1
-        metric_labels = ["Daily", "Weekly", "Days", "Timings"]
+        metric_labels = ["Daily", "Weekly", "Date Span", "Pattern Detail", "Timings"]
         for airline in airlines:
             for m in metric_labels:
                 sheet.write(row, col, m, fmt_airline_subheader.get(airline, fmt_header))
@@ -902,25 +1056,28 @@ class OutputWriter:
                 if m.empty:
                     daily_avg = "--"
                     weekly_est = "--"
-                    op_days = "--"
+                    date_span = "--"
+                    future_pattern = "--"
                     timings = "--"
                 else:
                     rec = m.iloc[0]
-                    op_days = int(rec["operating_days"]) if pd.notna(rec["operating_days"]) else 0
                     daily_avg = int(rec["typical_daily_flights"]) if pd.notna(rec.get("typical_daily_flights")) else 0
                     weekly_est = int(rec["typical_weekly_flights"]) if pd.notna(rec.get("typical_weekly_flights")) else 0
+                    date_span = str(rec.get("date_span") or "--")
+                    future_pattern = str(rec.get("future_pattern") or "--")
                     timings = self._join_limited(rec["timings"], limit=8)
                 sheet.write(row, col, daily_avg, fmt_airline_center.get(airline, fmt_center))
                 sheet.write(row, col + 1, weekly_est, fmt_airline_center.get(airline, fmt_center))
-                sheet.write(row, col + 2, op_days, fmt_airline_center.get(airline, fmt_center))
-                sheet.write(row, col + 3, timings, fmt_airline_cell.get(airline, fmt_cell))
-                col += 4
+                sheet.write(row, col + 2, date_span, fmt_airline_cell.get(airline, fmt_cell))
+                sheet.write(row, col + 3, future_pattern, fmt_airline_cell.get(airline, fmt_cell))
+                sheet.write(row, col + 4, timings, fmt_airline_cell.get(airline, fmt_cell))
+                col += 5
             row += 1
         routes_end_row = row - 1
 
         # color-scale per airline daily/weekly columns
         for idx in range(len(airlines)):
-            base = 1 + idx * 4
+            base = 1 + idx * 5
             if routes_end_row >= routes_start_row:
                 sheet.conditional_format(routes_start_row, base, routes_end_row, base, {"type": "3_color_scale"})
                 sheet.conditional_format(routes_start_row, base + 1, routes_end_row, base + 1, {"type": "3_color_scale"})
@@ -929,7 +1086,16 @@ class OutputWriter:
         # Section C: Route x Day operations (typical flights + timings)
         # -------------------------
         row += 2
-        sheet.write(row, 0, "C) Route-Day Operations (Typical Integer Flights + Timings)", fmt_section)
+        sheet.write(row, 0, "C) Route-Day Total Operations Across Airlines (Historical Baseline + Timings)", fmt_section)
+        row += 1
+        sheet.merge_range(
+            row,
+            0,
+            row,
+            max(6, len(day_order) + 1),
+            "Σ = route total across all listed airlines for that weekday. Each cell shows the airline breakdown and departure times from the historical ops baseline.",
+            fmt_note,
+        )
         row += 1
 
         day_timings = (
@@ -961,7 +1127,7 @@ class OutputWriter:
                         tms = self._join_limited(rec.get("timings") or [], limit=None)
                         entries.append(f"{ac}:{fl}[{tms}]")
                     details = self._join_limited(entries, limit=None)
-                    value = f"Î£{total} | {details}"
+                    value = f"\u03A3{total} | {details}"
                     fmt = fmt_cell
                 sheet.write(row, 1 + i, value, fmt)
             row += 1
@@ -2698,7 +2864,7 @@ class OutputWriter:
             )
 
         sheet.freeze_panes(5, 3)
-        self._write_airline_ops_compare(workbook, df)
+        self._write_airline_ops_compare(workbook, df, full_capture_history=full_capture_history)
         self._write_changes_summary(workbook, df)
         self._write_fare_trend_sparklines(workbook, df)
         self._write_penalty_comparison(workbook, df)

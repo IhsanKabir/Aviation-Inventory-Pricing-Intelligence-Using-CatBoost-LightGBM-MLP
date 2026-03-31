@@ -44,6 +44,7 @@ from core.trip_context import (
     build_trip_context,
     build_trip_search_windows,
     expand_iso_date_range,
+    normalize_iso_date,
     normalize_trip_type,
 )
 from core.offer_identity import (
@@ -271,6 +272,79 @@ def _parse_return_offsets(raw: str | None) -> list[int]:
     return normalized
 
 
+def _drop_past_iso_dates(values: list[str], *, today: datetime.date) -> list[str]:
+    kept = []
+    for value in values or []:
+        normalized = normalize_iso_date(value)
+        if not normalized:
+            continue
+        try:
+            parsed = datetime.date.fromisoformat(normalized)
+        except Exception:
+            continue
+        if parsed < today:
+            continue
+        if normalized not in kept:
+            kept.append(normalized)
+    return kept
+
+
+def _has_future_iso_date(values: list[str], *, today: datetime.date) -> bool:
+    for value in values or []:
+        normalized = normalize_iso_date(value)
+        if not normalized:
+            continue
+        try:
+            parsed = datetime.date.fromisoformat(normalized)
+        except Exception:
+            continue
+        if parsed > today:
+            return True
+    return False
+
+
+def _ensure_at_least_one_future_iso_date(values: list[str], *, today: datetime.date) -> list[str]:
+    normalized = _drop_past_iso_dates(values, today=today)
+    if _has_future_iso_date(normalized, today=today):
+        return normalized
+    fallback = (today + datetime.timedelta(days=1)).isoformat()
+    if fallback not in normalized:
+        normalized.append(fallback)
+    return normalized
+
+
+def _ensure_weekday_coverage(values: list[str], *, today: datetime.date) -> list[str]:
+    normalized = _drop_past_iso_dates(values, today=today)
+    present_weekdays: set[int] = set()
+    anchor_date = today
+    for value in normalized:
+        normalized_value = normalize_iso_date(value)
+        if not normalized_value:
+            continue
+        try:
+            parsed = datetime.date.fromisoformat(normalized_value)
+        except Exception:
+            continue
+        present_weekdays.add(parsed.weekday())
+        if parsed > anchor_date:
+            anchor_date = parsed
+
+    additions = []
+    anchor_weekday = anchor_date.weekday()
+    for weekday in range(7):
+        if weekday in present_weekdays:
+            continue
+        delta = (weekday - anchor_weekday) % 7
+        if delta == 0:
+            delta = 7
+        candidate = (anchor_date + datetime.timedelta(days=delta)).isoformat()
+        if candidate not in normalized and candidate not in additions:
+            additions.append(candidate)
+
+    additions.sort()
+    return normalized + additions
+
+
 def _load_dates_from_file(path: Path, today: datetime.date) -> list[str]:
     if not path.exists():
         return []
@@ -290,25 +364,28 @@ def _load_dates_from_file(path: Path, today: datetime.date) -> list[str]:
     # 4) {"day_offset_range":{"start":7,"end":10}} or {"day_offset_ranges":[...]}
     # Return-date selectors are handled separately by _load_return_selectors_from_file.
     if isinstance(obj, list):
-        return _parse_iso_date_list(obj)
+        return _drop_past_iso_dates(_parse_iso_date_list(obj), today=today)
 
     if isinstance(obj, dict):
         if isinstance(obj.get("dates"), list):
-            parsed = _parse_iso_date_list(obj["dates"])
+            parsed = _drop_past_iso_dates(_parse_iso_date_list(obj["dates"]), today=today)
             if parsed:
                 return parsed
         if obj.get("date_start") and obj.get("date_end"):
-            parsed = _expand_date_range(obj.get("date_start"), obj.get("date_end"))
+            parsed = _drop_past_iso_dates(_expand_date_range(obj.get("date_start"), obj.get("date_end")), today=today)
             if parsed:
                 return parsed
         if obj.get("start_date") and obj.get("end_date"):
-            parsed = _expand_date_range(obj.get("start_date"), obj.get("end_date"))
+            parsed = _drop_past_iso_dates(_expand_date_range(obj.get("start_date"), obj.get("end_date")), today=today)
             if parsed:
                 return parsed
         if isinstance(obj.get("date_range"), dict):
-            parsed = _expand_date_range(
-                obj["date_range"].get("start") or obj["date_range"].get("date_start"),
-                obj["date_range"].get("end") or obj["date_range"].get("date_end"),
+            parsed = _drop_past_iso_dates(
+                _expand_date_range(
+                    obj["date_range"].get("start") or obj["date_range"].get("date_start"),
+                    obj["date_range"].get("end") or obj["date_range"].get("date_end"),
+                ),
+                today=today,
             )
             if parsed:
                 return parsed
@@ -317,9 +394,12 @@ def _load_dates_from_file(path: Path, today: datetime.date) -> list[str]:
             for item in obj["date_ranges"]:
                 if not isinstance(item, dict):
                     continue
-                parsed = _expand_date_range(
-                    item.get("start") or item.get("date_start"),
-                    item.get("end") or item.get("date_end"),
+                parsed = _drop_past_iso_dates(
+                    _expand_date_range(
+                        item.get("start") or item.get("date_start"),
+                        item.get("end") or item.get("date_end"),
+                    ),
+                    today=today,
                 )
                 for d in parsed:
                     if d not in merged:
@@ -384,8 +464,9 @@ def _load_return_selectors_from_file(path: Path, today: datetime.date) -> tuple[
 
     def _add_dates(values: list[str]):
         for value in values:
-            if value and value not in return_dates:
-                return_dates.append(value)
+            normalized = _drop_past_iso_dates([value], today=today)
+            if normalized and normalized[0] not in return_dates:
+                return_dates.append(normalized[0])
 
     def _add_offsets(values: list[int]):
         for value in values:
@@ -894,6 +975,7 @@ def _resolve_route_search_plan(
     *,
     airline_code: str,
     route: Dict[str, Any],
+    today: datetime.date,
     base_dates: list[str],
     base_trip_type: str,
     base_return_dates: list[str],
@@ -909,6 +991,7 @@ def _resolve_route_search_plan(
     )
     resolved_plans = [
         resolve_route_trip_plan(
+            today=today,
             base_outbound_dates=base_dates,
             base_trip_type=base_trip_type,
             base_return_dates=base_return_dates,
@@ -943,6 +1026,8 @@ def _resolve_route_search_plan(
 
     if not combined_outbound_dates and base_dates:
         combined_outbound_dates = list(base_dates)
+    combined_outbound_dates = _ensure_at_least_one_future_iso_date(combined_outbound_dates, today=today)
+    combined_outbound_dates = _ensure_weekday_coverage(combined_outbound_dates, today=today)
 
     trip_types = {plan["trip_type"] for plan in resolved_plans}
     combined_trip_type = next(iter(trip_types)) if len(trip_types) == 1 else "MIXED"
@@ -1410,8 +1495,9 @@ def _resolve_return_selectors(args, *, today: datetime.date) -> tuple[list[str],
 
     def _add_dates(values: list[str]):
         for value in values:
-            if value and value not in return_dates:
-                return_dates.append(value)
+            normalized = _drop_past_iso_dates([value], today=today)
+            if normalized and normalized[0] not in return_dates:
+                return_dates.append(normalized[0])
 
     def _add_offsets(values: list[int]):
         for value in values:
@@ -1570,8 +1656,14 @@ def main():
     if not dates:
         LOG.warning("No valid dates resolved from args/config; falling back to today.")
         dates = [today.isoformat()]
+    dates = _drop_past_iso_dates(dates, today=today)
+    if not dates:
+        LOG.warning("All resolved outbound dates were in the past; falling back to today.")
+        dates = [today.isoformat()]
     if args.limit_dates and args.limit_dates > 0:
         dates = dates[: args.limit_dates]
+    dates = _ensure_at_least_one_future_iso_date(dates, today=today)
+    dates = _ensure_weekday_coverage(dates, today=today)
 
     return_dates, return_offsets = _resolve_return_selectors(args, today=today)
     try:
@@ -1643,6 +1735,7 @@ def main():
                 route_plan_preview = _resolve_route_search_plan(
                     airline_code=code,
                     route=r,
+                    today=today,
                     base_dates=dates,
                     base_trip_type=args.trip_type,
                     base_return_dates=return_dates,
@@ -1714,6 +1807,7 @@ def main():
                 route_plan = _resolve_route_search_plan(
                     airline_code=code,
                     route=route,
+                    today=today,
                     base_dates=dates,
                     base_trip_type=args.trip_type,
                     base_return_dates=return_dates,
