@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+FRAGILE_MODULES = {"sharetrip", "airastra", "bs", "indigo"}
 
 
 def parse_args():
@@ -49,6 +50,18 @@ def parse_args():
     p.add_argument("--limit-routes", type=int)
     p.add_argument("--limit-dates", type=int)
     p.add_argument("--output-dir", default="output/reports")
+    p.add_argument(
+        "--fragile-max-workers",
+        type=int,
+        default=1,
+        help="Maximum concurrent workers for fragile connector families such as ShareTrip (default: 1).",
+    )
+    p.add_argument(
+        "--fragile-cooldown-sec",
+        type=float,
+        default=2.0,
+        help="Sleep between fragile-airline launches to reduce upstream burst pressure (default: 2.0s).",
+    )
     p.add_argument("--strict", action="store_true")
     return p.parse_args()
 
@@ -58,7 +71,20 @@ def _load_enabled_airlines(path: Path):
         return []
     # Use utf-8-sig so Windows-edited JSON files with BOM are accepted.
     data = json.loads(path.read_text(encoding="utf-8-sig"))
-    return [str(x.get("code", "")).upper() for x in data if x.get("enabled")]
+    airlines = []
+    for row in data:
+        if not isinstance(row, dict) or not row.get("enabled"):
+            continue
+        code = str(row.get("code", "")).upper().strip()
+        if not code:
+            continue
+        airlines.append(
+            {
+                "code": code,
+                "module": str(row.get("module", "")).strip().lower(),
+            }
+        )
+    return airlines
 
 
 def _build_cmd(args, airline: str, cycle_id: str):
@@ -109,6 +135,26 @@ def _run_one(cmd: list[str], airline: str):
     }
 
 
+def _run_batch(airlines: list[dict], args, cycle_id: str, *, max_workers: int, cooldown_sec: float = 0.0):
+    results = []
+    if not airlines:
+        return results
+
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
+        fut_map = {}
+        for idx, airline in enumerate(airlines):
+            code = airline["code"]
+            cmd = _build_cmd(args, code, cycle_id=cycle_id)
+            fut_map[ex.submit(_run_one, cmd, code)] = code
+            if cooldown_sec > 0 and idx < len(airlines) - 1:
+                import time
+
+                time.sleep(cooldown_sec)
+        for fut in as_completed(fut_map):
+            results.append(fut.result())
+    return results
+
+
 def main():
     args = parse_args()
     cycle_id = str(args.cycle_id).strip() if args.cycle_id else str(uuid.uuid4())
@@ -122,14 +168,20 @@ def main():
     ts = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     started = datetime.now(timezone.utc)
 
+    robust_airlines = [a for a in airlines if a.get("module") not in FRAGILE_MODULES]
+    fragile_airlines = [a for a in airlines if a.get("module") in FRAGILE_MODULES]
+
     results = []
-    with ThreadPoolExecutor(max_workers=max(1, args.max_workers)) as ex:
-        fut_map = {}
-        for a in airlines:
-            cmd = _build_cmd(args, a, cycle_id=cycle_id)
-            fut_map[ex.submit(_run_one, cmd, a)] = a
-        for fut in as_completed(fut_map):
-            results.append(fut.result())
+    results.extend(_run_batch(robust_airlines, args, cycle_id, max_workers=args.max_workers))
+    results.extend(
+        _run_batch(
+            fragile_airlines,
+            args,
+            cycle_id,
+            max_workers=args.fragile_max_workers,
+            cooldown_sec=max(0.0, float(args.fragile_cooldown_sec or 0.0)),
+        )
+    )
 
     results = sorted(results, key=lambda x: x["airline"])
     failed = [r for r in results if r["rc"] != 0]
@@ -142,6 +194,8 @@ def main():
         "cycle_id": cycle_id,
         "airline_count": len(airlines),
         "max_workers": args.max_workers,
+        "fragile_max_workers": args.fragile_max_workers,
+        "fragile_airline_count": len(fragile_airlines),
         "failed_count": len(failed),
         "results": results,
     }

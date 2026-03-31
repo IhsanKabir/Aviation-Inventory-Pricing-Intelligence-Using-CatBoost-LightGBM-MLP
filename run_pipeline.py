@@ -259,6 +259,88 @@ def _parse_offsets_csv(raw: str) -> list[int]:
     return vals
 
 
+def _drop_past_iso_dates(values: list[str], *, today: dt.date) -> list[str]:
+    kept: list[str] = []
+    for raw in values or []:
+        s = str(raw or "").strip()
+        if not s:
+            continue
+        try:
+            parsed = dt.date.fromisoformat(s)
+        except Exception:
+            continue
+        iso = parsed.isoformat()
+        if parsed < today:
+            continue
+        if iso not in kept:
+            kept.append(iso)
+    return kept
+
+
+def _has_future_iso_date(values: list[str], *, today: dt.date) -> bool:
+    for raw in values or []:
+        s = str(raw or "").strip()
+        if not s:
+            continue
+        try:
+            parsed = dt.date.fromisoformat(s)
+        except Exception:
+            continue
+        if parsed > today:
+            return True
+    return False
+
+
+def _ensure_at_least_one_future_iso_date(values: list[str], *, today: dt.date) -> list[str]:
+    normalized = _drop_past_iso_dates(values, today=today)
+    if _has_future_iso_date(normalized, today=today):
+        return normalized
+    fallback = (today + dt.timedelta(days=1)).isoformat()
+    if fallback not in normalized:
+        normalized.append(fallback)
+    return normalized
+
+
+def _ensure_weekday_coverage(values: list[str], *, today: dt.date) -> list[str]:
+    normalized = _drop_past_iso_dates(values, today=today)
+    present_weekdays: set[int] = set()
+    anchor_date = today
+    for value in normalized:
+        try:
+            parsed = dt.date.fromisoformat(value)
+        except Exception:
+            continue
+        present_weekdays.add(parsed.weekday())
+        if parsed > anchor_date:
+            anchor_date = parsed
+
+    additions: list[str] = []
+    anchor_weekday = anchor_date.weekday()
+    for weekday in range(7):
+        if weekday in present_weekdays:
+            continue
+        delta = (weekday - anchor_weekday) % 7
+        if delta == 0:
+            delta = 7
+        candidate = (anchor_date + dt.timedelta(days=delta)).isoformat()
+        if candidate not in normalized and candidate not in additions:
+            additions.append(candidate)
+
+    additions.sort()
+    return normalized + additions
+
+
+def _finalize_outbound_dates(values: list[str], *, today: dt.date, limit_dates: int | None = None) -> list[str]:
+    dates = _drop_past_iso_dates(values, today=today)
+    if not dates:
+        dates = [today.isoformat()]
+    if limit_dates and limit_dates > 0:
+        dates = dates[:limit_dates]
+    dates = _ensure_at_least_one_future_iso_date(dates, today=today)
+    dates = _ensure_weekday_coverage(dates, today=today)
+    return dates
+
+
 def _load_dates_from_file_pipeline(path: Path, today: dt.date) -> list[str]:
     if not path.exists():
         return []
@@ -404,7 +486,8 @@ def _apply_schedule_date_defaults_pipeline(args) -> None:
                 _add_many(_load_dates_from_file_pipeline(Path(str(merged_scrape.get("dates_file"))), today=today))
 
             if combined:
-                args.dates = ",".join(sorted(combined))
+                combined = _finalize_outbound_dates(combined, today=today, limit_dates=args.limit_dates)
+                args.dates = ",".join(combined)
                 applied.append(f"combine=true dates={args.dates}")
 
         if not args.dates:
@@ -427,6 +510,16 @@ def _apply_schedule_date_defaults_pipeline(args) -> None:
             elif isinstance(offs, str) and offs.strip():
                 args.date_offsets = offs.strip()
                 applied.append(f"date_offsets={args.date_offsets}")
+
+        resolved_schedule_dates = _resolve_scrape_dates_for_log(args)
+        if resolved_schedule_dates:
+            args.dates = ",".join(resolved_schedule_dates)
+            args.date = None
+            args.date_start = None
+            args.date_end = None
+            args.date_offsets = None
+            args.dates_file = None
+            applied.append(f"resolved_dates={args.dates}")
 
     # Optional report date window defaults (applies only if not explicitly set)
     report_start = report_section.get("start_date") or report_section.get("report_start_date")
@@ -845,11 +938,7 @@ def _resolve_scrape_dates_for_log(args) -> list[str]:
             day_offsets = [0] if args.quick else [0, 3, 5, 7, 15, 30]
             dates = [(today + dt.timedelta(days=d)).isoformat() for d in day_offsets]
 
-    if not dates:
-        dates = [today.isoformat()]
-    if args.limit_dates and args.limit_dates > 0:
-        dates = dates[: args.limit_dates]
-    return dates
+    return _finalize_outbound_dates(dates, today=today, limit_dates=args.limit_dates)
 
 
 def build_scrape_cmd(args):

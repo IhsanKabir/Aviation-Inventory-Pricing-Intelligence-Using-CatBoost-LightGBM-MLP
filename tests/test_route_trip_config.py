@@ -604,11 +604,6 @@ class RouteTripConfigTests(unittest.TestCase):
             [
                 "2026-03-12",
                 "2026-03-13",
-                "2026-03-14",
-                "2026-03-15",
-                "2026-03-16",
-                "2026-03-17",
-                "2026-03-18",
             ],
             plan["outbound_dates"],
         )
@@ -618,16 +613,6 @@ class RouteTripConfigTests(unittest.TestCase):
                 {"departure_date": "2026-03-12", "return_date": "2026-03-17", "trip_type": "RT"},
                 {"departure_date": "2026-03-13", "return_date": "2026-03-15", "trip_type": "RT"},
                 {"departure_date": "2026-03-13", "return_date": "2026-03-18", "trip_type": "RT"},
-                {"departure_date": "2026-03-14", "return_date": "2026-03-16", "trip_type": "RT"},
-                {"departure_date": "2026-03-14", "return_date": "2026-03-19", "trip_type": "RT"},
-                {"departure_date": "2026-03-15", "return_date": "2026-03-17", "trip_type": "RT"},
-                {"departure_date": "2026-03-15", "return_date": "2026-03-20", "trip_type": "RT"},
-                {"departure_date": "2026-03-16", "return_date": "2026-03-18", "trip_type": "RT"},
-                {"departure_date": "2026-03-16", "return_date": "2026-03-21", "trip_type": "RT"},
-                {"departure_date": "2026-03-17", "return_date": "2026-03-19", "trip_type": "RT"},
-                {"departure_date": "2026-03-17", "return_date": "2026-03-22", "trip_type": "RT"},
-                {"departure_date": "2026-03-18", "return_date": "2026-03-20", "trip_type": "RT"},
-                {"departure_date": "2026-03-18", "return_date": "2026-03-23", "trip_type": "RT"},
             ],
             plan["search_windows"],
         )
@@ -659,11 +644,6 @@ class RouteTripConfigTests(unittest.TestCase):
             [
                 {"departure_date": "2026-03-10", "return_date": None, "trip_type": "OW"},
                 {"departure_date": "2026-03-12", "return_date": None, "trip_type": "OW"},
-                {"departure_date": "2026-03-13", "return_date": None, "trip_type": "OW"},
-                {"departure_date": "2026-03-14", "return_date": None, "trip_type": "OW"},
-                {"departure_date": "2026-03-15", "return_date": None, "trip_type": "OW"},
-                {"departure_date": "2026-03-16", "return_date": None, "trip_type": "OW"},
-                {"departure_date": "2026-03-18", "return_date": None, "trip_type": "OW"},
             ],
             plan["search_windows"],
         )
@@ -683,11 +663,6 @@ class RouteTripConfigTests(unittest.TestCase):
             [
                 "2026-03-31",
                 "2026-04-01",
-                "2026-04-02",
-                "2026-04-03",
-                "2026-04-04",
-                "2026-04-05",
-                "2026-04-06",
             ],
             plan["outbound_dates"],
         )
@@ -695,11 +670,6 @@ class RouteTripConfigTests(unittest.TestCase):
             [
                 {"departure_date": "2026-03-31", "return_date": None, "trip_type": "OW"},
                 {"departure_date": "2026-04-01", "return_date": None, "trip_type": "OW"},
-                {"departure_date": "2026-04-02", "return_date": None, "trip_type": "OW"},
-                {"departure_date": "2026-04-03", "return_date": None, "trip_type": "OW"},
-                {"departure_date": "2026-04-04", "return_date": None, "trip_type": "OW"},
-                {"departure_date": "2026-04-05", "return_date": None, "trip_type": "OW"},
-                {"departure_date": "2026-04-06", "return_date": None, "trip_type": "OW"},
             ],
             plan["search_windows"],
         )
@@ -730,16 +700,11 @@ class RouteTripConfigTests(unittest.TestCase):
             [
                 "2026-03-31",
                 "2026-04-01",
-                "2026-04-02",
-                "2026-04-03",
-                "2026-04-04",
-                "2026-04-05",
-                "2026-04-06",
             ],
             plan["outbound_dates"],
         )
 
-    def test_resolve_route_trip_plan_extends_missing_weekdays(self):
+    def test_resolve_route_trip_plan_preserves_explicit_outbound_dates(self):
         plan = resolve_route_trip_plan(
             today=date(2026, 3, 31),
             base_outbound_dates=["2026-04-01", "2026-04-03"],
@@ -754,11 +719,6 @@ class RouteTripConfigTests(unittest.TestCase):
             [
                 "2026-04-01",
                 "2026-04-03",
-                "2026-04-04",
-                "2026-04-05",
-                "2026-04-06",
-                "2026-04-07",
-                "2026-04-09",
             ],
             plan["outbound_dates"],
         )

@@ -1027,7 +1027,6 @@ def _resolve_route_search_plan(
     if not combined_outbound_dates and base_dates:
         combined_outbound_dates = list(base_dates)
     combined_outbound_dates = _ensure_at_least_one_future_iso_date(combined_outbound_dates, today=today)
-    combined_outbound_dates = _ensure_weekday_coverage(combined_outbound_dates, today=today)
 
     trip_types = {plan["trip_type"] for plan in resolved_plans}
     combined_trip_type = next(iter(trip_types)) if len(trip_types) == 1 else "MIXED"

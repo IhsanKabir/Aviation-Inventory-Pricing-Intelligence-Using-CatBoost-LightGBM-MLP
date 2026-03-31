@@ -16,7 +16,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
-from modules.requester import Requester
+from modules.requester import Requester, RequesterError
 
 
 LOG = logging.getLogger(__name__)
@@ -50,6 +50,8 @@ ENV_DEFAULT_AIRLINE_CODE = "SHARETRIP_AIRLINE_CODE"
 ENV_ADAPTIVE_POLL_STOP = "SHARETRIP_ADAPTIVE_POLL_STOP"
 ENV_EARLY_STOP_MIN_PROGRESS = "SHARETRIP_EARLY_STOP_MIN_PROGRESS"
 ENV_MULTI_PAGE_STABLE_POLLS = "SHARETRIP_MULTI_PAGE_STABLE_POLLS"
+ENV_INIT_MAX_ATTEMPTS = "SHARETRIP_INIT_MAX_ATTEMPTS"
+ENV_INIT_RETRY_SLEEP_SEC = "SHARETRIP_INIT_RETRY_SLEEP_SEC"
 
 
 def _safe_int(v: Any, default: Optional[int] = None) -> Optional[int]:
@@ -91,6 +93,15 @@ def _clip_text(v: Any, size: int = 600) -> str:
     return text[: size - 3] + "..."
 
 
+def _preview_body(v: Any, size: int = 320) -> str:
+    if isinstance(v, (dict, list)):
+        try:
+            return _clip_text(json.dumps(v, ensure_ascii=False), size)
+        except Exception:
+            return _clip_text(str(v), size)
+    return _clip_text(v, size)
+
+
 def _cabin_to_sharetrip_code(cabin: str) -> str:
     c = str(cabin or "").strip().lower()
     if "business" in c:
@@ -118,6 +129,10 @@ def _default_headers() -> Dict[str, str]:
         "User-Agent": USER_AGENT,
         "accesstoken": token,
     }
+
+
+def _build_requester(*, cookies: Optional[str], proxy: Optional[str]) -> Requester:
+    return Requester(cookies_path=cookies, user_agent=USER_AGENT, proxy_url=proxy)
 
 
 def build_initialize_params(
@@ -344,7 +359,7 @@ def fetch_flights_for_airline(
 ) -> Dict[str, Any]:
     cookies = cookies_path or os.getenv(ENV_COOKIES_PATH) or None
     proxy = proxy_url or os.getenv(ENV_PROXY_URL) or None
-    req = Requester(cookies_path=cookies, user_agent=USER_AGENT, proxy_url=proxy)
+    req = _build_requester(cookies=cookies, proxy=proxy)
     headers = _default_headers()
     params = build_initialize_params(
         origin=origin,
@@ -375,21 +390,91 @@ def fetch_flights_for_airline(
         "ok": False,
     }
 
-    init_resp = req.get(INIT_URL, params=params, headers=headers)
-    out["raw"]["initialize_status"] = init_resp.status_code
-    init_body: Any
-    try:
-        init_body = init_resp.json()
-    except Exception:
-        init_body = init_resp.text
+    init_max_attempts = max(1, _safe_int(os.getenv(ENV_INIT_MAX_ATTEMPTS), 3) or 3)
+    init_retry_sleep = max(0.5, _safe_float(os.getenv(ENV_INIT_RETRY_SLEEP_SEC), 1.5) or 1.5)
+    init_resp = None
+    init_body: Any = None
+    search_id = ""
+    init_error_text = None
+    initialize_attempts: List[Dict[str, Any]] = []
+    for attempt in range(1, init_max_attempts + 1):
+        init_error_text = None
+        try:
+            init_resp = req.get(INIT_URL, params=params, headers=headers)
+            try:
+                init_body = init_resp.json()
+            except Exception:
+                init_body = init_resp.text
+        except (RequesterError, Exception) as exc:
+            init_resp = None
+            init_body = None
+            init_error_text = _clip_text(exc, 320)
+
+        attempt_info = {
+            "attempt": attempt,
+            "status": init_resp.status_code if init_resp is not None else None,
+            "has_cookie_session": bool(req.session.cookies),
+            "has_access_token": bool(headers.get("accesstoken")),
+        }
+        if init_error_text:
+            attempt_info["error"] = init_error_text
+        elif init_body is not None:
+            attempt_info["response_preview"] = _preview_body(init_body)
+        initialize_attempts.append(attempt_info)
+
+        if init_resp is not None and init_resp.status_code in (200, 201) and isinstance(init_body, dict):
+            search_id = str((init_body.get("response") or {}).get("searchId") or "").strip()
+            if search_id:
+                break
+        if attempt < init_max_attempts:
+            sleep_sec = round(init_retry_sleep * attempt, 2)
+            LOG.warning(
+                "[%s] ShareTrip initialize attempt %d/%d failed %s->%s on %s (%s); retrying in %.2fs",
+                str(airline_code).upper().strip() or "?",
+                attempt,
+                init_max_attempts,
+                str(origin).upper().strip(),
+                str(destination).upper().strip(),
+                str(date).strip(),
+                str(cabin).strip() or "Economy",
+                sleep_sec,
+            )
+            time.sleep(sleep_sec)
+            req = _build_requester(cookies=cookies, proxy=proxy)
+
+    out["raw"]["initialize_attempts"] = initialize_attempts
+    out["raw"]["initialize_status"] = init_resp.status_code if init_resp is not None else None
     out["raw"]["initialize_response"] = init_body
-    if init_resp.status_code not in (200, 201) or not isinstance(init_body, dict):
+    if init_resp is None or init_resp.status_code not in (200, 201) or not isinstance(init_body, dict):
         out["raw"]["error"] = "initialize_failed"
+        out["raw"]["initialize_response_preview"] = _preview_body(init_body if init_body is not None else init_error_text)
+        LOG.warning(
+            "[%s] ShareTrip initialize failed %s->%s on %s (%s): status=%s cookies=%s token=%s preview=%s",
+            str(airline_code).upper().strip() or "?",
+            str(origin).upper().strip(),
+            str(destination).upper().strip(),
+            str(date).strip(),
+            str(cabin).strip() or "Economy",
+            init_resp.status_code if init_resp is not None else None,
+            bool(req.session.cookies),
+            bool(headers.get("accesstoken")),
+            out["raw"]["initialize_response_preview"],
+        )
         return out
 
-    search_id = str((init_body.get("response") or {}).get("searchId") or "").strip()
     if not search_id:
         out["raw"]["error"] = "search_id_missing"
+        out["raw"]["initialize_response_preview"] = _preview_body(init_body)
+        LOG.warning(
+            "[%s] ShareTrip initialize missing searchId %s->%s on %s (%s): status=%s preview=%s",
+            str(airline_code).upper().strip() or "?",
+            str(origin).upper().strip(),
+            str(destination).upper().strip(),
+            str(date).strip(),
+            str(cabin).strip() or "Economy",
+            init_resp.status_code if init_resp is not None else None,
+            out["raw"]["initialize_response_preview"],
+        )
         return out
     out["raw"]["search_id"] = search_id
 
@@ -476,6 +561,18 @@ def fetch_flights_for_airline(
 
     if str(final_body.get("code") or "").upper() != "SUCCESS":
         out["raw"]["error"] = "search_not_ok"
+        LOG.warning(
+            "[%s] ShareTrip search not ok %s->%s on %s (%s): code=%s message=%s progress=%s preview=%s",
+            str(airline_code).upper().strip() or "?",
+            str(origin).upper().strip(),
+            str(destination).upper().strip(),
+            str(date).strip(),
+            str(cabin).strip() or "Economy",
+            final_body.get("code"),
+            _clip_text(final_body.get("message"), 120),
+            (final_response or {}).get("progressBar"),
+            _preview_body(final_body),
+        )
         return out
 
     total_flights = _safe_int(final_response.get("totalFlightsCount"), 0) or 0

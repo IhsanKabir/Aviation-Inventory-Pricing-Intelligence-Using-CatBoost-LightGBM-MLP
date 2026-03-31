@@ -812,7 +812,6 @@ def resolve_route_trip_plan(
         outbound_dates = outbound_dates[:limit_dates]
 
     outbound_dates = _ensure_at_least_one_future_iso_date(outbound_dates, today=today)
-    outbound_dates = _ensure_weekday_coverage(outbound_dates, today=today)
 
     if trip_type == TRIP_TYPE_ONE_WAY:
         return_dates = []
