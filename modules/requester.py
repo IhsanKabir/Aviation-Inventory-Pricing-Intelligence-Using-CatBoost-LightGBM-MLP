@@ -3,30 +3,72 @@ import json
 import logging
 from pathlib import Path
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from typing import Optional
 
 LOG = logging.getLogger("core.requester")
 
 class RequesterError(Exception):
-    pass
+    """Custom exception for requester errors with context."""
+    def __init__(self, message: str, error_type: str = "unknown", original_exception: Exception = None):
+        super().__init__(message)
+        self.error_type = error_type
+        self.original_exception = original_exception
+
 
 class Requester:
+    """
+    Enhanced HTTP requester with automatic retries, better error handling,
+    and support for proxies and cookies.
+
+    Features:
+    - Automatic retry logic with exponential backoff
+    - Detailed error classification (DNS, connection, timeout, HTTP)
+    - Cookie persistence
+    - Proxy support
+    - Connection pooling
+    """
+
     def __init__(
         self,
         cookies_path: Optional[Path] = None,
         user_agent: Optional[str] = None,
         timeout: int = 30,
         proxy_url: Optional[str] = None,
+        max_retries: int = 3,
+        backoff_factor: float = 1.0,
     ):
         self.session = requests.Session()
         self.timeout = timeout
         self.cookies_path = Path(cookies_path) if cookies_path else None
         self.proxy_url = proxy_url or None
+
+        # Configure retry strategy
+        retry_strategy = Retry(
+            total=max_retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"],
+            raise_on_status=False,
+        )
+
+        # Mount adapters with retry logic
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=10,
+            pool_maxsize=20,
+        )
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+
         if user_agent:
             self.session.headers.update({"User-Agent": user_agent})
+
         if self.proxy_url:
             self.session.proxies.update({"http": self.proxy_url, "https": self.proxy_url})
             LOG.info("Using proxy for session: %s", self.proxy_url)
+
         if self.cookies_path and self.cookies_path.exists():
             try:
                 with open(self.cookies_path, "r", encoding="utf-8") as fh:
@@ -35,6 +77,27 @@ class Requester:
                 LOG.info("Loaded cookies from %s", str(self.cookies_path))
             except Exception as e:
                 LOG.warning("Failed to load cookies: %s", e)
+
+    def _classify_error(self, exception: Exception) -> str:
+        """Classify the type of network error for better diagnostics."""
+        error_str = str(exception).lower()
+
+        if "name resolution" in error_str or "nodename nor servname" in error_str or "no address" in error_str:
+            return "dns_resolution"
+        elif "connection refused" in error_str:
+            return "connection_refused"
+        elif "timeout" in error_str or "timed out" in error_str:
+            return "timeout"
+        elif "connection reset" in error_str or "broken pipe" in error_str:
+            return "connection_reset"
+        elif "certificate" in error_str or "ssl" in error_str:
+            return "ssl_error"
+        elif "proxy" in error_str:
+            return "proxy_error"
+        elif "unreachable" in error_str:
+            return "network_unreachable"
+        else:
+            return "connection_error"
 
     def post(self, url: str, json_payload: dict, headers: dict | None = None, **kwargs):
         try:
