@@ -50,15 +50,15 @@ function formatStatusLabel(status: ReportAccessRequest["status"]) {
 
 function statusCopy(request: ReportAccessRequest) {
   if (request.status === "approved") {
-    return request.decision_note || "This scope is unlocked. The page can now load route data for this approved request.";
+    return request.decision_note || "This scope is unlocked. The selected route view can now be opened.";
   }
   if (request.status === "payment_required") {
-    return request.decision_note || "This request needs manual payment approval before route data can be shown.";
+    return request.decision_note || "This request needs payment approval before the route view can be opened.";
   }
   if (request.status === "rejected") {
-    return request.decision_note || "This request was rejected. Adjust the scope or date window and submit a new request.";
+    return request.decision_note || "This request was rejected. Adjust the route or travel window and submit a new request.";
   }
-  return request.decision_note || "This request is waiting for manual review. Refresh later after the owner checks BigQuery free-tier headroom.";
+  return request.decision_note || "This request is waiting for manual review. Refresh later to check the result.";
 }
 
 export function ReportAccessRequestPanel({
@@ -90,7 +90,7 @@ export function ReportAccessRequestPanel({
       lines.push(`Cabin: ${scope.cabin}`);
     }
     if (scope.cycleId) {
-      lines.push(`Cycle: ${scope.cycleId}`);
+      lines.push("Saved update selected");
     }
     if (scope.startDate || scope.endDate) {
       lines.push(`Outbound window: ${scope.startDate ?? "any"} to ${scope.endDate ?? "any"}`);
@@ -104,7 +104,7 @@ export function ReportAccessRequestPanel({
         lines.push("Inbound window: all collected inbound dates");
       }
     }
-    lines.push(`Matrix scope: ${scope.routeLimit} route blocks | ${scope.historyLimit} capture depth`);
+    lines.push(`View size: ${scope.routeLimit} route blocks | ${scope.historyLimit} history rows`);
     return lines;
   }, [scope]);
 
@@ -167,9 +167,9 @@ export function ReportAccessRequestPanel({
   return (
     <div className="filter-form">
       <div className="empty-state">
-        <strong>Route data is request-gated.</strong>
+        <strong>Route access requires approval.</strong>
         <div style={{ marginTop: "0.6rem" }}>
-          Submit the date window and current route scope first. After approval, this same page will unlock the route data.
+          Submit the route and travel window first. After approval, this page will unlock the route view.
         </div>
         <div className="table-list" style={{ marginTop: "0.9rem" }}>
           {scopeSummary.map((item) => (
@@ -185,7 +185,6 @@ export function ReportAccessRequestPanel({
           <div className="button-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
             <div>
               <strong>{formatStatusLabel(request.status)}</strong>
-              <div className="mono">Request ID: {request.request_id}</div>
             </div>
             <span className={`pill ${request.status === "approved" ? "good" : "warn"}`}>{formatStatusLabel(request.status)}</span>
           </div>

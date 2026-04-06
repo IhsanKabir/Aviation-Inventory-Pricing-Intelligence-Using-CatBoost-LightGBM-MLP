@@ -675,7 +675,7 @@ export function RouteScopeControls({
     <div className="filter-form">
       {cycleOptions.length ? (
         <div className="filter-group">
-          <div className="filter-label">Comparable cycles</div>
+          <div className="filter-label">Saved updates</div>
           <div className="chip-row">
             {cycleOptions.map((item) => (
               <button
@@ -880,14 +880,14 @@ export function RouteScopeControls({
         </div>
       </div>
       {routeOptionsState.loading ? (
-        <p className="mono">Refreshing route suggestions for the current airline, cabin, and trip filters...</p>
+        <p className="mono">Refreshing route suggestions...</p>
       ) : routeOptionsState.error ? (
-        <div className="status-banner warn">Route suggestions are temporarily unavailable: {routeOptionsState.error}</div>
+        <div className="status-banner warn">Route suggestions are temporarily unavailable right now.</div>
       ) : null}
 
       <div className="button-row">
         <button className="button-link" data-pending={isPending} disabled={!matrixScopeReady || !hasPendingMatrixChanges} onClick={applyImmediately} type="button">
-          Apply matrix scope
+          Apply filters
         </button>
         {exportHref ? (
           <a className="button-link ghost" href={exportHref}>
@@ -907,15 +907,15 @@ export function RouteScopeControls({
         Trip scope: {tripScopeLabel}
       </p>
       {hasPendingMatrixChanges ? (
-        <p className="mono">Route suggestions refresh live. Apply matrix scope when you are ready to reload the heavy route table.</p>
+        <p className="mono">Route suggestions update as you filter. Apply when you are ready to refresh the table.</p>
       ) : null}
       {!accessGranted ? (
         <div className="status-banner">
-          Live route data and export stay locked until this scope has an approved request. Route hints remain available so the user can define the scope before requesting access.
+          Route data and export stay locked until this scope has an approved request.
         </div>
       ) : null}
       {availabilityState.loading ? (
-        <p className="mono">Refreshing collected dates for the current scope...</p>
+        <p className="mono">Refreshing collected dates...</p>
       ) : null}
 
       <div className="route-availability-grid">
@@ -953,10 +953,10 @@ export function RouteScopeControls({
           ) : availabilityState.loading ? (
             <div className="empty-state">Loading collected departure dates for the current scope...</div>
           ) : availabilityState.endpointMissing ? (
-            <div className="empty-state">Date availability is not available on the current API revision yet.</div>
+            <div className="empty-state">Date availability is not available right now.</div>
           ) : (
             <div className="empty-state error-state">
-              Availability error: {availabilityState.error ?? "Unable to inspect collected dates."}
+              Unable to inspect collected dates right now.
             </div>
           )}
         </div>
@@ -996,10 +996,10 @@ export function RouteScopeControls({
             ) : availabilityState.loading ? (
               <div className="empty-state">Loading collected return dates for the current scope...</div>
             ) : availabilityState.endpointMissing ? (
-              <div className="empty-state">Date availability is not available on the current API revision yet.</div>
+              <div className="empty-state">Date availability is not available right now.</div>
             ) : (
               <div className="empty-state error-state">
-                Availability error: {availabilityState.error ?? "Unable to inspect collected return dates."}
+                Unable to inspect collected return dates right now.
               </div>
             )}
           </div>
@@ -1039,7 +1039,7 @@ export function RouteScopeControls({
       ) : null}
       {!airportCodesAreValid ? (
         <div className="status-banner warn">
-          Enter complete 3-letter airport codes before the matrix refreshes automatically.
+          Enter complete 3-letter airport codes before applying the route filters.
         </div>
       ) : null}
       {airportCodesAreValid &&

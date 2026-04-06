@@ -20,7 +20,7 @@ const mono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "Aero Pulse Intelligence Monitor",
-  description: "Hosted airline and OTA intelligence monitor with warehouse-backed reporting and forecasting."
+  description: "Airline and OTA intelligence monitor for routes, operations, fare changes, taxes, penalties, and forecasting."
 };
 
 export default async function RootLayout({

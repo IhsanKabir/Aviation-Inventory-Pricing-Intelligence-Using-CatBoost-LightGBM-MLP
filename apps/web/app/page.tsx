@@ -1,6 +1,6 @@
 import { DataPanel } from "@/components/data-panel";
 import { MetricCard } from "@/components/metric-card";
-import { getApiBaseUrl, getDashboardPayload } from "@/lib/api";
+import { getDashboardPayload } from "@/lib/api";
 import { formatRouteGeo, formatRouteType } from "@/lib/format";
 
 function uniqueByKey<T>(items: T[], keyFn: (item: T) => string) {
@@ -26,127 +26,96 @@ function formatDate(value?: string | null) {
   }).format(new Date(value));
 }
 
-function formatDurationSeconds(value?: number | null) {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return "Not available";
-  }
-  const totalMinutes = Math.round(value / 60);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours <= 0) {
-    return `${minutes} min`;
-  }
-  if (minutes === 0) {
-    return `${hours} hr`;
-  }
-  return `${hours} hr ${minutes} min`;
-}
-
 export default async function HomePage() {
   const payload = await getDashboardPayload();
   const latestCycle = payload.latestCycle.data;
+  const cycleHealth = payload.cycleHealth.data;
   const airlines = uniqueByKey(payload.airlines.data?.items ?? [], (item) => item.airline)
     .sort((left, right) => (right.offer_rows ?? 0) - (left.offer_rows ?? 0) || left.airline.localeCompare(right.airline));
   const routes = uniqueByKey(payload.routes.data?.items ?? [], (item) => item.route_key)
     .sort((left, right) => (right.offer_rows ?? 0) - (left.offer_rows ?? 0) || left.route_key.localeCompare(right.route_key));
-  const health = payload.health.data;
-  const cycleHealth = payload.cycleHealth.data;
-  const latestRunStatus = cycleHealth?.latest_run_status;
-  const isAggregateRunStatus = latestRunStatus?.status_source === "parallel_aggregate";
-  const runStatusSummary = isAggregateRunStatus
-    ? `${latestRunStatus?.aggregate_airline_count ?? 0} airlines`
-    : latestRunStatus?.overall_query_total
-      ? `${latestRunStatus?.overall_query_completed ?? 0}/${latestRunStatus.overall_query_total} queries`
-      : "Not reported";
-  const runStatusFootnote = isAggregateRunStatus
-    ? `${latestRunStatus?.aggregate_failed_count ?? 0} failed`
-    : latestRunStatus?.phase ?? "Worker heartbeat";
 
   return (
     <>
       <section className="hero">
-        <div className="eyebrow">Live Platform</div>
-        <h1>Warehouse-backed airline intelligence, now operating on the web.</h1>
+        <div className="eyebrow">Live Monitor</div>
+        <h1>Review routes, fares, operations, and market shifts in one place.</h1>
         <p>
-          The web monitor is now the primary interactive surface for route
-          monitoring, change review, penalties, taxes, and forecasting. Local
-          collection and training still write first to PostgreSQL, then the
-          curated analytics layer is synchronized into BigQuery for hosted use.
+          Track airline movement across routes, compare current fare signals, and follow
+          operational changes with a cleaner web experience.
         </p>
       </section>
 
       <div className="grid cards">
         <MetricCard
-          label="Latest cycle"
+          label="Latest update"
           value={formatDate(latestCycle?.cycle_completed_at_utc)}
-          footnote="Latest completed warehouse-backed snapshot"
+          footnote="Most recent completed market snapshot"
         />
         <MetricCard
-          label="Offer rows"
+          label="Fare rows"
           value={latestCycle?.offer_rows?.toLocaleString() ?? "0"}
-          footnote="Current cycle snapshot size"
+          footnote="Current monitored fare records"
         />
         <MetricCard
           label="Airlines"
           value={latestCycle?.airline_count?.toLocaleString() ?? "0"}
-          footnote="Distinct carriers in the latest cycle"
+          footnote="Distinct carriers in the latest update"
         />
         <MetricCard
           label="Routes"
           value={latestCycle?.route_count?.toLocaleString() ?? "0"}
-          footnote="Origin-destination pairs currently present"
+          footnote="Origin-destination pairs currently covered"
         />
       </div>
 
       <div className="section-grid">
         <DataPanel
-          title="Platform health"
-          copy="Hosted API, warehouse-backed views, and cycle coverage are the main operational checkpoints."
+          title="Coverage snapshot"
+          copy="A quick view of market breadth and monitoring completeness."
         >
           <div className="table-list">
             <div className="table-row">
               <div>
-                <strong>API status</strong>
-                <span>{getApiBaseUrl()}</span>
-              </div>
-              <div className={`pill ${health?.database_ok ? "good" : "warn"}`}>
-                {health?.database_ok ? "Online" : "Check"}
-              </div>
-              <span>{formatDate(health?.latest_cycle_completed_at_utc)}</span>
-            </div>
-            <div className="table-row">
-              <div>
                 <strong>Coverage</strong>
-                <span>{(cycleHealth?.configured_route_pair_count ?? 0).toLocaleString()} configured route-airline pairs</span>
+                <span>Configured route-airline pairs currently visible in the latest update</span>
               </div>
               <div className={`pill ${cycleHealth?.stale ? "warn" : "good"}`}>
                 {cycleHealth?.route_pair_coverage_pct?.toFixed(1) ?? "0.0"}%
               </div>
-              <span>{(cycleHealth?.observed_route_pair_count ?? 0).toLocaleString()} observed</span>
+              <span>{(cycleHealth?.observed_route_pair_count ?? 0).toLocaleString()} active pairs</span>
             </div>
             <div className="table-row">
               <div>
-                <strong>Run truth</strong>
-                <span>{isAggregateRunStatus ? "Aggregate parallel artifact" : "Worker heartbeat fallback"}</span>
+                <strong>Expected scope</strong>
+                <span>Total route-airline pairs tracked in the current monitoring scope</span>
               </div>
-              <div className={`pill ${isAggregateRunStatus ? "good" : "warn"}`}>
-                {runStatusSummary}
+              <div className="pill good">{(cycleHealth?.configured_route_pair_count ?? 0).toLocaleString()}</div>
+              <span>{(cycleHealth?.missing_route_pairs?.length ?? 0).toLocaleString()} currently missing</span>
+            </div>
+            <div className="table-row">
+              <div>
+                <strong>Freshness</strong>
+                <span>Time of the most recent completed update</span>
               </div>
-              <span>{formatDurationSeconds(latestRunStatus?.duration_sec)} · {runStatusFootnote}</span>
+              <div className={`pill ${cycleHealth?.stale ? "warn" : "good"}`}>
+                {cycleHealth?.stale ? "Needs refresh" : "Current"}
+              </div>
+              <span>{formatDate(latestCycle?.cycle_completed_at_utc)}</span>
             </div>
           </div>
         </DataPanel>
 
         <DataPanel
-          title="Current delivery state"
-          copy="Core web surfaces are already live. The remaining work is refinement, consistency, and model quality."
+          title="Main views"
+          copy="Start with the part of the monitor that matches the question you want to answer."
         >
           <div className="stack">
             {[
-              "Route monitor matrix is live with airline/signal toggles and capture-history expansion",
-              "Hosted reporting reads are BigQuery-first for routes, changes, penalties, taxes, and forecasting",
-              "Looker Studio forecasting and backtest review is already connected to curated warehouse views",
-              "Next major focus after UI fixes is ML/DL improvement and route-level model quality"
+              "Routes for fare movement, collected dates, and route-level comparison",
+              "Operations for service presence, timing patterns, and route footprint",
+              "Changes, taxes, and penalties for movement across product conditions",
+              "Forecasting for next-step pricing and route-level outlook"
             ].map((step, idx) => (
               <div className="card roadmap-step" key={step}>
                 <div className="roadmap-step-header">
@@ -162,7 +131,7 @@ export default async function HomePage() {
       <div className="section-grid">
         <DataPanel
           title="Top airlines"
-          copy="Carrier-level presence in the latest synchronized operational cycle."
+          copy="Carrier-level presence in the latest monitored update."
         >
           <div className="table-list">
             {airlines.slice(0, 8).map((item) => (
@@ -180,7 +149,7 @@ export default async function HomePage() {
 
         <DataPanel
           title="Top routes"
-          copy="Current route coverage for the web route-monitor surface."
+          copy="Current route coverage in the live monitor."
         >
           <div className="table-list">
             {routes.slice(0, 8).map((item) => (
@@ -206,5 +175,3 @@ export default async function HomePage() {
     </>
   );
 }
-
-

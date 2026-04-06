@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
   { href: "/", label: "Overview" },
-  { href: "/health", label: "Health" },
   { href: "/routes", label: "Routes" },
   { href: "/operations", label: "Operations" },
   { href: "/penalties", label: "Penalties" },
@@ -32,7 +31,7 @@ export function Topbar() {
           <div>
             <div className="brand-title">Aero Pulse Intelligence Monitor</div>
             <div className="brand-subtitle">
-              Hosted route, operations, change, tax, penalty, and forecasting monitor
+              Route, operations, fare change, tax, penalty, and forecasting monitor
             </div>
           </div>
         </div>

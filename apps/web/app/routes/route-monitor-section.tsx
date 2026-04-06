@@ -140,17 +140,17 @@ export function RouteMonitorSectionFallback() {
   return (
     <>
       <div className="grid cards">
-        <MetricCard label="Cycle" value="Loading..." footnote="Resolving route matrix scope" />
-        <MetricCard label="Route blocks" value="..." footnote="Preparing comparable routes" />
-        <MetricCard label="Flight groups" value="..." footnote="Collecting visible airline blocks" />
-        <MetricCard label="Departure rows" value="..." footnote="Loading capture history" />
+        <MetricCard label="Latest update" value="Loading..." footnote="Preparing route view" />
+        <MetricCard label="Route blocks" value="..." footnote="Loading matching routes" />
+        <MetricCard label="Flight groups" value="..." footnote="Loading visible airline groups" />
+        <MetricCard label="Departure rows" value="..." footnote="Loading captured rows" />
       </div>
 
       <DataPanel
         title="Route flight fare monitor"
-        copy="Latest captures are shown first. Use the capture column to expand older observations for the same departure date."
+        copy="Latest captures are shown first. Use the capture column to expand older observations for the same date."
       >
-        <div className="empty-state">Loading route matrix for the selected scope...</div>
+        <div className="empty-state">Loading route monitor...</div>
       </DataPanel>
     </>
   );
@@ -220,9 +220,9 @@ export async function RouteMonitorSection({
     <>
       <div className="grid cards">
         <MetricCard
-          label="Cycle"
+          label="Latest update"
           value={activeCycle?.cycle_completed_at_utc ? formatDhakaDateTime(activeCycle.cycle_completed_at_utc) : "Not available"}
-          footnote={matrix.ok ? "Latest warehouse-backed route matrix" : "No cycle loaded"}
+          footnote={matrix.ok ? "Latest available route view" : "No update loaded"}
         />
         <MetricCard label="Route blocks" value={routeBlocks.length.toLocaleString()} footnote={`Limit ${routeLimit.toLocaleString()}`} />
         <MetricCard
@@ -233,13 +233,13 @@ export async function RouteMonitorSection({
         <MetricCard
           label="Departure rows"
           value={datedRowCount.toLocaleString()}
-          footnote={`History depth ${historyLimit.toLocaleString()}`}
+          footnote={`History rows ${historyLimit.toLocaleString()}`}
         />
       </div>
 
       <DataPanel
         title="Route flight fare monitor"
-        copy="Latest captures are shown first. Use the capture column to expand older observations for the same departure date."
+        copy="Latest captures are shown first. Use the capture column to expand older observations for the same date."
       >
         {matrix.ok && routePriorityBoard.length ? (
           <div className="table-list compact-list">
@@ -267,7 +267,7 @@ export async function RouteMonitorSection({
           </div>
         ) : null}
         {!matrix.ok ? (
-          <div className="empty-state error-state">API error: {matrix.error ?? "Unable to load route monitor matrix."}</div>
+          <div className="empty-state error-state">Route data is unavailable right now.</div>
         ) : routeBlocks.length === 0 ? (
           <div className="empty-state">No route blocks matched the current scope.</div>
         ) : (

@@ -204,15 +204,13 @@ export default async function RoutesPage({ searchParams }: PageProps) {
     <>
       <h1 className="page-title">Route Monitor</h1>
       <p className="page-copy">
-        Report-style route matrix against the reporting API. Hosted reads now prefer the
-        BigQuery warehouse path; airline, signal, and capture-history interaction stay in
-        the page for workbook-like review without Excel.
+        Review route-level fare activity with airline, cabin, and travel-window filters in a cleaner monitor view.
       </p>
 
       <div className="stack">
         <DataPanel
-          title="Matrix scope"
-          copy="Route suggestions and collected dates refresh in the controls. Apply the heavy matrix only when you are ready to review the workbook-style table."
+          title="Scope"
+          copy="Choose the route, travel window, and filters you want to review."
         >
           <RouteScopeControls
             accessGranted={accessGranted}
@@ -245,7 +243,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
 
         <DataPanel
           title="Data access request"
-          copy="Route data stays hidden until this scope is manually approved. Submit the date window you need, then refresh this page after approval."
+          copy="Submit the route and travel window you want to unlock, then refresh this page after approval."
         >
           <ReportAccessRequestPanel
             request={accessRequest.ok ? accessRequest.data : null}
@@ -291,7 +289,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
         ) : (
           <DataPanel
             title="Route flight fare monitor"
-            copy="The heavy matrix stays locked until the current route request is approved."
+            copy="This view unlocks after the current request is approved."
           >
             <div className="empty-state">
               {requestId
