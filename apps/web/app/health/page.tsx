@@ -1,9 +1,11 @@
 import { DataPanel } from "@/components/data-panel";
 import { MetricCard } from "@/components/metric-card";
+import { requireAdminSession } from "@/lib/admin";
 import { getApiBaseUrl, getCycleHealth } from "@/lib/api";
 import { formatDhakaDateTime, formatNumber, formatPercent } from "@/lib/format";
 
 export default async function HealthPage() {
+  await requireAdminSession("/health");
   const result = await getCycleHealth();
   const data = result.data;
   const runStatus = data?.latest_run_status;

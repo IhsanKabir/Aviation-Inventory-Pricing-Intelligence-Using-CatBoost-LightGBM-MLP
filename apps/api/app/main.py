@@ -173,6 +173,28 @@ def get_access_request(
     return payload
 
 
+@app.get("/api/v1/access-requests")
+def list_access_requests(
+    status: str | None = None,
+    page_key: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    x_admin_token: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    _require_admin_token(x_admin_token)
+    required_db = _require_access_request_db(db)
+    try:
+        items = access_requests.list_requests(
+            required_db,
+            status=status,
+            page_key=page_key,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"items": items}
+
+
 @app.patch("/api/v1/access-requests/{request_id}")
 def update_access_request(
     request_id: str,

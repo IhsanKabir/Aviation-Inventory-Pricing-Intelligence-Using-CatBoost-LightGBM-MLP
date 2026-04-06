@@ -5,6 +5,7 @@ import { SpeedInsights } from "@vercel/speed-insights/next";
 
 import "./globals.css";
 
+import { hasAdminSession } from "@/lib/admin";
 import { Topbar } from "@/components/topbar";
 
 const display = Space_Grotesk({
@@ -28,12 +29,14 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const showAdminLink = await hasAdminSession();
   return (
     <html lang="en" className={`${display.variable} ${mono.variable}`}>
       <body style={{ fontFamily: "var(--font-display)" }}>
-        <Topbar />
+        <Topbar showAdminLink={showAdminLink} />
         <main className="page shell">{children}</main>
         <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

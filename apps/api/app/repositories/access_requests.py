@@ -250,6 +250,69 @@ def get_request(db: Session, request_id: str) -> dict[str, Any] | None:
     return _row_to_payload(dict(row)) if row else None
 
 
+def list_requests(
+    db: Session,
+    *,
+    status: str | None = None,
+    page_key: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    normalized_status = _normalize_text(status)
+    if normalized_status and normalized_status not in VALID_STATUSES:
+        raise ValueError("Unsupported access-request status")
+
+    normalized_page_key = _normalize_text(page_key)
+    if normalized_page_key and normalized_page_key not in VALID_PAGE_KEYS:
+        raise ValueError("Unsupported page key")
+
+    capped_limit = max(1, min(int(limit or 100), 500))
+    filters: list[str] = []
+    params: dict[str, Any] = {"limit": capped_limit}
+
+    if normalized_status:
+        filters.append("status = :status")
+        params["status"] = normalized_status
+    if normalized_page_key:
+        filters.append("page_key = :page_key")
+        params["page_key"] = normalized_page_key
+
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+    rows = db.execute(
+        text(
+            f"""
+            SELECT
+                request_id,
+                page_key,
+                status,
+                requester_name,
+                requester_contact,
+                requested_start_date,
+                requested_end_date,
+                notes,
+                request_scope,
+                decision_note,
+                decided_at_utc,
+                created_at_utc,
+                updated_at_utc
+            FROM report_access_requests
+            {where_clause}
+            ORDER BY
+                CASE status
+                    WHEN 'pending' THEN 0
+                    WHEN 'payment_required' THEN 1
+                    WHEN 'approved' THEN 2
+                    WHEN 'rejected' THEN 3
+                    ELSE 4
+                END,
+                created_at_utc DESC
+            LIMIT :limit
+            """
+        ),
+        params,
+    ).mappings().all()
+    return [_row_to_payload(dict(row)) for row in rows if row]
+
+
 def update_request_status(
     db: Session,
     *,

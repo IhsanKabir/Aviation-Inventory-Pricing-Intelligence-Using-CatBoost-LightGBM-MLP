@@ -1523,6 +1523,37 @@ a {
   font-size: 0.8rem;
 }
 
+.admin-auth-card {
+  width: min(520px, 100%);
+}
+
+.admin-request-list {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-request-card {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-scope-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 220px minmax(0, 1fr);
+  align-items: start;
+}
+
+.admin-scope-grid .mono {
+  margin-top: 0.35rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.64);
+  border: 1px solid rgba(16, 35, 59, 0.08);
+}
+
 @media (max-width: 1100px) {
   .grid.cards,
   .section-grid,
@@ -1548,6 +1579,7 @@ a {
   .report-toolbar-row,
   .report-toolbar-meta,
   .scope-section-header,
+  .admin-scope-grid,
   .scope-window-fields,
   .route-scope-grid,
   .changes-trend-row,

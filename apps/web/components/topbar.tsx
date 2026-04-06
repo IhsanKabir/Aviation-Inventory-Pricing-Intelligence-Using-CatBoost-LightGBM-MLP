@@ -12,6 +12,10 @@ const NAV_ITEMS = [
   { href: "/changes", label: "Changes" },
   { href: "/forecasting", label: "Forecasting" }
 ];
+const ADMIN_NAV_ITEMS = [
+  { href: "/admin", label: "Admin" },
+  { href: "/health", label: "Health" }
+];
 
 function isActivePath(pathname: string, href: string) {
   if (href === "/") {
@@ -20,8 +24,9 @@ function isActivePath(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function Topbar() {
+export function Topbar({ showAdminLink = false }: { showAdminLink?: boolean }) {
   const pathname = usePathname() || "/";
+  const navItems = showAdminLink ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS] : NAV_ITEMS;
 
   return (
     <div className="topbar">
@@ -36,7 +41,7 @@ export function Topbar() {
           </div>
         </div>
         <nav className="nav" aria-label="Primary">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <Link
               key={item.href}
               className="nav-link"
