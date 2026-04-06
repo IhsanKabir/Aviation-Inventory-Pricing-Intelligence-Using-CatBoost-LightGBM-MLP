@@ -591,14 +591,19 @@ export function getApiBaseUrl(): string {
   return normalized.replace(/\/+$/, "");
 }
 
+const DEFAULT_FETCH_TIMEOUT_MS = 12000;
+
 async function fetchJson<T>(path: string): Promise<FetchResult<T>> {
   return fetchJsonWithRevalidate<T>(path, 60);
 }
 
 async function fetchJsonWithRevalidate<T>(path: string, revalidateSeconds: number): Promise<FetchResult<T>> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DEFAULT_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(`${getApiBaseUrl()}${path}`, {
-      next: { revalidate: revalidateSeconds }
+      next: { revalidate: revalidateSeconds },
+      signal: controller.signal
     });
 
     if (!response.ok) {
@@ -615,8 +620,15 @@ async function fetchJsonWithRevalidate<T>(path: string, revalidateSeconds: numbe
     return {
       ok: false,
       data: null,
-      error: error instanceof Error ? error.message : "Unknown API error"
+      error:
+        error instanceof Error && error.name === "AbortError"
+          ? `API request timed out after ${Math.round(DEFAULT_FETCH_TIMEOUT_MS / 1000)}s`
+          : error instanceof Error
+            ? error.message
+            : "Unknown API error"
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

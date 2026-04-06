@@ -3,6 +3,8 @@ import { MetricCard } from "@/components/metric-card";
 import { getDashboardPayload } from "@/lib/api";
 import { formatRouteGeo, formatRouteType } from "@/lib/format";
 
+export const dynamic = "force-dynamic";
+
 function uniqueByKey<T>(items: T[], keyFn: (item: T) => string) {
   const seen = new Set<string>();
   const unique: T[] = [];
