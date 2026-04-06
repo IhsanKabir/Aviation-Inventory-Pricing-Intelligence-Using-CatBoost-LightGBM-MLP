@@ -14,17 +14,21 @@ async function loadInitialRequests() {
     return [];
   }
 
-  const response = await fetch(`${getApiBaseUrl()}/api/v1/access-requests?limit=100`, {
-    headers: {
-      "X-Admin-Token": adminToken
-    },
-    cache: "no-store"
-  });
-  if (!response.ok) {
+  try {
+    const response = await fetch(`${getApiBaseUrl()}/api/v1/access-requests?limit=100`, {
+      headers: {
+        "X-Admin-Token": adminToken
+      },
+      cache: "no-store"
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const payload = (await response.json()) as { items?: ReportAccessRequest[] };
+    return payload.items || [];
+  } catch {
     return [];
   }
-  const payload = (await response.json()) as { items?: ReportAccessRequest[] };
-  return payload.items || [];
 }
 
 export default async function AdminPage() {
