@@ -22,7 +22,7 @@ import os
 import socket
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -148,6 +148,7 @@ def check_http_connectivity(
         "status_code": None,
         "response_time_ms": None,
         "error": None,
+        "response_preview": None,
         "proxy_used": proxy_url,
     }
 
@@ -194,6 +195,7 @@ def check_http_connectivity(
         result["accessible"] = True
         result["status_code"] = response.status_code
         result["response_time_ms"] = round(response_time, 2)
+        result["response_preview"] = (response.text or "")[:240]
 
         LOG.info(
             f"HTTP {config['method']} to {config['name']} successful: "
@@ -285,6 +287,18 @@ def diagnose_source(
         result["recommendations"].append(
             "Consider using a proxy server or VPN if you're in a restricted network environment."
         )
+    elif result["http"]:
+        status_code = int(result["http"].get("status_code") or 0)
+        if status_code == 429:
+            result["issues"].append(f"{config['name']} is rate limiting requests (HTTP 429)")
+            result["recommendations"].append(
+                "Reduce request frequency, split ShareTrip-family airlines into rotating batches, or prefer alternate automatic sources."
+            )
+        elif status_code in {401, 403}:
+            result["issues"].append(f"{config['name']} rejected the request with HTTP {status_code}")
+            result["recommendations"].append(
+                "This source likely needs a fresh authenticated session, token refresh, or a browser-assisted bootstrap step."
+            )
 
     if not result["env"]["all_set"]:
         missing_vars = [
@@ -299,7 +313,11 @@ def diagnose_source(
     # Determine overall status
     if result["dns"]["resolvable"] and result["tcp"]["connectable"]:
         if result["http"] and result["http"]["accessible"]:
-            result["overall_status"] = "PASS"
+            http_status = int(result["http"].get("status_code") or 0)
+            if http_status in {429, 401, 403}:
+                result["overall_status"] = "WARN"
+            else:
+                result["overall_status"] = "PASS"
         elif result["http"]:
             result["overall_status"] = "WARN"  # TCP works but HTTP fails
         else:
@@ -365,8 +383,8 @@ def main():
         )
         results.append(result)
 
-        # Print summary
-        status_symbol = "✓" if result["overall_status"] == "PASS" else "✗"
+        # Print summary using ASCII-safe markers for Windows terminals.
+        status_symbol = "[OK]" if result["overall_status"] == "PASS" else "[!]"
         print(f"\n{status_symbol} {result['name']} ({source_key}): {result['overall_status']}")
 
         if result["issues"]:
@@ -399,7 +417,7 @@ def main():
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         output_data = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "summary": {
                 "total": len(results),
                 "pass": pass_count,

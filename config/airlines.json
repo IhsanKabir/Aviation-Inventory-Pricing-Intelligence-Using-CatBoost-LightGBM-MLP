@@ -49,6 +49,9 @@
     "module": "biman",
     "enabled": true,
     "throttle_per_minute": 30,
+    "fallback_modules": [
+      "sharetrip"
+    ],
     "cabin_classes": [
       "Economy",
       "Business"

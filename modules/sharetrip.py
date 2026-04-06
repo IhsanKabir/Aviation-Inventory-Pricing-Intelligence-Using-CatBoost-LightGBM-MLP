@@ -16,6 +16,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from modules.bdfare import fetch_flights_for_airline as fetch_from_bdfare
 from modules.requester import Requester, RequesterError
 
 
@@ -52,6 +53,8 @@ ENV_EARLY_STOP_MIN_PROGRESS = "SHARETRIP_EARLY_STOP_MIN_PROGRESS"
 ENV_MULTI_PAGE_STABLE_POLLS = "SHARETRIP_MULTI_PAGE_STABLE_POLLS"
 ENV_INIT_MAX_ATTEMPTS = "SHARETRIP_INIT_MAX_ATTEMPTS"
 ENV_INIT_RETRY_SLEEP_SEC = "SHARETRIP_INIT_RETRY_SLEEP_SEC"
+ENV_SOURCE_POLICY = "SHARETRIP_SOURCE_POLICY"
+ENV_BDFARE_AIRLINES = "SHARETRIP_BDFARE_AIRLINES"
 
 
 def _safe_int(v: Any, default: Optional[int] = None) -> Optional[int]:
@@ -100,6 +103,59 @@ def _preview_body(v: Any, size: int = 320) -> str:
         except Exception:
             return _clip_text(str(v), size)
     return _clip_text(v, size)
+
+
+def _has_usable_rows(result: Any) -> bool:
+    rows = result.get("rows") if isinstance(result, dict) else None
+    ok = bool(result.get("ok")) if isinstance(result, dict) else False
+    return ok and isinstance(rows, list) and bool(rows)
+
+
+def _source_attempt_summary(source: str, result: Any) -> Dict[str, Any]:
+    raw = result.get("raw") if isinstance(result, dict) else {}
+    rows = result.get("rows") if isinstance(result, dict) else None
+    return {
+        "source": source,
+        "ok": bool(result.get("ok")) if isinstance(result, dict) else False,
+        "rows": len(rows) if isinstance(rows, list) else None,
+        "error": (raw or {}).get("error") if isinstance(raw, dict) else None,
+        "message": (raw or {}).get("message") if isinstance(raw, dict) else None,
+    }
+
+
+def _sharetrip_source_policy() -> str:
+    return str(os.getenv(ENV_SOURCE_POLICY, "sharetrip_only") or "sharetrip_only").strip().lower()
+
+
+def _bdfare_airline_scope_allows(airline_code: str) -> bool:
+    raw = str(os.getenv(ENV_BDFARE_AIRLINES, "all") or "all").strip().lower()
+    if raw in {"", "all", "*"}:
+        return True
+    allowed = {part.strip().upper() for part in raw.split(",") if part.strip()}
+    return str(airline_code or "").upper().strip() in allowed
+
+
+def _fetch_bdfare_for_airline(
+    *,
+    airline_code: str,
+    origin: str,
+    destination: str,
+    date: str,
+    cabin: str,
+    adt: int,
+    chd: int,
+    inf: int,
+) -> Dict[str, Any]:
+    return fetch_from_bdfare(
+        airline_code=str(airline_code).upper().strip(),
+        origin=origin,
+        destination=destination,
+        date=date,
+        cabin=cabin,
+        adt=adt,
+        chd=chd,
+        inf=inf,
+    )
 
 
 def _cabin_to_sharetrip_code(cabin: str) -> str:
@@ -344,7 +400,7 @@ def _dedupe_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def fetch_flights_for_airline(
+def _fetch_sharetrip_core(
     *,
     airline_code: str,
     origin: str,
@@ -615,6 +671,84 @@ def fetch_flights_for_airline(
     out["rows"] = _dedupe_rows(rows)
     out["ok"] = True
     return out
+
+
+def fetch_flights_for_airline(
+    *,
+    airline_code: str,
+    origin: str,
+    destination: str,
+    date: str,
+    cabin: str = "Economy",
+    adt: int = 1,
+    chd: int = 0,
+    inf: int = 0,
+    cookies_path: Optional[str] = None,
+    proxy_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    policy = _sharetrip_source_policy()
+    airline = str(airline_code or "").upper().strip()
+    can_try_bdfare = _bdfare_airline_scope_allows(airline)
+    attempts: List[Dict[str, Any]] = []
+
+    def _annotate(result: Dict[str, Any]) -> Dict[str, Any]:
+        raw = result.setdefault("raw", {})
+        if isinstance(raw, dict):
+            raw["source_policy"] = policy
+            raw["source_attempts"] = list(attempts)
+        return result
+
+    def _run_bdfare() -> Dict[str, Any]:
+        result = _fetch_bdfare_for_airline(
+            airline_code=airline,
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+        attempts.append(_source_attempt_summary("bdfare", result))
+        return result
+
+    def _run_sharetrip() -> Dict[str, Any]:
+        result = _fetch_sharetrip_core(
+            airline_code=airline,
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+            cookies_path=cookies_path,
+            proxy_url=proxy_url,
+        )
+        attempts.append(_source_attempt_summary("sharetrip", result))
+        return result
+
+    if policy == "bdfare_only" and can_try_bdfare:
+        return _annotate(_run_bdfare())
+
+    if policy in {"bdfare_first", "bdfare_first_then_sharetrip"} and can_try_bdfare:
+        bdfare_result = _run_bdfare()
+        if _has_usable_rows(bdfare_result) or policy == "bdfare_first":
+            return _annotate(bdfare_result)
+        sharetrip_result = _run_sharetrip()
+        if _has_usable_rows(sharetrip_result):
+            return _annotate(sharetrip_result)
+        return _annotate(bdfare_result if bool(bdfare_result.get("ok")) else sharetrip_result)
+
+    sharetrip_result = _run_sharetrip()
+    if _has_usable_rows(sharetrip_result) or policy not in {"sharetrip_then_bdfare", "bdfare_first_then_sharetrip"}:
+        return _annotate(sharetrip_result)
+    if can_try_bdfare:
+        bdfare_result = _run_bdfare()
+        if _has_usable_rows(bdfare_result):
+            return _annotate(bdfare_result)
+        return _annotate(sharetrip_result if bool(sharetrip_result.get("ok")) else bdfare_result)
+    return _annotate(sharetrip_result)
 
 
 def fetch_flights(

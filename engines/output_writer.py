@@ -583,8 +583,34 @@ class OutputWriter:
         fmt_header = workbook.add_format({"bold": True, "font_size": cfg["header"], "font_name": "Segoe UI", "bg_color": "#D9E1F2", "border": 1, "align": "center"})
         fmt_cell = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "center"})
         fmt_cell_left = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "left"})
+        fmt_date = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "center", "num_format": "yyyy-mm-dd"})
+        fmt_num = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "right", "num_format": "#,##0"})
+        fmt_num_signed = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "right", "num_format": "+#,##0;-#,##0;0"})
+        fmt_pct = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "right", "num_format": "0.0"})
+        fmt_pct_signed = workbook.add_format({"font_size": cfg["body"], "font_name": "Segoe UI", "border": 1, "align": "right", "num_format": "+0.0;-0.0;0.0"})
 
-        required = ["airline", "route", "flight_number", "flight_date", "status", "min_fare_delta", "max_fare_delta", "seat_delta", "tax_delta", "load_delta"]
+        required = [
+            "airline",
+            "route",
+            "flight_number",
+            "flight_date",
+            "status",
+            "min_fare",
+            "max_fare",
+            "previous_min_fare",
+            "previous_max_fare",
+            "min_fare_delta",
+            "max_fare_delta",
+            "min_seats",
+            "previous_min_seats",
+            "seat_delta",
+            "current_tax",
+            "previous_tax",
+            "tax_delta",
+            "load_pct",
+            "previous_load_pct",
+            "load_delta",
+        ]
         if any(c not in df.columns for c in required):
             sheet.write(0, 0, "What Changed Since Last Run", fmt_title)
             sheet.write(2, 0, "Insufficient columns to build changes summary.", fmt_note)
@@ -595,107 +621,177 @@ class OutputWriter:
         work["route"] = work["route"].astype(str)
         work["flight_number"] = work["flight_number"].astype(str)
         work["status"] = work["status"].astype(str).str.upper()
-
-        def pos(x):
-            try:
-                return float(x) > 0
-            except Exception:
-                return False
-
-        def neg(x):
-            try:
-                return float(x) < 0
-            except Exception:
-                return False
-
-        work["is_new"] = work["status"].eq("NEW")
-        work["is_sold_out"] = work["status"].eq("SOLD OUT")
-        work["fare_up"] = work["min_fare_delta"].apply(pos) | work["max_fare_delta"].apply(pos)
-        work["fare_down"] = work["min_fare_delta"].apply(neg) | work["max_fare_delta"].apply(neg)
-        work["seat_up"] = work["seat_delta"].apply(pos)
-        work["seat_down"] = work["seat_delta"].apply(neg)
-        work["tax_up"] = work["tax_delta"].apply(pos)
-        work["tax_down"] = work["tax_delta"].apply(neg)
-        work["load_up"] = work["load_delta"].apply(pos)
-        work["load_down"] = work["load_delta"].apply(neg)
-
-        by_airline = (
-            work.groupby("airline", as_index=False)
-            .agg(
-                rows=("airline", "count"),
-                new=("is_new", "sum"),
-                sold_out=("is_sold_out", "sum"),
-                fare_up=("fare_up", "sum"),
-                fare_down=("fare_down", "sum"),
-                seat_up=("seat_up", "sum"),
-                seat_down=("seat_down", "sum"),
-                tax_up=("tax_up", "sum"),
-                tax_down=("tax_down", "sum"),
-                load_up=("load_up", "sum"),
-                load_down=("load_down", "sum"),
-            )
-            .sort_values(["rows", "fare_up", "fare_down"], ascending=[False, False, False])
+        work["flight_date"] = pd.to_datetime(work["flight_date"], errors="coerce")
+        if "search_trip_type" not in work.columns:
+            work["search_trip_type"] = "OW"
+        work["search_trip_type"] = work["search_trip_type"].fillna("OW").astype(str).str.upper()
+        if "requested_return_date" not in work.columns:
+            work["requested_return_date"] = pd.NaT
+        work["requested_return_date"] = pd.to_datetime(work["requested_return_date"], errors="coerce")
+        stay_days = (work["requested_return_date"] - work["flight_date"]).dt.days
+        work["stay_label"] = stay_days.where(stay_days.notna() & (stay_days >= 0)).apply(
+            lambda v: f"{int(v)} Days" if pd.notna(v) else "--"
         )
+        if "current_capture_label" not in work.columns:
+            work["current_capture_label"] = "Latest snapshot"
+        if "previous_capture_label" not in work.columns:
+            work["previous_capture_label"] = "Previous snapshot"
 
-        by_route = (
-            work.groupby(["route", "airline"], as_index=False)
-            .agg(
-                rows=("airline", "count"),
-                new=("is_new", "sum"),
-                sold_out=("is_sold_out", "sum"),
-                fare_up=("fare_up", "sum"),
-                fare_down=("fare_down", "sum"),
-                seat_down=("seat_down", "sum"),
-                load_up=("load_up", "sum"),
-            )
+        numeric_cols = [
+            "min_fare",
+            "max_fare",
+            "previous_min_fare",
+            "previous_max_fare",
+            "min_fare_delta",
+            "max_fare_delta",
+            "min_seats",
+            "previous_min_seats",
+            "seat_delta",
+            "current_tax",
+            "previous_tax",
+            "tax_delta",
+            "load_pct",
+            "previous_load_pct",
+            "load_delta",
+        ]
+        for col in numeric_cols:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+
+        event_mask = (
+            work["status"].isin(["NEW", "SOLD OUT"])
+            | work["min_fare_delta"].fillna(0).ne(0)
+            | work["max_fare_delta"].fillna(0).ne(0)
+            | work["seat_delta"].fillna(0).ne(0)
+            | work["tax_delta"].fillna(0).ne(0)
+            | work["load_delta"].fillna(0).ne(0)
         )
-        by_route["total_events"] = (
-            by_route["new"] + by_route["sold_out"] + by_route["fare_up"] + by_route["fare_down"] + by_route["seat_down"] + by_route["load_up"]
+        work = work.loc[event_mask].copy()
+        if work.empty:
+            sheet.write(0, 0, "What Changed Since Last Run", fmt_title)
+            sheet.write(1, 0, "Simple route and airline view of exact changes from the previous snapshot", fmt_note)
+            sheet.write(3, 0, "No change rows were detected for this run.", fmt_note)
+            return
+
+        work["flight_label"] = work.apply(lambda r: self._flight_code_label(r.get("airline"), r.get("flight_number")), axis=1)
+        work = work.sort_values(
+            ["route", "airline", "flight_date", "flight_number"],
+            ascending=[True, True, True, True],
+            kind="stable",
         )
-        by_route = by_route.sort_values(["total_events", "rows"], ascending=[False, False]).head(30)
 
         sheet.write(0, 0, "What Changed Since Last Run", fmt_title)
-        sheet.write(1, 0, "Compact event view of movement by airline and route", fmt_note)
-        self._write_methodology_note(sheet, 0, 12, workbook)
+        sheet.write(1, 0, "Simple route and airline view of exact changes from the previous snapshot", fmt_note)
+        self._write_methodology_note(sheet, 0, 20, workbook)
 
         row = 3
-        sheet.write(row, 0, "A) Change Counts by Airline", fmt_section)
+        sheet.write(row, 0, "A) Flat Change View", fmt_section)
         row += 1
-        cols_air = ["airline", "rows", "new", "sold_out", "fare_up", "fare_down", "seat_up", "seat_down", "tax_up", "tax_down", "load_up", "load_down"]
-        labels_air = ["Airline", "Rows", "NEW", "SOLD OUT", "Fare Up", "Fare Down", "Seat Up", "Seat Down", "Tax Up", "Tax Down", "Press Up", "Press Down"]
-        for c_idx, label in enumerate(labels_air):
+        cols_flat = [
+            "route",
+            "airline",
+            "search_trip_type",
+            "flight_label",
+            "flight_date",
+            "requested_return_date",
+            "stay_label",
+            "status",
+            "previous_min_fare",
+            "min_fare",
+            "min_fare_delta",
+            "previous_max_fare",
+            "max_fare",
+            "max_fare_delta",
+            "previous_min_seats",
+            "min_seats",
+            "seat_delta",
+            "previous_tax",
+            "current_tax",
+            "tax_delta",
+            "previous_load_pct",
+            "load_pct",
+            "load_delta",
+            "previous_capture_label",
+            "current_capture_label",
+        ]
+        labels_flat = [
+            "Route",
+            "Airline",
+            "Trip Type",
+            "Flight",
+            "Date",
+            "Return Date",
+            "Stay",
+            "Status",
+            "Prev Min Fare",
+            "Curr Min Fare",
+            "Min Fare Change",
+            "Prev Max Fare",
+            "Curr Max Fare",
+            "Max Fare Change",
+            "Prev Seats",
+            "Curr Seats",
+            "Seat Change",
+            "Prev Tax",
+            "Curr Tax",
+            "Tax Change",
+            "Prev Load %",
+            "Curr Load %",
+            "Load Change",
+            "Previous Snapshot",
+            "Current Snapshot",
+        ]
+        for c_idx, label in enumerate(labels_flat):
             sheet.write(row, c_idx, label, fmt_header)
         row += 1
-        for _, rec in by_airline.iterrows():
-            for c_idx, col in enumerate(cols_air):
-                val = rec[col]
-                if c_idx == 0:
-                    sheet.write(row, c_idx, val, fmt_cell_left)
+        for _, rec in work.iterrows():
+            for c_idx, col in enumerate(cols_flat):
+                val = rec.get(col)
+                if col in {"route", "flight_label", "previous_capture_label", "current_capture_label"}:
+                    sheet.write(row, c_idx, val if pd.notna(val) else "--", fmt_cell_left)
+                elif col in {"airline", "status", "search_trip_type", "stay_label"}:
+                    sheet.write(row, c_idx, val if pd.notna(val) else "--", fmt_cell)
+                elif col in {"flight_date", "requested_return_date"}:
+                    if pd.notna(val):
+                        sheet.write_datetime(row, c_idx, pd.Timestamp(val).to_pydatetime(), fmt_date)
+                    else:
+                        sheet.write(row, c_idx, "--", fmt_cell)
+                elif col in {"previous_load_pct", "load_pct"}:
+                    sheet.write(row, c_idx, float(val) if pd.notna(val) else "--", fmt_pct if pd.notna(val) else fmt_cell)
+                elif col == "load_delta":
+                    sheet.write(row, c_idx, float(val) if pd.notna(val) else "--", fmt_pct_signed if pd.notna(val) else fmt_cell)
+                elif col in {"min_fare_delta", "max_fare_delta", "seat_delta", "tax_delta"}:
+                    sheet.write(row, c_idx, float(val) if pd.notna(val) else "--", fmt_num_signed if pd.notna(val) else fmt_cell)
+                elif col in {
+                    "previous_min_fare",
+                    "min_fare",
+                    "previous_max_fare",
+                    "max_fare",
+                    "previous_min_seats",
+                    "min_seats",
+                    "previous_tax",
+                    "current_tax",
+                }:
+                    sheet.write(row, c_idx, float(val) if pd.notna(val) else "--", fmt_num if pd.notna(val) else fmt_cell)
                 else:
-                    sheet.write(row, c_idx, int(val) if pd.notna(val) else 0, fmt_cell)
+                    sheet.write(row, c_idx, val if pd.notna(val) else "--", fmt_cell)
             row += 1
 
-        row += 2
-        sheet.write(row, 0, "B) Top Routes by Change Events", fmt_section)
-        row += 1
-        cols_route = ["route", "airline", "rows", "new", "sold_out", "fare_up", "fare_down", "seat_down", "load_up", "total_events"]
-        labels_route = ["Route", "Airline", "Rows", "NEW", "SOLD OUT", "Fare Up", "Fare Down", "Seat Down", "Press Up", "Total Events"]
-        for c_idx, label in enumerate(labels_route):
-            sheet.write(row, c_idx, label, fmt_header)
-        row += 1
-        for _, rec in by_route.iterrows():
-            for c_idx, col in enumerate(cols_route):
-                val = rec[col]
-                if c_idx in (0, 1):
-                    sheet.write(row, c_idx, val, fmt_cell_left)
-                else:
-                    sheet.write(row, c_idx, int(val) if pd.notna(val) else 0, fmt_cell)
-            row += 1
-
+        last_data_row = max(row - 1, 4)
+        sheet.autofilter(4, 0, last_data_row, len(cols_flat) - 1)
         sheet.set_column(0, 0, 14)
-        sheet.set_column(1, 1, 10)
-        sheet.set_column(2, 11, 11)
-        sheet.freeze_panes(3, 0)
+        sheet.set_column(1, 1, 9)
+        sheet.set_column(2, 2, 10)
+        sheet.set_column(3, 3, 12)
+        sheet.set_column(4, 5, 12)
+        sheet.set_column(6, 6, 8)
+        sheet.set_column(7, 22, 13)
+        sheet.set_column(23, 24, 20)
+        if hasattr(sheet, "autofit"):
+            try:
+                sheet.autofit()
+            except Exception:
+                pass
+        sheet.freeze_panes(5, 0)
 
     def _write_fare_trend_sparklines(self, workbook, df: pd.DataFrame):
         sheet = workbook.add_worksheet("Fare Trend Sparklines")
@@ -1950,7 +2046,18 @@ class OutputWriter:
                 raise RuntimeError(f"{c} missing in dataframe")
 
         workbook = writer.book
-        sheet = workbook.add_worksheet("Route Flight Fare Monitor")
+        trip_types_present = sorted(
+            {
+                str(v).strip().upper()
+                for v in df.get("search_trip_type", pd.Series(dtype=object)).dropna().astype(str).tolist()
+                if str(v).strip()
+            }
+        )
+        if trip_types_present == ["RT"]:
+            sheet_name = "Route Fare Monitor - RT"
+        else:
+            sheet_name = "Route Flight Fare Monitor"
+        sheet = workbook.add_worksheet(sheet_name)
         cfg = self._style_cfg()
         sheet.set_zoom(cfg["zoom"])
         sheet.set_default_row(cfg["default_row"])
@@ -1971,6 +2078,7 @@ class OutputWriter:
 
         fmt_sheet_title = workbook.add_format({"font_name": "Segoe UI", "bold": True, "font_size": cfg["title"] + 1, "align": "center", "valign": "vcenter", "bg_color": "#F2F2F2", "border": 1})
         fmt_route = workbook.add_format({"font_name": "Segoe UI", "bold": True, "font_size": cfg["title"]})
+        fmt_note = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "font_color": "#555555"})
         fmt_route_leader_default = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "bold": True, "align": "left", "valign": "vcenter", "text_wrap": True, "bg_color": "#F2F2F2", "border": 1})
         fmt_header = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["header"], "bold": True, "border": 1, "align": "center", "valign": "vcenter"})
         fmt_cell = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "border": 1, "align": "center"})
@@ -2051,9 +2159,44 @@ class OutputWriter:
         df = df.sort_values(["route", "flight_date", "departure_time"])
         if "day_name" not in df.columns:
             df["day_name"] = pd.to_datetime(df["flight_date"]).dt.day_name()
+        if "search_trip_type" not in df.columns:
+            df["search_trip_type"] = "OW"
+        df["search_trip_type"] = df["search_trip_type"].fillna("OW").astype(str).str.upper()
+        if "requested_return_date" not in df.columns:
+            df["requested_return_date"] = pd.NaT
+        df["requested_return_date"] = pd.to_datetime(df["requested_return_date"], errors="coerce").dt.date
+        df["requested_return_date_label"] = df["requested_return_date"].apply(
+            lambda v: pd.Timestamp(v).strftime("%d %b %Y") if pd.notna(v) else "--"
+        )
+        df["requested_return_date_key"] = df["requested_return_date"].apply(
+            lambda v: pd.Timestamp(v).strftime("%Y-%m-%d") if pd.notna(v) else ""
+        )
+        df["requested_return_day_name"] = pd.to_datetime(df["requested_return_date"], errors="coerce").dt.day_name()
+        df["requested_return_day_name"] = df["requested_return_day_name"].fillna("--")
+        dep_dates = pd.to_datetime(df["flight_date"], errors="coerce")
+        ret_dates = pd.to_datetime(df["requested_return_date"], errors="coerce")
+        stay_days = (ret_dates - dep_dates).dt.days
+        df["stay_nights"] = stay_days.where(stay_days.notna() & (stay_days >= 0))
+        df["stay_label"] = df["stay_nights"].apply(
+            lambda v: f"{int(v)} Days" if pd.notna(v) else "--"
+        )
 
         curr_cap = str((df.get("current_capture_label", pd.Series(["Current snapshot"])).iloc[0] if len(df) else "Current snapshot") or "Current snapshot")
         prev_cap = str((df.get("previous_capture_label", pd.Series(["Previous snapshot"])).iloc[0] if len(df) else "Previous snapshot") or "Previous snapshot")
+        workbook_trip_types = sorted(
+            {
+                str(v).strip().upper()
+                for v in df.get("search_trip_type", pd.Series(dtype=object)).dropna().astype(str).tolist()
+                if str(v).strip()
+            }
+        )
+        workbook_return_dates = sorted(
+            {
+                pd.Timestamp(v).strftime("%d %b %Y")
+                for v in df.get("requested_return_date", pd.Series(dtype=object)).dropna().tolist()
+                if pd.notna(v)
+            }
+        )
 
         history_day_variants = {}
         history_offer_map = {}
@@ -2075,6 +2218,10 @@ class OutputWriter:
                 hist["airline"] = hist["airline"].astype(str).str.upper().str.strip()
                 hist["flight_number"] = hist["flight_number"].astype(str).str.strip()
                 hist["flight_date"] = pd.to_datetime(hist["flight_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+                if "requested_return_date" not in hist.columns:
+                    hist["requested_return_date"] = ""
+                hist["requested_return_date"] = pd.to_datetime(hist["requested_return_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+                hist["requested_return_date"] = hist["requested_return_date"].fillna("")
                 hist["departure_time"] = hist["departure_time"].astype(str).str.strip().str.slice(0, 5)
                 hist["capture_label"] = hist["capture_label"].fillna("").astype(str)
                 hist["captured_at_utc"] = pd.to_datetime(hist["captured_at_utc"], errors="coerce", utc=True)
@@ -2091,6 +2238,7 @@ class OutputWriter:
                     offer_key = (
                         route_key,
                         date_key,
+                        str(rr.get("requested_return_date") or ""),
                         str(rr.get("airline") or "").upper().strip(),
                         str(rr.get("flight_number") or "").strip(),
                         str(rr.get("departure_time") or "").strip(),
@@ -2098,11 +2246,11 @@ class OutputWriter:
                     )
                     row_dict = rr.to_dict()
                     history_offer_map[offer_key] = row_dict
-                    history_day_capture_rows.setdefault((route_key, date_key, cap_key), []).append(row_dict)
+                    history_day_capture_rows.setdefault((route_key, date_key, str(rr.get("requested_return_date") or ""), cap_key), []).append(row_dict)
 
                 changed = hist[hist["state_changed_flag"].astype(str).str.upper() != "NO_CHANGE"].copy()
                 if not changed.empty:
-                    for (route_key, date_key), grp in changed.groupby(["route", "flight_date"], sort=False):
+                    for (route_key, date_key, return_date_key), grp in changed.groupby(["route", "flight_date", "requested_return_date"], sort=False):
                         uniq = (
                             grp[["cap_key", "capture_label", "captured_at_utc"]]
                             .dropna(subset=["cap_key"])
@@ -2114,11 +2262,14 @@ class OutputWriter:
                             for r in uniq.itertuples(index=False)
                         ]
                         if vals:
-                            history_day_variants[(str(route_key), str(date_key))] = vals
+                            history_day_variants[(str(route_key), str(date_key), str(return_date_key or ""))] = vals
 
         sheet.set_column(0, 0, 12)
-        sheet.set_column(1, 1, 10)
-        sheet.set_column(2, 2, 18)
+        sheet.set_column(1, 1, 16)
+        sheet.set_column(2, 2, 14)
+        sheet.set_column(3, 3, 16)
+        sheet.set_column(4, 4, 12)
+        sheet.set_column(5, 5, 18)
 
         legend_airlines = [str(a).strip().upper() for a in airline_codes if str(a).strip()]
         signal_specs = [
@@ -2168,7 +2319,7 @@ class OutputWriter:
                 for _, flight_df_for_cols in route_df_for_cols.groupby("flight_key", sort=False):
                     route_col_width += 5 if self._has_inventory_signal(flight_df_for_cols) else 3
                 max_flight_cols = max(max_flight_cols, route_col_width)
-        note_start_col = max(10, 3 + max_flight_cols + 2)
+        note_start_col = max(10, 6 + max_flight_cols + 2)
         self._write_methodology_note(sheet, 0, note_start_col, workbook)
 
         def _changed(day_frame: pd.DataFrame) -> bool:
@@ -2188,9 +2339,12 @@ class OutputWriter:
                         pass
             return False
 
-        # Leave one visual spacer row between top controls/chips and first route block.
-        sheet.set_row(4, 8)
-        row = 5
+        trip_label = ", ".join(workbook_trip_types) if workbook_trip_types else "OW"
+        return_label = ", ".join(workbook_return_dates[:8]) if workbook_return_dates else "--"
+        if len(workbook_return_dates) > 8:
+            return_label += f" (+{len(workbook_return_dates) - 8})"
+        sheet.merge_range(4, 0, 4, title_end_col, f"Trip Type: {trip_label} | Return Dates: {return_label}", fmt_note)
+        row = 6
         route_blocks = []
         route_row_entries = []
         route_col_entries = []
@@ -2217,7 +2371,7 @@ class OutputWriter:
                     flight_metrics[f.flight_key] = ["Min Fare", "Max Fare", "Tax Amount"]
 
             total_flight_cols = max(1, sum(len(flight_metrics.get(f.flight_key, [])) for _, f in flights.iterrows()))
-            leader_end_col = 2 + total_flight_cols
+            leader_end_col = 5 + total_flight_cols
             if leader_df.empty:
                 leader_txt = "Route Price Leader (Lowest Fare): \u2014"
                 leader_fmt = fmt_route_leader_default
@@ -2228,22 +2382,31 @@ class OutputWriter:
                 leader_dates = sorted(set(leader_dates))
                 date_tokens = pd.to_datetime(leader_dates, errors="coerce").strftime("%d %b").tolist() if leader_dates else []
                 date_label = ", ".join(date_tokens)
+                leader_return_dates = leader_df[(leader_df["flight_key"] == lr["flight_key"]) & (pd.to_numeric(leader_df["min_fare"], errors="coerce") == float(lr.min_fare))]["requested_return_date"].dropna().astype(str).tolist() if "requested_return_date" in leader_df.columns else []
+                leader_return_dates = sorted(set(leader_return_dates))
+                leader_return_tokens = pd.to_datetime(leader_return_dates, errors="coerce").strftime("%d %b").tolist() if leader_return_dates else []
+                leader_return_label = ", ".join(leader_return_tokens)
                 leader_txt = f"Route Price Leader (Lowest Fare): {code} {leader_sep} {int(lr.min_fare):,}" + (f" (Dates: {date_label})" if date_label else "")
+                if leader_return_label:
+                    leader_txt += f" | Returns: {leader_return_label}"
                 leader_airline = str(getattr(lr, "airline", "") or "").upper()
                 leader_fmt = fmt_route_leader_airline.get(leader_airline, fmt_route_leader_default)
             sheet.merge_range(row, 1, row, leader_end_col, leader_txt, leader_fmt)
             sheet.set_row(row, cfg["route_title_row"])
             row += 1
 
-            sheet.merge_range(row, 0, row + 2, 0, "Date", fmt_header)
-            sheet.merge_range(row, 1, row + 2, 1, "Day", fmt_header)
-            sheet.merge_range(row, 2, row + 2, 2, "Capture Date/Time", fmt_header)
+            sheet.merge_range(row, 0, row + 2, 0, "Outbound Date", fmt_header)
+            sheet.merge_range(row, 1, row + 2, 1, "Outbound Weekday", fmt_header)
+            sheet.merge_range(row, 2, row + 2, 2, "Inbound Date", fmt_header)
+            sheet.merge_range(row, 3, row + 2, 3, "Inbound Weekday", fmt_header)
+            sheet.merge_range(row, 4, row + 2, 4, "Length of Stay", fmt_header)
+            sheet.merge_range(row, 5, row + 2, 5, "Capture Date/Time", fmt_header)
             col_map = {}
             col_airline = {}
             col_flight_number = {}
             col_departure_time = {}
             route_col_groups = []
-            col = 3
+            col = 6
             for _, f in flights.iterrows():
                 aircraft = f.aircraft if pd.notna(f.aircraft) else "Aircraft NA"
                 code = self._flight_code_label(f.airline, f.flight_number)
@@ -2291,8 +2454,8 @@ class OutputWriter:
                     sheet.write(row, start_col + i, m, metric_fmt)
             row += 1
 
-            day_groups = list(route_df.groupby(["flight_date", "day_name"], sort=True))
-            for day_idx, ((date, day), day_df) in enumerate(day_groups):
+            day_groups = list(route_df.groupby(["flight_date", "day_name", "requested_return_date_key", "requested_return_date_label", "requested_return_day_name", "stay_label"], sort=True, dropna=False))
+            for day_idx, ((date, day, return_date_key, return_date_label, return_day_name, stay_label), day_df) in enumerate(day_groups):
                 is_last_day = day_idx == (len(day_groups) - 1)
                 date_fmt = fmt_date_row_bottom if is_last_day else fmt_date_row
                 day_curr_cap = str(
@@ -2319,7 +2482,7 @@ class OutputWriter:
                 )
                 variants = [("current", day_curr_cap)]
                 if _changed(day_df):
-                    day_key = (str(route), str(date))
+                    day_key = (str(route), str(date), str(return_date_key or ""))
                     hist_variants = history_day_variants.get(day_key, [])
                     if hist_variants:
                         variants = [("history", cap_label, cap_key) for cap_key, cap_label in hist_variants]
@@ -2341,6 +2504,9 @@ class OutputWriter:
                     variant_date_fmts.append(date_group_fmt)
                     sheet.write(row_i, 0, str(date), date_group_fmt)
                     sheet.write(row_i, 1, day, date_group_fmt)
+                    sheet.write(row_i, 2, str(return_date_label or "--"), date_group_fmt)
+                    sheet.write(row_i, 3, str(return_day_name or "--"), date_group_fmt)
+                    sheet.write(row_i, 4, str(stay_label or "--"), date_group_fmt)
 
                 has_history_stack = span > 1
                 for vidx, variant in enumerate(variants):
@@ -2354,7 +2520,7 @@ class OutputWriter:
                     capture_label = str(vlabel or "")
                     if has_history_stack and is_primary_variant:
                         capture_label = f"[+] {capture_label}"
-                    sheet.write(row_i, 2, capture_label, variant_date_fmts[vidx])
+                    sheet.write(row_i, 5, capture_label, variant_date_fmts[vidx])
                     if has_history_stack:
                         if is_primary_variant:
                             sheet.set_row(
@@ -2379,7 +2545,7 @@ class OutputWriter:
 
                     row_airline_signals = {}
                     if str(vkey).lower() == "history":
-                        cap_rows = history_day_capture_rows.get((str(route), str(date), vcap_key), [])
+                        cap_rows = history_day_capture_rows.get((str(route), str(date), str(return_date_key or ""), vcap_key), [])
                         for rr in cap_rows:
                             ac = str(rr.get("airline") or "").upper().strip()
                             if not ac:
@@ -2463,6 +2629,7 @@ class OutputWriter:
                             "row_number": int(row_i + 1),
                             "variant_key": str(vkey),
                             "flight_date": str(date),
+                            "requested_return_date": str(return_date_key or ""),
                             "airlines_csv": ",".join(row_airlines),
                             "signals_csv": ",".join(row_signals),
                             "airline_signals_csv": airline_signals_csv,
@@ -2533,9 +2700,10 @@ class OutputWriter:
                         if str(vkey).lower() == "history":
                             route_key = str(route)
                             date_key = str(date)
+                            return_key = str(return_date_key or "")
                             flight_no = str(col_flight_number.get(r.flight_key) or "").strip()
                             dep_key = str(col_departure_time.get(r.flight_key) or "").strip()
-                            offer_key = (route_key, date_key, airline_code, flight_no, dep_key, vcap_key)
+                            offer_key = (route_key, date_key, return_key, airline_code, flight_no, dep_key, vcap_key)
                             hr = history_offer_map.get(offer_key)
                             if not isinstance(hr, dict):
                                 continue
@@ -2863,7 +3031,12 @@ class OutputWriter:
                 {"type": "text", "criteria": "containing", "value": "SOLD OUT", "format": fmt_change_sold_bg},
             )
 
-        sheet.freeze_panes(5, 3)
+        if hasattr(sheet, "autofit"):
+            try:
+                sheet.autofit()
+            except Exception:
+                pass
+        sheet.freeze_panes(5, 6)
         self._write_airline_ops_compare(workbook, df, full_capture_history=full_capture_history)
         self._write_changes_summary(workbook, df)
         self._write_fare_trend_sparklines(workbook, df)

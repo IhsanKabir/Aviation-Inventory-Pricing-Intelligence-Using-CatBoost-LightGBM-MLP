@@ -12,6 +12,8 @@ type RouteAccessScope = {
   destination?: string;
   cabin?: string;
   tripType: string;
+  startDate?: string;
+  endDate?: string;
   returnScope: string;
   returnDate?: string;
   returnDateStart?: string;
@@ -28,6 +30,8 @@ function buildScopePayload(scope: RouteAccessScope) {
     destination: scope.destination,
     cabin: scope.cabin,
     trip_type: scope.tripType,
+    start_date: scope.startDate,
+    end_date: scope.endDate,
     return_scope: scope.returnScope,
     return_date: scope.returnDate,
     return_date_start: scope.returnDateStart,
@@ -87,6 +91,18 @@ export function ReportAccessRequestPanel({
     }
     if (scope.cycleId) {
       lines.push(`Cycle: ${scope.cycleId}`);
+    }
+    if (scope.startDate || scope.endDate) {
+      lines.push(`Outbound window: ${scope.startDate ?? "any"} to ${scope.endDate ?? "any"}`);
+    } else {
+      lines.push("Outbound window: all collected outbound dates");
+    }
+    if (scope.tripType === "RT") {
+      if (scope.returnDateStart || scope.returnDateEnd) {
+        lines.push(`Inbound window: ${scope.returnDateStart ?? "any"} to ${scope.returnDateEnd ?? "any"}`);
+      } else {
+        lines.push("Inbound window: all collected inbound dates");
+      }
     }
     lines.push(`Matrix scope: ${scope.routeLimit} route blocks | ${scope.historyLimit} capture depth`);
     return lines;

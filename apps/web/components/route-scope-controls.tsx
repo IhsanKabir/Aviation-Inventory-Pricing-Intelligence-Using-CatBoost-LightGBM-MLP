@@ -48,6 +48,8 @@ type ScopeState = {
   destination: string;
   cabin: string;
   tripType: string;
+  outboundDateStart: string;
+  outboundDateEnd: string;
   returnScope: string;
   returnDate: string;
   returnDateStart: string;
@@ -74,6 +76,7 @@ function normalizeAirportCode(value: string) {
 
 function buildQueryString(state: ScopeState) {
   const next = new URLSearchParams();
+  const returnScope = deriveReturnScope(state);
 
   if (state.cycleId.trim()) {
     next.set("cycle_id", state.cycleId.trim());
@@ -94,15 +97,21 @@ function buildQueryString(state: ScopeState) {
     next.set("cabin", state.cabin.trim());
   }
   next.set("trip_type", state.tripType);
+  if (state.outboundDateStart.trim()) {
+    next.set("start_date", state.outboundDateStart.trim());
+  }
+  if (state.outboundDateEnd.trim()) {
+    next.set("end_date", state.outboundDateEnd.trim());
+  }
   next.set("route_limit", state.routeLimit.trim() || "5");
   next.set("history_limit", state.historyLimit.trim() || "6");
 
   if (state.tripType === "RT") {
-    next.set("return_scope", state.returnScope);
-    if (state.returnScope === "exact" && state.returnDate.trim()) {
+    next.set("return_scope", returnScope);
+    if (returnScope === "exact" && state.returnDate.trim()) {
       next.set("return_date", state.returnDate.trim());
     }
-    if (state.returnScope === "range") {
+    if (returnScope === "range") {
       if (state.returnDateStart.trim()) {
         next.set("return_date_start", state.returnDateStart.trim());
       }
@@ -230,6 +239,31 @@ function buildAvailabilitySummary(items: DateAvailabilityPoint[]) {
     firstDate: items[0]?.date ?? null,
     lastDate: items[items.length - 1]?.date ?? null
   };
+}
+
+function deriveReturnScope(state: ScopeState) {
+  if (state.tripType !== "RT") {
+    return "any";
+  }
+  if (state.returnDateStart.trim() || state.returnDateEnd.trim()) {
+    return "range";
+  }
+  if (state.returnDate.trim()) {
+    return "exact";
+  }
+  return "any";
+}
+
+function hasDateMatchInRange(items: DateAvailabilityPoint[], startDate?: string, endDate?: string) {
+  return items.some((item) => {
+    if (startDate && item.date < startDate) {
+      return false;
+    }
+    if (endDate && item.date > endDate) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function renderAvailabilityTitle(
@@ -367,6 +401,7 @@ export function RouteScopeControls({
     () => Boolean(accessGranted && airportCodesAreValid && normalizedOrigin && normalizedDestination && exactRouteMatch),
     [accessGranted, airportCodesAreValid, exactRouteMatch, normalizedDestination, normalizedOrigin]
   );
+  const returnScope = useMemo(() => deriveReturnScope(state), [state]);
   const availabilityDeferred = !availabilityScopeReady;
   const exportHref = useMemo(() => {
     if (!accessGranted || !requestId) {
@@ -380,17 +415,19 @@ export function RouteScopeControls({
       destination: normalizeAirportCode(state.destination) || undefined,
       cabin: state.cabin.trim() || undefined,
       trip_type: state.tripType,
-      return_scope: state.tripType === "RT" ? state.returnScope : undefined,
-      return_date: state.tripType === "RT" && state.returnScope === "exact" ? state.returnDate || undefined : undefined,
+      start_date: state.outboundDateStart || undefined,
+      end_date: state.outboundDateEnd || undefined,
+      return_scope: state.tripType === "RT" ? returnScope : undefined,
+      return_date: state.tripType === "RT" && returnScope === "exact" ? state.returnDate || undefined : undefined,
       return_date_start:
-        state.tripType === "RT" && state.returnScope === "range" ? state.returnDateStart || undefined : undefined,
+        state.tripType === "RT" && returnScope === "range" ? state.returnDateStart || undefined : undefined,
       return_date_end:
-        state.tripType === "RT" && state.returnScope === "range" ? state.returnDateEnd || undefined : undefined,
+        state.tripType === "RT" && returnScope === "range" ? state.returnDateEnd || undefined : undefined,
       route_limit: state.routeLimit || undefined,
       history_limit: state.historyLimit || undefined
     };
     return buildReportingExportUrl(params, ["routes"]);
-  }, [accessGranted, requestId, state]);
+  }, [accessGranted, requestId, returnScope, state]);
   const availabilityQueryString = useMemo(
     () => (availabilityScopeReady ? buildAvailabilityQueryString(state) : null),
     [availabilityScopeReady, state]
@@ -419,23 +456,23 @@ export function RouteScopeControls({
   const selectedReturnDateUnavailable =
     availabilityOk &&
     state.tripType === "RT" &&
-    state.returnScope === "exact" &&
+    returnScope === "exact" &&
     Boolean(state.returnDate) &&
     !returnDateMap.has(state.returnDate);
+  const selectedDepartureRangeUnavailable =
+    availabilityOk &&
+    Boolean(state.outboundDateStart || state.outboundDateEnd) &&
+    !hasDateMatchInRange(
+      departureDateOptions,
+      state.outboundDateStart || undefined,
+      state.outboundDateEnd || undefined
+    );
   const selectedReturnRangeUnavailable =
     availabilityOk &&
     state.tripType === "RT" &&
-    state.returnScope === "range" &&
+    returnScope === "range" &&
     Boolean(state.returnDateStart || state.returnDateEnd) &&
-    !returnDateOptions.some((item) => {
-      if (state.returnDateStart && item.date < state.returnDateStart) {
-        return false;
-      }
-      if (state.returnDateEnd && item.date > state.returnDateEnd) {
-        return false;
-      }
-      return true;
-    });
+    !hasDateMatchInRange(returnDateOptions, state.returnDateStart || undefined, state.returnDateEnd || undefined);
 
   useEffect(() => {
     if (loadedRouteOptionsQueryString === deferredRouteOptionsQueryString && !routeOptionsState.error) {
@@ -588,9 +625,7 @@ export function RouteScopeControls({
     }
     updateState({
       tripType: "RT",
-      returnScope: state.returnScope === "any" || state.returnScope === "exact" || state.returnScope === "range"
-        ? state.returnScope
-        : "any"
+      returnScope: "any"
     });
   }
 
@@ -622,6 +657,8 @@ export function RouteScopeControls({
       destination: "",
       cabin: "",
       tripType: "OW",
+      outboundDateStart: "",
+      outboundDateEnd: "",
       returnScope: "any",
       returnDate: "",
       returnDateStart: "",
@@ -710,45 +747,6 @@ export function RouteScopeControls({
             <option value="RT">Round-trip</option>
           </select>
         </label>
-        {state.tripType === "RT" ? (
-          <>
-            <label className="field">
-              <span>Return scope</span>
-              <select onChange={(event) => updateState({ returnScope: event.target.value })} value={state.returnScope}>
-                <option value="any">Any collected return</option>
-                <option value="exact">Single return date</option>
-                <option value="range">Return date range</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Return date</span>
-              <input
-                disabled={state.returnScope !== "exact"}
-                onChange={(event) => updateState({ returnDate: event.target.value })}
-                type="date"
-                value={state.returnDate}
-              />
-            </label>
-            <label className="field">
-              <span>Return start</span>
-              <input
-                disabled={state.returnScope !== "range"}
-                onChange={(event) => updateState({ returnDateStart: event.target.value })}
-                type="date"
-                value={state.returnDateStart}
-              />
-            </label>
-            <label className="field">
-              <span>Return end</span>
-              <input
-                disabled={state.returnScope !== "range"}
-                onChange={(event) => updateState({ returnDateEnd: event.target.value })}
-                type="date"
-                value={state.returnDateEnd}
-              />
-            </label>
-          </>
-        ) : null}
         <label className="field">
           <span>Route blocks</span>
           <input
@@ -769,6 +767,82 @@ export function RouteScopeControls({
             value={state.historyLimit}
           />
         </label>
+      </div>
+
+      <div className="scope-section-card">
+        <div className="scope-section-header">
+          <div>
+            <div className="scope-section-kicker">Travel windows</div>
+            <h3 className="scope-section-title">Choose the outbound view first{state.tripType === "RT" ? ", then narrow the inbound view" : ""}</h3>
+          </div>
+          <p className="scope-section-copy">
+            Leave either side blank to keep that edge open. The route table and Excel export will follow the same date window.
+          </p>
+        </div>
+
+        <div className="scope-window-grid">
+          <section className="scope-window-card" data-tone="outbound">
+            <div className="scope-window-title">Outbound travel window</div>
+            <div className="scope-window-copy">
+              Use this for the departure range you want to review across the matrix.
+            </div>
+            <div className="field-grid route-scope-grid">
+              <label className="field">
+                <span>Outbound start</span>
+                <input
+                  onChange={(event) => updateState({ outboundDateStart: event.target.value })}
+                  type="date"
+                  value={state.outboundDateStart}
+                />
+              </label>
+              <label className="field">
+                <span>Outbound end</span>
+                <input
+                  onChange={(event) => updateState({ outboundDateEnd: event.target.value })}
+                  type="date"
+                  value={state.outboundDateEnd}
+                />
+              </label>
+            </div>
+          </section>
+
+          {state.tripType === "RT" ? (
+            <section className="scope-window-card" data-tone="inbound">
+              <div className="scope-window-title">Inbound travel window</div>
+              <div className="scope-window-copy">
+                Narrow the collected return dates without changing the outbound side of the trip.
+              </div>
+              <div className="field-grid route-scope-grid">
+                <label className="field">
+                  <span>Inbound start</span>
+                  <input
+                    onChange={(event) =>
+                      updateState({
+                        returnDateStart: event.target.value,
+                        returnDate: ""
+                      })
+                    }
+                    type="date"
+                    value={state.returnDateStart}
+                  />
+                </label>
+                <label className="field">
+                  <span>Inbound end</span>
+                  <input
+                    onChange={(event) =>
+                      updateState({
+                        returnDateEnd: event.target.value,
+                        returnDate: ""
+                      })
+                    }
+                    type="date"
+                    value={state.returnDateEnd}
+                  />
+                </label>
+              </div>
+            </section>
+          ) : null}
+        </div>
       </div>
 
       <div className="route-availability-grid">
@@ -932,6 +1006,11 @@ export function RouteScopeControls({
         ) : null}
       </div>
 
+      {selectedDepartureRangeUnavailable ? (
+        <div className="status-banner warn">
+          The selected outbound window has no collected departures for this route scope and comparable cycle.
+        </div>
+      ) : null}
       {selectedReturnDateUnavailable ? (
         <div className="status-banner warn">
           The selected return date is not currently collected for this route scope and comparable cycle.

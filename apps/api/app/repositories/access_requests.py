@@ -66,6 +66,16 @@ def _normalize_text(value: Any) -> str | None:
     return text_value or None
 
 
+def _normalize_scalar(value: Any) -> str | None:
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            normalized = _normalize_text(item)
+            if normalized:
+                return normalized
+        return None
+    return _normalize_text(value)
+
+
 def _normalize_code_list(values: Any) -> list[str]:
     if not values:
         return []
@@ -80,16 +90,18 @@ def _normalize_code_list(values: Any) -> list[str]:
 def normalize_request_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
     raw = scope or {}
     normalized: dict[str, Any] = {
-        "cycle_id": _normalize_text(raw.get("cycle_id")),
+        "cycle_id": _normalize_scalar(raw.get("cycle_id")),
         "airline": _normalize_code_list(raw.get("airline")),
-        "origin": _normalize_text(raw.get("origin")),
-        "destination": _normalize_text(raw.get("destination")),
-        "cabin": _normalize_text(raw.get("cabin")),
-        "trip_type": _normalize_text(raw.get("trip_type")),
-        "return_scope": _normalize_text(raw.get("return_scope")),
-        "return_date": _normalize_text(raw.get("return_date")),
-        "return_date_start": _normalize_text(raw.get("return_date_start")),
-        "return_date_end": _normalize_text(raw.get("return_date_end")),
+        "origin": _normalize_scalar(raw.get("origin")),
+        "destination": _normalize_scalar(raw.get("destination")),
+        "cabin": _normalize_scalar(raw.get("cabin")),
+        "trip_type": _normalize_scalar(raw.get("trip_type")),
+        "start_date": _normalize_scalar(raw.get("start_date")),
+        "end_date": _normalize_scalar(raw.get("end_date")),
+        "return_scope": _normalize_scalar(raw.get("return_scope")),
+        "return_date": _normalize_scalar(raw.get("return_date")),
+        "return_date_start": _normalize_scalar(raw.get("return_date_start")),
+        "return_date_end": _normalize_scalar(raw.get("return_date_end")),
     }
     route_limit = raw.get("route_limit")
     history_limit = raw.get("history_limit")
@@ -305,9 +317,33 @@ def require_approved_request(
 
 
 def _scope_matches(approved_scope: dict[str, Any], current_scope: dict[str, Any]) -> bool:
-    for key in ("cycle_id", "origin", "destination", "cabin", "trip_type", "return_scope", "return_date", "return_date_start", "return_date_end"):
+    for key in ("cycle_id", "origin", "destination", "cabin", "trip_type", "return_date"):
         approved_value = approved_scope.get(key)
         if approved_value and current_scope.get(key) != approved_value:
+            return False
+
+    approved_start_date = approved_scope.get("start_date")
+    current_start_date = current_scope.get("start_date")
+    if approved_start_date:
+        if not current_start_date or current_start_date < approved_start_date:
+            return False
+
+    approved_end_date = approved_scope.get("end_date")
+    current_end_date = current_scope.get("end_date")
+    if approved_end_date:
+        if not current_end_date or current_end_date > approved_end_date:
+            return False
+
+    approved_return_start = approved_scope.get("return_date_start")
+    current_return_start = current_scope.get("return_date_start")
+    if approved_return_start:
+        if not current_return_start or current_return_start < approved_return_start:
+            return False
+
+    approved_return_end = approved_scope.get("return_date_end")
+    current_return_end = current_scope.get("return_date_end")
+    if approved_return_end:
+        if not current_return_end or current_return_end > approved_return_end:
             return False
 
     approved_airlines = approved_scope.get("airline") or []

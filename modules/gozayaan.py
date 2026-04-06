@@ -61,10 +61,13 @@ ENV_TOKEN_REFRESH_CMD = "GOZAYAAN_TOKEN_REFRESH_CMD"
 ENV_TOKEN_MIN_TTL_SEC = "GOZAYAAN_TOKEN_MIN_TTL_SEC"
 ENV_TOKEN_REFRESH_TIMEOUT_SEC = "GOZAYAAN_TOKEN_REFRESH_TIMEOUT_SEC"
 ENV_HEADERS_FILE = "GOZAYAAN_HEADERS_FILE"
+ENV_RATE_LIMIT_STATE_FILE = "GOZAYAAN_RATE_LIMIT_STATE_FILE"
+ENV_RATE_LIMIT_COOLDOWN_SEC = "GOZAYAAN_RATE_LIMIT_COOLDOWN_SEC"
 
 DEFAULT_TOKEN_CACHE_FILE = "output/manual_sessions/gozayaan_token_latest.json"
 DEFAULT_COOKIES_CACHE_FILE = "output/manual_sessions/gozayaan_cookies.json"
 DEFAULT_HEADERS_CACHE_FILE = "output/manual_sessions/gozayaan_headers_latest.json"
+DEFAULT_RATE_LIMIT_STATE_FILE = "output/manual_sessions/gozayaan_rate_limit_state.json"
 
 
 def _safe_float(v: Any) -> Optional[float]:
@@ -318,6 +321,15 @@ def _headers_cache_file() -> str:
     return str(os.getenv(ENV_HEADERS_FILE, "").strip() or DEFAULT_HEADERS_CACHE_FILE)
 
 
+def _rate_limit_state_file() -> str:
+    return str(os.getenv(ENV_RATE_LIMIT_STATE_FILE, "").strip() or DEFAULT_RATE_LIMIT_STATE_FILE)
+
+
+def _rate_limit_cooldown_sec() -> int:
+    raw = _safe_int(os.getenv(ENV_RATE_LIMIT_COOLDOWN_SEC))
+    return int(raw if raw is not None else 900)
+
+
 def _resolve_initial_cookies_path(explicit: Optional[str]) -> Optional[str]:
     if explicit:
         return explicit
@@ -375,6 +387,77 @@ def _resolve_active_kong_token(min_ttl_sec: int = 0) -> Optional[Dict[str, Any]]
     if cache_ctx:
         return cache_ctx
     return env_ctx
+
+
+def _load_rate_limit_state() -> Dict[str, Any]:
+    path = Path(_rate_limit_state_file())
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _save_rate_limit_state(payload: Dict[str, Any]) -> None:
+    path = Path(_rate_limit_state_file())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _record_rate_limit_hit(*, status_code: Optional[int], body: Any) -> Dict[str, Any]:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cooldown_sec = _rate_limit_cooldown_sec()
+    until_utc = now + datetime.timedelta(seconds=max(60, cooldown_sec))
+    payload = {
+        "recorded_at_utc": now.isoformat(),
+        "cooldown_until_utc": until_utc.isoformat(),
+        "cooldown_sec": cooldown_sec,
+        "status_code": status_code,
+        "body_preview": str(body or "")[:300],
+    }
+    _save_rate_limit_state(payload)
+    return payload
+
+
+def _clear_rate_limit_state() -> None:
+    path = Path(_rate_limit_state_file())
+    if path.exists():
+        try:
+            path.unlink()
+        except Exception:
+            pass
+
+
+def _active_rate_limit_state() -> Optional[Dict[str, Any]]:
+    state = _load_rate_limit_state()
+    if not state:
+        return None
+    until = _parse_iso8601_utc(state.get("cooldown_until_utc"))
+    if until is None:
+        return None
+    ttl_sec = _seconds_until(until)
+    if ttl_sec is None or ttl_sec <= 0:
+        return None
+    out = dict(state)
+    out["remaining_cooldown_sec"] = ttl_sec
+    return out
+
+
+def _token_needs_refresh(token_ctx: Optional[Dict[str, Any]], min_ttl_sec: int) -> bool:
+    if not isinstance(token_ctx, dict):
+        return True
+    token = str(token_ctx.get("token") or "").strip()
+    if not token:
+        return True
+    ttl_sec = token_ctx.get("ttl_sec")
+    if ttl_sec is None:
+        return False
+    try:
+        return int(ttl_sec) < int(max(0, min_ttl_sec))
+    except Exception:
+        return False
 
 
 def _refresh_command_context(search_payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -472,6 +555,30 @@ def _run_refresh_command(
         }
 
 
+def _attempt_runtime_refresh(
+    *,
+    search_payload: Optional[Dict[str, Any]],
+    cookie_cache_file: str,
+    headers_cache_file: str,
+    min_ttl_sec: int,
+) -> Dict[str, Any]:
+    refresh_meta = _run_refresh_command(
+        _token_cache_file(),
+        search_payload=search_payload,
+        cookies_file=cookie_cache_file,
+        headers_file=headers_cache_file,
+    )
+    refreshed_ctx = _resolve_active_kong_token(min_ttl_sec=min_ttl_sec)
+    refreshed_token = str((refreshed_ctx or {}).get("token") or "").strip()
+    return {
+        "refresh_meta": refresh_meta,
+        "token_ctx": refreshed_ctx,
+        "token": refreshed_token,
+        "cookies_path": cookie_cache_file if Path(cookie_cache_file).exists() else None,
+        "headers": _build_headers(token=refreshed_token or None),
+    }
+
+
 def _post_json(req: Requester, url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> tuple[int, Any]:
     response = req.session.post(url, json=payload, headers=headers, timeout=req.timeout)
     try:
@@ -490,6 +597,34 @@ def _is_rate_limited(body: Any, status_code: Optional[int] = None) -> bool:
     msg = str((err.get("message") if isinstance(err, dict) else "") or "").lower()
     code = str((err.get("code") if isinstance(err, dict) else "") or "").strip()
     return ("rate limit" in msg) or (code in {"419", "420", "429"})
+
+
+def _is_auth_or_access_error(body: Any, status_code: Optional[int] = None) -> bool:
+    if status_code in {401, 403}:
+        return True
+    text = ""
+    if isinstance(body, dict):
+        err = body.get("error") or {}
+        if isinstance(err, dict):
+            text = " ".join(
+                str(err.get(k) or "")
+                for k in ("message", "code", "detail", "title")
+            ).lower()
+        else:
+            text = str(body).lower()
+    else:
+        text = str(body or "").lower()
+    return any(
+        needle in text
+        for needle in (
+            "unauthorized",
+            "forbidden",
+            "access denied",
+            "invalid token",
+            "token expired",
+            "x-kong",
+        )
+    )
 
 
 def _poll_legs(
@@ -782,18 +917,6 @@ def fetch_flights_for_airline(
     Unified run_all.py contract:
     { raw, originalResponse, rows, ok }
     """
-    cookie_cache_file = _cookies_cache_file()
-    headers_cache_file = _headers_cache_file()
-    cookies = _resolve_initial_cookies_path(cookies_path)
-    proxy = proxy_url or os.getenv(ENV_PROXY_URL) or None
-    req = Requester(cookies_path=cookies, user_agent=USER_AGENT, proxy_url=proxy)
-    min_ttl_sec = _safe_int(os.getenv(ENV_TOKEN_MIN_TTL_SEC))
-    min_ttl_sec = int(min_ttl_sec if min_ttl_sec is not None else 300)
-    auto_refresh_token = _env_truthy(ENV_TOKEN_AUTO_REFRESH, default=True)
-    token_ctx = _resolve_active_kong_token(min_ttl_sec=min_ttl_sec)
-    token_value = str((token_ctx or {}).get("token") or "").strip()
-    headers = _build_headers(token=token_value or None)
-
     search_payload = build_search_payload(
         origin=origin,
         destination=destination,
@@ -803,6 +926,16 @@ def fetch_flights_for_airline(
         chd=chd,
         inf=inf,
     )
+    cookie_cache_file = _cookies_cache_file()
+    headers_cache_file = _headers_cache_file()
+    cookies = _resolve_initial_cookies_path(cookies_path)
+    proxy = proxy_url or os.getenv(ENV_PROXY_URL) or None
+    min_ttl_sec = _safe_int(os.getenv(ENV_TOKEN_MIN_TTL_SEC))
+    min_ttl_sec = int(min_ttl_sec if min_ttl_sec is not None else 300)
+    auto_refresh_token = _env_truthy(ENV_TOKEN_AUTO_REFRESH, default=False)
+    token_ctx = _resolve_active_kong_token(min_ttl_sec=min_ttl_sec)
+    token_value = str((token_ctx or {}).get("token") or "").strip()
+    headers = _build_headers(token=token_value or None)
 
     out: Dict[str, Any] = {
         "raw": {
@@ -830,27 +963,62 @@ def fetch_flights_for_airline(
         "ok": False,
     }
 
+    active_cooldown = _active_rate_limit_state()
+    if active_cooldown:
+        out["raw"]["error"] = "rate_limit_cooldown_active"
+        out["raw"]["rate_limit_state"] = active_cooldown
+        out["raw"]["hint"] = (
+            "GOzayaan is in cooldown after a recent rate-limit response. "
+            "Wait for the cooldown window to expire before retrying."
+        )
+        return out
+
+    if auto_refresh_token and _token_needs_refresh(token_ctx, min_ttl_sec=min_ttl_sec):
+        pre_refresh = _attempt_runtime_refresh(
+            search_payload=search_payload,
+            cookie_cache_file=str(cookies or cookie_cache_file),
+            headers_cache_file=headers_cache_file,
+            min_ttl_sec=min_ttl_sec,
+        )
+        out["raw"]["pre_search_token_refresh"] = pre_refresh["refresh_meta"]
+        refreshed_token = str(pre_refresh.get("token") or "").strip()
+        if refreshed_token:
+            token_ctx = pre_refresh.get("token_ctx")
+            token_value = refreshed_token
+            headers = dict(pre_refresh.get("headers") or headers)
+            cookies = str(pre_refresh.get("cookies_path") or cookies or cookie_cache_file)
+    req = Requester(cookies_path=cookies, user_agent=USER_AGENT, proxy_url=proxy)
+
     status, search_body = _post_json(req, SEARCH_URL, search_payload, headers)
     out["raw"]["search_status"] = status
     out["raw"]["search_response"] = search_body
 
     search_ok = status == 200 and isinstance(search_body, dict) and bool(search_body.get("status"))
-    if (not search_ok) and _is_rate_limited(search_body, status_code=status) and auto_refresh_token:
-        refresh_cookies_file = str(cookies or cookie_cache_file)
-        refresh_meta = _run_refresh_command(
-            _token_cache_file(),
-            search_payload=search_payload,
-            cookies_file=refresh_cookies_file,
-            headers_file=headers_cache_file,
+    should_retry_refresh = (
+        not search_ok
+        and auto_refresh_token
+        and (
+            _is_rate_limited(search_body, status_code=status)
+            or _is_auth_or_access_error(search_body, status_code=status)
         )
-        out["raw"]["token_refresh"] = refresh_meta
-        if Path(refresh_cookies_file).exists():
-            cookies = refresh_cookies_file
-            req = Requester(cookies_path=cookies, user_agent=USER_AGENT, proxy_url=proxy)
-        refreshed_ctx = _resolve_active_kong_token(min_ttl_sec=min_ttl_sec)
-        refreshed_token = str((refreshed_ctx or {}).get("token") or "").strip()
+    )
+    if should_retry_refresh:
+        refresh_cookies_file = str(cookies or cookie_cache_file)
+        refresh_attempt = _attempt_runtime_refresh(
+            search_payload=search_payload,
+            cookie_cache_file=refresh_cookies_file,
+            headers_cache_file=headers_cache_file,
+            min_ttl_sec=min_ttl_sec,
+        )
+        out["raw"]["token_refresh"] = refresh_attempt["refresh_meta"]
+        refreshed_token = str(refresh_attempt.get("token") or "").strip()
         if refreshed_token:
-            retry_headers = _build_headers(token=refreshed_token)
+            token_ctx = refresh_attempt.get("token_ctx")
+            retry_headers = dict(refresh_attempt.get("headers") or _build_headers(token=refreshed_token))
+            refresh_cookies_path = str(refresh_attempt.get("cookies_path") or refresh_cookies_file)
+            if refresh_cookies_path and Path(refresh_cookies_path).exists():
+                cookies = refresh_cookies_path
+                req = Requester(cookies_path=cookies, user_agent=USER_AGENT, proxy_url=proxy)
             retry_status, retry_body = _post_json(req, SEARCH_URL, search_payload, retry_headers)
             out["raw"]["search_retry_attempted"] = True
             out["raw"]["search_retry_status"] = retry_status
@@ -858,9 +1026,9 @@ def fetch_flights_for_airline(
             out["raw"]["search_retry_headers_hint"] = {
                 "has_x_kong_segment_id": bool(retry_headers.get("x-kong-segment-id")),
                 "x_kong_segment_id_preview": _token_preview(refreshed_token),
-                "x_kong_token_source": (refreshed_ctx or {}).get("source"),
-                "x_kong_token_expires_at_utc": (refreshed_ctx or {}).get("expires_at_utc"),
-                "x_kong_token_ttl_sec": (refreshed_ctx or {}).get("ttl_sec"),
+                "x_kong_token_source": (token_ctx or {}).get("source"),
+                "x_kong_token_expires_at_utc": (token_ctx or {}).get("expires_at_utc"),
+                "x_kong_token_ttl_sec": (token_ctx or {}).get("ttl_sec"),
             }
             status, search_body = retry_status, retry_body
             headers = retry_headers
@@ -870,12 +1038,15 @@ def fetch_flights_for_airline(
             out["raw"]["search_retry_error"] = "token_refresh_did_not_produce_token"
 
     if status != 200 or not isinstance(search_body, dict):
+        if _is_rate_limited(search_body, status_code=status):
+            out["raw"]["rate_limit_state"] = _record_rate_limit_hit(status_code=status, body=search_body)
         out["raw"]["error"] = "search_failed"
         return out
 
     if not bool(search_body.get("status")):
         out["raw"]["error"] = "search_not_ok"
         if _is_rate_limited(search_body, status_code=status):
+            out["raw"]["rate_limit_state"] = _record_rate_limit_hit(status_code=status, body=search_body)
             out["raw"]["hint"] = (
                 "OTA rejected request as rate-limited/blocked. "
                 "Use GOZAYAAN_TOKEN_AUTO_REFRESH=1 with a valid "
@@ -1005,6 +1176,7 @@ def fetch_flights_for_airline(
     out["raw"]["leg_fares_calls"] = leg_fares_calls
     out["rows"] = _dedupe_rows(rows)
     out["ok"] = True
+    _clear_rate_limit_state()
     return out
 
 

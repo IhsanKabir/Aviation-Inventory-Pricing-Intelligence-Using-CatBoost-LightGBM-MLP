@@ -2373,6 +2373,8 @@ def _get_route_monitor_matrix_from_bigquery(
     return_date: date | None = None,
     return_date_start: date | None = None,
     return_date_end: date | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
     departure_date: date | None = None,
     route_limit: int = 8,
     history_limit: int = 12,
@@ -2420,6 +2422,12 @@ def _get_route_monitor_matrix_from_bigquery(
         if destinations:
             route_filters.append("trip_destination IN UNNEST(@trip_destinations)")
             route_params.append(bigquery.ArrayQueryParameter("trip_destinations", "STRING", _normalize_codes(destinations)))
+    if start_date:
+        route_filters.append("departure_date >= @start_date")
+        route_params.append(bigquery.ScalarQueryParameter("start_date", "DATE", start_date))
+    if end_date:
+        route_filters.append("departure_date <= @end_date")
+        route_params.append(bigquery.ScalarQueryParameter("end_date", "DATE", end_date))
     if departure_date:
         route_filters.append("departure_date = @departure_date")
         route_params.append(bigquery.ScalarQueryParameter("departure_date", "DATE", departure_date))
@@ -2469,6 +2477,12 @@ def _get_route_monitor_matrix_from_bigquery(
         if return_date_end:
             current_filters.append("requested_return_date <= @return_date_end")
             current_params.append(bigquery.ScalarQueryParameter("return_date_end", "DATE", return_date_end))
+    if start_date:
+        current_filters.append("departure_date >= @start_date")
+        current_params.append(bigquery.ScalarQueryParameter("start_date", "DATE", start_date))
+    if end_date:
+        current_filters.append("departure_date <= @end_date")
+        current_params.append(bigquery.ScalarQueryParameter("end_date", "DATE", end_date))
     if departure_date:
         current_filters.append("departure_date = @departure_date")
         current_params.append(bigquery.ScalarQueryParameter("departure_date", "DATE", departure_date))
@@ -2616,6 +2630,12 @@ def _get_route_monitor_matrix_from_bigquery(
         if return_date_end:
             history_filters.append("requested_return_date <= @return_date_end")
             history_params.append(bigquery.ScalarQueryParameter("return_date_end", "DATE", return_date_end))
+    if start_date:
+        history_filters.append("departure_date >= @start_date")
+        history_params.append(bigquery.ScalarQueryParameter("start_date", "DATE", start_date))
+    if end_date:
+        history_filters.append("departure_date <= @end_date")
+        history_params.append(bigquery.ScalarQueryParameter("end_date", "DATE", end_date))
     if departure_date:
         history_filters.append("departure_date = @departure_date")
         history_params.append(bigquery.ScalarQueryParameter("departure_date", "DATE", departure_date))
@@ -2847,6 +2867,8 @@ def get_route_monitor_matrix(
     return_date: date | None = None,
     return_date_start: date | None = None,
     return_date_end: date | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
     departure_date: date | None = None,
     route_limit: int = 8,
     history_limit: int = 12,
@@ -2870,6 +2892,8 @@ def get_route_monitor_matrix(
                 return_date=return_date,
                 return_date_start=return_date_start,
                 return_date_end=return_date_end,
+                start_date=start_date,
+                end_date=end_date,
                 departure_date=departure_date,
                 route_limit=route_limit,
                 history_limit=history_limit,
@@ -2900,6 +2924,8 @@ def get_route_monitor_matrix(
                 return_date=return_date,
                 return_date_start=return_date_start,
                 return_date_end=return_date_end,
+                start_date=start_date,
+                end_date=end_date,
                 departure_date=departure_date,
                 route_limit=route_limit,
                 history_limit=history_limit,
@@ -2951,6 +2977,8 @@ def get_route_monitor_matrix(
         return_date=return_date,
         return_date_start=return_date_start,
         return_date_end=return_date_end,
+        start_date=start_date,
+        end_date=end_date,
         departure_date=departure_date,
         route_limit=route_limit,
         history_limit=history_limit,
@@ -2989,6 +3017,12 @@ def get_route_monitor_matrix(
         if return_date_end:
             route_clauses.append("frm.requested_return_date <= :route_return_date_end")
             route_params["route_return_date_end"] = return_date_end.isoformat()
+    if start_date:
+        route_clauses.append("fo.departure::date >= :route_start_date")
+        route_params["route_start_date"] = start_date.isoformat()
+    if end_date:
+        route_clauses.append("fo.departure::date <= :route_end_date")
+        route_params["route_end_date"] = end_date.isoformat()
     if departure_date:
         route_clauses.append("fo.departure::date = :route_departure_date")
         route_params["route_departure_date"] = departure_date.isoformat()
@@ -3052,6 +3086,12 @@ def get_route_monitor_matrix(
         if return_date_end:
             current_clauses.append("frm.requested_return_date <= :matrix_return_date_end")
             current_params["matrix_return_date_end"] = return_date_end.isoformat()
+    if start_date:
+        current_clauses.append("fo.departure::date >= :matrix_start_date")
+        current_params["matrix_start_date"] = start_date.isoformat()
+    if end_date:
+        current_clauses.append("fo.departure::date <= :matrix_end_date")
+        current_params["matrix_end_date"] = end_date.isoformat()
     if departure_date:
         current_clauses.append("fo.departure::date = :matrix_departure_date")
         current_params["matrix_departure_date"] = departure_date.isoformat()
@@ -3154,6 +3194,12 @@ def get_route_monitor_matrix(
             if return_date_end:
                 history_clauses.append("frm.requested_return_date <= :history_return_date_end")
                 history_params["history_return_date_end"] = return_date_end.isoformat()
+        if start_date:
+            history_clauses.append("fo.departure::date >= :history_start_date")
+            history_params["history_start_date"] = start_date.isoformat()
+        if end_date:
+            history_clauses.append("fo.departure::date <= :history_end_date")
+            history_params["history_end_date"] = end_date.isoformat()
         if departure_date:
             history_clauses.append("fo.departure::date = :history_departure_date")
             history_params["history_departure_date"] = departure_date.isoformat()

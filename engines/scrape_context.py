@@ -194,15 +194,19 @@ class ScrapeContext:
         if not scrape_ids:
             return {}
 
+        normalized_ids = [str(scrape_id) for scrape_id in scrape_ids if scrape_id]
+        if not normalized_ids:
+            return {}
+
         sql = text("""
-            SELECT scrape_id, MAX(scraped_at) AS scraped_at
+            SELECT scrape_id::text AS scrape_id, MAX(scraped_at) AS scraped_at
             FROM flight_offers
-            WHERE scrape_id = ANY(:scrape_ids)
+            WHERE scrape_id::text = ANY(:scrape_ids)
             GROUP BY scrape_id
         """)
 
         with self.engine.connect() as conn:
-            rows = conn.execute(sql, {"scrape_ids": scrape_ids}).fetchall()
+            rows = conn.execute(sql, {"scrape_ids": normalized_ids}).fetchall()
 
         return {r[0]: r[1] for r in rows}
 

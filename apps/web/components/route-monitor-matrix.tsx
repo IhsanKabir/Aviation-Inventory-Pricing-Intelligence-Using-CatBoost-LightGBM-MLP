@@ -23,6 +23,8 @@ type RouteMonitorScopeQuery = {
   destination?: string;
   cabin?: string;
   tripType: string;
+  startDate?: string;
+  endDate?: string;
   returnDate?: string;
   returnDateStart?: string;
   returnDateEnd?: string;
@@ -219,6 +221,23 @@ function tripDateLabel(value?: string | null) {
   return formatDhakaDate(`${value}T00:00:00Z`).replace(",", "");
 }
 
+function tripWeekdayLabel(value?: string | null) {
+  if (!value) {
+    return "-";
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    timeZone: "Asia/Dhaka"
+  }).format(new Date(`${value}T00:00:00Z`));
+}
+
+function tripDurationLabel(value?: number | null) {
+  if (value == null || Number.isNaN(value)) {
+    return "Linked itinerary view";
+  }
+  return `${value} Day${value === 1 ? "" : "s"}`;
+}
+
 function routeSectionSortValue(route: RouteMonitorMatrixRoute) {
   const outboundOrigin = (route.trip_origin ?? "").trim().toUpperCase();
   const outboundDestination = (route.trip_destination ?? "").trim().toUpperCase();
@@ -236,7 +255,7 @@ function flightLegLabel(flight: RouteMonitorFlightGroup) {
   }
   const direction = flight.leg_direction === "inbound" ? "Inbound" : "Outbound";
   if (flight.requested_return_date) {
-    return `${direction} · return ${tripDateLabel(flight.requested_return_date)}`;
+    return `${direction} | inbound ${tripDateLabel(flight.requested_return_date)}`;
   }
   return direction;
 }
@@ -632,12 +651,12 @@ export function RouteMonitorMatrix({
                     <div>
                       <strong>{section.tripPairKey}</strong>
                       <span>
-                        Outbound {tripDateLabel(section.requestedOutboundDate)} · Return {tripDateLabel(section.requestedReturnDate)}
+                        Outbound {tripDateLabel(section.requestedOutboundDate)} ({tripWeekdayLabel(section.requestedOutboundDate)}) | Inbound {tripDateLabel(section.requestedReturnDate)} ({tripWeekdayLabel(section.requestedReturnDate)})
                       </span>
                     </div>
                     <div className="roundtrip-route-meta">
                       <span className="route-type-pill" data-type="RT">RT</span>
-                      <span>{section.tripDurationDays != null ? `${section.tripDurationDays}d trip` : "Linked itinerary view"}</span>
+                      <span>{tripDurationLabel(section.tripDurationDays)}</span>
                     </div>
                   </div>
                 ) : null}
@@ -688,10 +707,10 @@ export function RouteMonitorMatrix({
                             <thead>
                               <tr>
                                 <th className="sticky-col sticky-route-meta" rowSpan={3}>
-                                  Date
+                                  {route.search_trip_type === "RT" ? "Outbound Date" : "Date"}
                                 </th>
                                 <th className="sticky-col sticky-route-meta second" rowSpan={3}>
-                                  Day
+                                  {route.search_trip_type === "RT" ? "Outbound Weekday" : "Day"}
                                 </th>
                                 <th className="sticky-col sticky-route-meta third" rowSpan={3}>
                                   Capture Date/Time

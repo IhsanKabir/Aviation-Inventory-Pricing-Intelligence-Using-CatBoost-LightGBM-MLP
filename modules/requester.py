@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 import requests
 from requests.adapters import HTTPAdapter
+from requests.exceptions import ConnectionError as RequestsConnectionError, ProxyError, SSLError, Timeout as RequestsTimeout
 from urllib3.util.retry import Retry
 from typing import Optional
 
@@ -82,6 +83,24 @@ class Requester:
         """Classify the type of network error for better diagnostics."""
         error_str = str(exception).lower()
 
+        if isinstance(exception, ProxyError):
+            return "proxy_error"
+        elif isinstance(exception, SSLError):
+            return "ssl_error"
+        elif isinstance(exception, RequestsTimeout):
+            return "timeout"
+        elif isinstance(exception, RequestsConnectionError):
+            if "name resolution" in error_str or "nodename nor servname" in error_str or "no address" in error_str:
+                return "dns_resolution"
+            if "connection refused" in error_str:
+                return "connection_refused"
+            if "connection reset" in error_str or "broken pipe" in error_str:
+                return "connection_reset"
+            if "unreachable" in error_str:
+                return "network_unreachable"
+            if "forbidden by its access permissions" in error_str or "winerror 10013" in error_str:
+                return "socket_access_denied"
+            return "connection_error"
         if "name resolution" in error_str or "nodename nor servname" in error_str or "no address" in error_str:
             return "dns_resolution"
         elif "connection refused" in error_str:
@@ -99,6 +118,10 @@ class Requester:
         else:
             return "connection_error"
 
+    def _raise_requester_error(self, exception: Exception):
+        error_type = self._classify_error(exception)
+        raise RequesterError(str(exception), error_type=error_type, original_exception=exception)
+
     def post(self, url: str, json_payload: dict, headers: dict | None = None, **kwargs):
         try:
             timeout = kwargs.pop("timeout", self.timeout)
@@ -111,7 +134,7 @@ class Requester:
                 body = resp.text
             return ok, body, resp.status_code
         except Exception as e:
-            raise RequesterError(str(e))
+            self._raise_requester_error(e)
 
     def get(self, url: str, params: dict = None, headers: dict = None, **kwargs):
         try:
@@ -119,7 +142,7 @@ class Requester:
             resp = self.session.get(url, params=params, headers=headers, timeout=timeout, **kwargs)
             return resp
         except Exception as e:
-            raise RequesterError(e)
+            self._raise_requester_error(e)
 
     def save_cookies(self):
         if not self.cookies_path:

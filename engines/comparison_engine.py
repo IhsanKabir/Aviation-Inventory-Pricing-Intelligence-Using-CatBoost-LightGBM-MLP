@@ -288,18 +288,69 @@ class ComparisonEngine:
     def __init__(self, engine):
         self.engine = engine
 
-    def compare_scrapes(self, current_scrape, previous_scrape) -> pd.DataFrame:
+    def compare_scrapes(
+        self,
+        current_scrape,
+        previous_scrape,
+        trip_type: str | None = None,
+        return_date: str | None = None,
+        return_date_start: str | None = None,
+        return_date_end: str | None = None,
+    ) -> pd.DataFrame:
+        normalized_trip_type = str(trip_type or "").strip().upper()
+        if normalized_trip_type not in {"OW", "RT"}:
+            normalized_trip_type = None
+        return_date_sql = ""
+        params = {
+            "current": current_scrape,
+            "previous": previous_scrape,
+        }
+        if normalized_trip_type:
+            params["trip_type"] = normalized_trip_type
+        if return_date:
+            params["return_date"] = return_date
+            return_date_sql += " AND frm.requested_return_date::text = :return_date"
+        if return_date_start:
+            params["return_date_start"] = return_date_start
+            return_date_sql += " AND frm.requested_return_date::text >= :return_date_start"
+        if return_date_end:
+            params["return_date_end"] = return_date_end
+            return_date_sql += " AND frm.requested_return_date::text <= :return_date_end"
         sql = text(
-            """
+            f"""
         WITH current_raw AS (
-            SELECT *
-            FROM flight_offers
+            SELECT
+                fo.*,
+                COALESCE(frm.search_trip_type, 'OW') AS search_trip_type,
+                frm.requested_return_date::text AS requested_return_date
+            FROM flight_offers fo
+            LEFT JOIN LATERAL (
+                SELECT r.search_trip_type, r.requested_return_date
+                FROM flight_offer_raw_meta r
+                WHERE r.flight_offer_id = fo.id
+                ORDER BY r.id DESC
+                LIMIT 1
+            ) frm ON TRUE
             WHERE scrape_id = :current
+              {("AND COALESCE(frm.search_trip_type, 'OW') = :trip_type" if normalized_trip_type else "")}
+              {return_date_sql}
         ),
         previous_raw AS (
-            SELECT *
-            FROM flight_offers
+            SELECT
+                fo.*,
+                COALESCE(frm.search_trip_type, 'OW') AS search_trip_type,
+                frm.requested_return_date::text AS requested_return_date
+            FROM flight_offers fo
+            LEFT JOIN LATERAL (
+                SELECT r.search_trip_type, r.requested_return_date
+                FROM flight_offer_raw_meta r
+                WHERE r.flight_offer_id = fo.id
+                ORDER BY r.id DESC
+                LIMIT 1
+            ) frm ON TRUE
             WHERE scrape_id = :previous
+              {("AND COALESCE(frm.search_trip_type, 'OW') = :trip_type" if normalized_trip_type else "")}
+              {return_date_sql}
         ),
 
         -- Canonical flight per scrape (collapse fare_basis / brand noise)
@@ -314,6 +365,8 @@ class ComparisonEngine:
                 departure,
                 cabin,
                 brand,
+                search_trip_type,
+                requested_return_date,
                 MIN(price_total_bdt)  AS price_total_bdt,
                 MAX(seat_capacity)    AS seat_capacity,
                 MAX(seat_available)   AS seat_available
@@ -326,7 +379,9 @@ class ComparisonEngine:
                 flight_number,
                 departure,
                 cabin,
-                brand
+                brand,
+                search_trip_type,
+                requested_return_date
         ),
         previous AS (
             SELECT
@@ -339,6 +394,8 @@ class ComparisonEngine:
                 departure,
                 cabin,
                 brand,
+                search_trip_type,
+                requested_return_date,
                 MIN(price_total_bdt)  AS price_total_bdt,
                 MAX(seat_capacity)    AS seat_capacity,
                 MAX(seat_available)   AS seat_available
@@ -351,7 +408,9 @@ class ComparisonEngine:
                 flight_number,
                 departure,
                 cabin,
-                brand
+                brand,
+                search_trip_type,
+                requested_return_date
         ),
 
         current_ranked AS (
@@ -371,6 +430,8 @@ class ComparisonEngine:
             COALESCE(c.departure, p.departure)          AS departure,
             COALESCE(c.cabin, p.cabin)                  AS cabin,
             COALESCE(c.brand, p.brand)                  AS brand,
+            COALESCE(c.search_trip_type, p.search_trip_type, 'OW') AS search_trip_type,
+            COALESCE(c.requested_return_date, p.requested_return_date) AS requested_return_date,
 
             p.price_total_bdt AS previous_fare_bdt,
             c.price_total_bdt AS current_fare_bdt,
@@ -433,6 +494,8 @@ class ComparisonEngine:
          AND c.departure = p.departure
          AND c.cabin = p.cabin
          AND c.brand = p.brand
+         AND COALESCE(c.search_trip_type, 'OW') = COALESCE(p.search_trip_type, 'OW')
+         AND COALESCE(c.requested_return_date, '') = COALESCE(p.requested_return_date, '')
 
         LEFT JOIN flight_offer_raw_meta cm
           ON cm.flight_offer_id = c.id
@@ -449,16 +512,19 @@ class ComparisonEngine:
                 sql,
                 conn,
                 params={
-                    "current": current_scrape,
-                    "previous": previous_scrape,
+                    **params,
                 },
             )
             df["route"] = df["origin"] + "-" + df["destination"]
             df["departure_time"] = pd.to_datetime(df["departure"]).dt.strftime("%H:%M")
             df["flight_date"] = pd.to_datetime(df["departure"]).dt.date
+            df["search_trip_type"] = df.get("search_trip_type", pd.Series(index=df.index, dtype=object)).fillna("OW").astype(str).str.upper()
+            df["requested_return_date"] = pd.to_datetime(df.get("requested_return_date"), errors="coerce").dt.date
 
             df["flight_key"] = (
                 df["route"] + "|" + df["airline"] + "|" + df["flight_number"] + "|" + df["departure_time"]
+                + "|" + df["search_trip_type"].astype(str)
+                + "|" + df["requested_return_date"].astype(str)
             )
 
             aircraft_map = (

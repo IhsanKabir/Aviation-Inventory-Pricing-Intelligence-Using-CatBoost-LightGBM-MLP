@@ -164,6 +164,8 @@ export async function RouteMonitorSection({
   destination,
   cabin,
   tripType,
+  startDate,
+  endDate,
   returnDate,
   returnDateStart,
   returnDateEnd,
@@ -178,6 +180,8 @@ export async function RouteMonitorSection({
   destination?: string;
   cabin?: string;
   tripType: string;
+  startDate?: string;
+  endDate?: string;
   returnDate?: string;
   returnDateStart?: string;
   returnDateEnd?: string;
@@ -193,6 +197,8 @@ export async function RouteMonitorSection({
     destinations: destination ? [destination] : undefined,
     cabins: cabin ? [cabin] : undefined,
     tripTypes: tripType ? [tripType] : undefined,
+    startDate,
+    endDate,
     returnDate,
     returnDateStart,
     returnDateEnd,
@@ -276,6 +282,8 @@ export async function RouteMonitorSection({
               destination,
               cabin,
               tripType,
+              startDate,
+              endDate,
               returnDate,
               returnDateStart,
               returnDateEnd,

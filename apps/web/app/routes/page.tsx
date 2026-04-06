@@ -46,21 +46,20 @@ function uniqueByKey<T>(items: T[], keyFn: (item: T) => string) {
 
 function buildTripScopeLabel(
   tripType: string,
-  returnScope: string,
-  returnDate?: string,
+  startDate?: string,
+  endDate?: string,
   returnDateStart?: string,
   returnDateEnd?: string
 ) {
+  const outboundLabel = startDate || endDate ? `${startDate ?? "any"} to ${endDate ?? "any"}` : "all collected outbound dates";
   if (tripType !== "RT") {
-    return "One-way observations";
+    return `One-way | outbound ${outboundLabel}`;
   }
-  if (returnScope === "exact" && returnDate) {
-    return `Round-trip | return ${returnDate}`;
-  }
-  if (returnScope === "range" && (returnDateStart || returnDateEnd)) {
-    return `Round-trip | return window ${returnDateStart ?? "any"} to ${returnDateEnd ?? "any"}`;
-  }
-  return "Round-trip | any collected return date";
+  const inboundLabel =
+    returnDateStart || returnDateEnd
+      ? `${returnDateStart ?? "any"} to ${returnDateEnd ?? "any"}`
+      : "all collected inbound dates";
+  return `Round-trip | outbound ${outboundLabel} | inbound ${inboundLabel}`;
 }
 
 function normalizeAirportCode(value?: string | null) {
@@ -155,9 +154,12 @@ export default async function RoutesPage({ searchParams }: PageProps) {
   const destination = normalizeAirportCode(firstParam(params, "destination"));
   const cabin = firstParam(params, "cabin");
   const tripType = firstParam(params, "trip_type") ?? "OW";
+  const departureDate = firstParam(params, "departure_date");
+  const startDate = firstParam(params, "start_date") ?? departureDate ?? undefined;
+  const endDate = firstParam(params, "end_date") ?? departureDate ?? undefined;
   const returnDate = firstParam(params, "return_date");
-  const returnDateStart = firstParam(params, "return_date_start");
-  const returnDateEnd = firstParam(params, "return_date_end");
+  const returnDateStart = firstParam(params, "return_date_start") ?? (returnDate ? returnDate : undefined);
+  const returnDateEnd = firstParam(params, "return_date_end") ?? (returnDate ? returnDate : undefined);
   const returnScope =
     firstParam(params, "return_scope") ??
     (returnDateStart || returnDateEnd ? "range" : returnDate ? "exact" : "any");
@@ -165,15 +167,15 @@ export default async function RoutesPage({ searchParams }: PageProps) {
   const requestId = firstParam(params, "request_id") ?? undefined;
   const routeLimit = parseLimit(firstParam(params, "route_limit"), 5);
   const historyLimit = parseLimit(firstParam(params, "history_limit"), 6);
-  const effectiveReturnDate = tripType === "RT" && returnScope === "exact" ? returnDate ?? undefined : undefined;
+  const effectiveReturnDate = undefined;
   const effectiveReturnDateStart =
-    tripType === "RT" && returnScope === "range" ? returnDateStart ?? undefined : undefined;
+    tripType === "RT" ? returnDateStart ?? undefined : undefined;
   const effectiveReturnDateEnd =
-    tripType === "RT" && returnScope === "range" ? returnDateEnd ?? undefined : undefined;
+    tripType === "RT" ? returnDateEnd ?? undefined : undefined;
   const tripScopeLabel = buildTripScopeLabel(
     tripType,
-    returnScope,
-    effectiveReturnDate,
+    startDate,
+    endDate,
     effectiveReturnDateStart,
     effectiveReturnDateEnd
   );
@@ -225,6 +227,8 @@ export default async function RoutesPage({ searchParams }: PageProps) {
               destination: destination ?? "",
               cabin: cabin ?? "",
               tripType,
+              outboundDateStart: startDate ?? "",
+              outboundDateEnd: endDate ?? "",
               returnScope,
               returnDate: returnDate ?? "",
               returnDateStart: returnDateStart ?? "",
@@ -254,6 +258,8 @@ export default async function RoutesPage({ searchParams }: PageProps) {
               tripType,
               returnScope,
               returnDate: effectiveReturnDate,
+              startDate,
+              endDate,
               returnDateStart: effectiveReturnDateStart,
               returnDateEnd: effectiveReturnDateEnd,
               routeLimit,
@@ -272,6 +278,8 @@ export default async function RoutesPage({ searchParams }: PageProps) {
               origin={origin}
               recentCycles={recentCycleOptions}
               requestId={requestId}
+              startDate={startDate}
+              endDate={endDate}
               returnDate={effectiveReturnDate}
               returnDateEnd={effectiveReturnDateEnd}
               returnDateStart={effectiveReturnDateStart}

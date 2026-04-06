@@ -11,6 +11,7 @@ import argparse
 import base64
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import time
@@ -41,7 +42,21 @@ def parse_args():
     p.add_argument("--timeout-ms", type=int, default=90000, help="Navigation/action timeout in ms")
     p.add_argument("--settle-ms", type=int, default=1200, help="Initial settle wait in ms")
     p.add_argument("--wait-seconds", type=float, default=45.0, help="Total time budget to capture token")
+    p.add_argument("--disable-targeted-fetch", action="store_true", help="Do not auto-trigger a direct API fetch; wait for a real manual/browser search request instead")
+    p.add_argument("--disable-auto-click-search", action="store_true", help="Do not auto-click search buttons; wait for a real manual/browser search request instead")
+    p.add_argument("--allow-stale-fallback", action="store_true", help="If no fresh token is seen, keep the last stale token candidate instead of failing")
     p.add_argument("--proxy-server", help="Optional proxy server URL, e.g. http://127.0.0.1:8080")
+    p.add_argument(
+        "--browser-channel",
+        default="chromium",
+        choices=["chromium", "chrome", "msedge"],
+        help="Browser channel. Use 'chrome' for a more realistic logged-in browser session.",
+    )
+    p.add_argument(
+        "--user-data-dir",
+        default="",
+        help="Persistent browser profile dir. Recommended when reusing a logged-in GOzayaan browser session.",
+    )
     p.add_argument("--headless", action="store_true", help="Run browser headless")
     p.add_argument("--non-interactive", action="store_true", help="Do not prompt for manual actions")
     p.add_argument("--keep-open", action="store_true", help="Pause before closing browser (interactive mode only)")
@@ -286,10 +301,21 @@ def main():
 
     with sync_playwright() as p:
         launch_kwargs: Dict[str, Any] = {"headless": bool(args.headless)}
+        channel = None if args.browser_channel == "chromium" else args.browser_channel
+        if channel:
+            launch_kwargs["channel"] = channel
         if args.proxy_server:
             launch_kwargs["proxy"] = {"server": args.proxy_server}
+        browser = None
+        context = None
         try:
-            browser = p.chromium.launch(**launch_kwargs)
+            if args.user_data_dir:
+                profile_dir = str(Path(args.user_data_dir).resolve())
+                os.makedirs(profile_dir, exist_ok=True)
+                context = p.chromium.launch_persistent_context(profile_dir, **launch_kwargs)
+            else:
+                browser = p.chromium.launch(**launch_kwargs)
+                context = browser.new_context()
         except Exception as exc:
             msg = str(exc)
             if "Executable doesn't exist" in msg:
@@ -299,10 +325,21 @@ def main():
                     f"Launch error: {msg}"
                 )
             raise SystemExit(f"Failed to launch browser: {msg}")
-        context = browser.new_context()
         context.on("request", _on_request)
         page = context.new_page()
         page.set_default_timeout(args.timeout_ms)
+
+        if not args.quiet and args.user_data_dir:
+            print(
+                "Browser mode:",
+                json.dumps(
+                    {
+                        "channel": args.browser_channel,
+                        "persistent_profile": True,
+                        "user_data_dir": str(Path(args.user_data_dir).resolve()),
+                    }
+                ),
+            )
 
         if not args.quiet:
             print(f"Opening {args.url}")
@@ -312,7 +349,7 @@ def main():
 
         target_payload = _build_target_payload(args)
         targeted_fetch_result = None
-        if target_payload:
+        if target_payload and not args.disable_targeted_fetch:
             _arm_capture()
             targeted_fetch_result = _trigger_targeted_fetch(page, args.search_url, target_payload)
             if not args.quiet:
@@ -328,7 +365,7 @@ def main():
                 )
             _wait_for_capture(page, holder, args.wait_seconds)
 
-        if not holder.get("token"):
+        if not holder.get("token") and not args.disable_auto_click_search:
             _arm_capture()
             clicked_text = _try_click_search(page)
             if clicked_text and (not args.quiet):
@@ -342,7 +379,7 @@ def main():
             _arm_capture()
             _wait_for_capture(page, holder, args.wait_seconds)
 
-        if not holder.get("token") and holder.get("stale_candidate"):
+        if not holder.get("token") and holder.get("stale_candidate") and args.allow_stale_fallback:
             holder.update(holder["stale_candidate"])
             if not args.quiet:
                 print("Only stale token candidate observed; using it as fallback.")
@@ -393,7 +430,8 @@ def main():
         if args.keep_open and not args.non_interactive:
             input("Press ENTER to close browser... ")
         context.close()
-        browser.close()
+        if browser is not None:
+            browser.close()
 
 
 if __name__ == "__main__":

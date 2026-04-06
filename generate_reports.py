@@ -30,6 +30,10 @@ def parse_args():
     parser.add_argument("--origin", help="Filter origin airport")
     parser.add_argument("--destination", help="Filter destination airport")
     parser.add_argument("--cabin", help="Filter cabin")
+    parser.add_argument("--trip-type", choices=["OW", "RT"], help="Filter route monitor to one-way or round-trip captures")
+    parser.add_argument("--return-date", help="Exact requested return date (YYYY-MM-DD) for RT route monitor")
+    parser.add_argument("--return-date-start", help="Requested return date lower bound (YYYY-MM-DD)")
+    parser.add_argument("--return-date-end", help="Requested return date upper bound (YYYY-MM-DD)")
     parser.add_argument("--route-scope", choices=["all", "domestic", "international"], default="all")
     parser.add_argument("--market-country", default="BD")
     parser.add_argument(
@@ -1064,6 +1068,10 @@ def export_reports(args):
                 origin=args.origin,
                 destination=args.destination,
                 cabin=args.cabin,
+                trip_type=getattr(args, "trip_type", None),
+                return_date=getattr(args, "return_date", None),
+                return_date_start=getattr(args, "return_date_start", None),
+                return_date_end=getattr(args, "return_date_end", None),
                 route_scope=getattr(args, "route_scope", "all"),
                 market_country=getattr(args, "market_country", "BD"),
             )

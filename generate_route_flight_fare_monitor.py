@@ -238,6 +238,55 @@ def _warn_if_partial_scrape_selection(
                 )
 
 
+def _get_latest_two_trip_filtered_scrapes(
+    engine,
+    *,
+    airline_codes=None,
+    trip_type: str | None = None,
+    return_date: str | None = None,
+    return_date_start: str | None = None,
+    return_date_end: str | None = None,
+):
+    airline_codes = _normalize_airline_codes(airline_codes)
+    normalized_trip_type = str(trip_type or "").strip().upper()
+    clauses = []
+    params = {}
+    if airline_codes:
+        params["airline_codes"] = airline_codes
+        clauses.append("fo.airline = ANY(:airline_codes)")
+    if normalized_trip_type in {"OW", "RT"}:
+        params["trip_type"] = normalized_trip_type
+        clauses.append("COALESCE(frm.search_trip_type, 'OW') = :trip_type")
+    if return_date:
+        params["return_date"] = return_date
+        clauses.append("frm.requested_return_date = :return_date")
+    if return_date_start:
+        params["return_date_start"] = return_date_start
+        clauses.append("frm.requested_return_date >= :return_date_start")
+    if return_date_end:
+        params["return_date_end"] = return_date_end
+        clauses.append("frm.requested_return_date <= :return_date_end")
+
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = text(
+        f"""
+        SELECT fo.scrape_id::text AS scrape_id
+        FROM flight_offers fo
+        LEFT JOIN flight_offer_raw_meta frm
+          ON frm.flight_offer_id = fo.id
+        {where_sql}
+        GROUP BY fo.scrape_id
+        ORDER BY MAX(fo.scraped_at) DESC
+        LIMIT 2
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    if len(rows) < 2:
+        raise RuntimeError("Need at least two matching scrapes for the requested round-trip filter.")
+    return rows[0][0], rows[1][0]
+
+
 def _build_run_stamp(timestamp_tz: str):
     if timestamp_tz == "utc":
         now = datetime.now(timezone.utc)
@@ -453,6 +502,10 @@ def _build_full_capture_history_df(
     cabin=None,
     route_scope: str = "all",
     market_country: str = "BD",
+    trip_type: str | None = None,
+    return_date: str | None = None,
+    return_date_start: str | None = None,
+    return_date_end: str | None = None,
 ) -> pd.DataFrame:
     history_cols = [
         "route",
@@ -461,6 +514,8 @@ def _build_full_capture_history_df(
         "flight_date",
         "day_name",
         "departure_time",
+        "search_trip_type",
+        "requested_return_date",
         "scrape_id",
         "captured_at_utc",
         "capture_label",
@@ -534,6 +589,23 @@ def _build_full_capture_history_df(
         params["cabin"] = str(cabin)
         cabin_clause = " AND fo.cabin = :cabin"
 
+    normalized_trip_type = str(trip_type or "").strip().upper()
+    trip_clause = ""
+    if normalized_trip_type in {"OW", "RT"}:
+        params["trip_type"] = normalized_trip_type
+        trip_clause = " AND COALESCE(frm.search_trip_type, 'OW') = :trip_type"
+
+    return_clause = ""
+    if return_date:
+        params["return_date"] = return_date
+        return_clause += " AND frm.requested_return_date = :return_date"
+    if return_date_start:
+        params["return_date_start"] = return_date_start
+        return_clause += " AND frm.requested_return_date >= :return_date_start"
+    if return_date_end:
+        params["return_date_end"] = return_date_end
+        return_clause += " AND frm.requested_return_date <= :return_date_end"
+
     sql = text(
         f"""
         SELECT
@@ -544,6 +616,8 @@ def _build_full_capture_history_df(
             fo.destination,
             fo.flight_number,
             fo.departure,
+            COALESCE(frm.search_trip_type, 'OW') AS search_trip_type,
+            frm.requested_return_date,
             MIN(fo.price_total_bdt) AS min_fare,
             MAX(fo.price_total_bdt) AS max_fare,
             MIN(fo.seat_available) AS min_seats,
@@ -558,13 +632,17 @@ def _build_full_capture_history_df(
           AND DATE(fo.departure) BETWEEN :dep_start AND :dep_end
           {route_clause}
           {cabin_clause}
+          {trip_clause}
+          {return_clause}
         GROUP BY
             fo.scrape_id,
             fo.airline,
             fo.origin,
             fo.destination,
             fo.flight_number,
-            fo.departure
+            fo.departure,
+            COALESCE(frm.search_trip_type, 'OW'),
+            frm.requested_return_date
         ORDER BY
             MAX(fo.scraped_at) ASC,
             fo.origin,
@@ -589,6 +667,8 @@ def _build_full_capture_history_df(
     hist["flight_date"] = pd.to_datetime(hist["departure"], errors="coerce").dt.date
     hist["departure_time"] = pd.to_datetime(hist["departure"], errors="coerce").dt.strftime("%H:%M")
     hist["day_name"] = pd.to_datetime(hist["flight_date"], errors="coerce").dt.day_name()
+    hist["search_trip_type"] = hist["search_trip_type"].fillna("OW").astype(str).str.upper()
+    hist["requested_return_date"] = pd.to_datetime(hist["requested_return_date"], errors="coerce").dt.date
     hist["capture_label"] = hist["captured_at_utc"].apply(_format_capture_label)
 
     for c in ["min_fare", "max_fare", "tax_amount", "min_seats", "max_seats", "seat_capacity", "offer_rows"]:
@@ -621,7 +701,7 @@ def _build_full_capture_history_df(
         if hist.empty:
             return pd.DataFrame(columns=history_cols)
 
-    key_cols = ["route", "airline", "flight_number", "flight_date", "departure_time"]
+    key_cols = ["route", "airline", "flight_number", "flight_date", "departure_time", "search_trip_type", "requested_return_date"]
     scoped_keys = set(
         work.assign(route=work["origin"] + "-" + work["destination"])[key_cols]
         .itertuples(index=False, name=None)
@@ -631,7 +711,7 @@ def _build_full_capture_history_df(
     if hist.empty:
         return pd.DataFrame(columns=history_cols)
 
-    group_cols = ["route", "airline", "flight_number", "flight_date", "departure_time"]
+    group_cols = ["route", "airline", "flight_number", "flight_date", "departure_time", "search_trip_type", "requested_return_date"]
     hist = hist.sort_values(group_cols + ["captured_at_utc"], na_position="last")
     delta_cols = ["min_fare", "max_fare", "tax_amount", "min_seats", "max_seats", "load_pct"]
     for c in delta_cols:
@@ -651,6 +731,8 @@ def _build_full_capture_history_df(
             "flight_date",
             "day_name",
             "departure_time",
+            "search_trip_type",
+            "requested_return_date",
             "scrape_id",
             "captured_at_utc",
             "capture_label",
@@ -695,6 +777,10 @@ def generate_route_flight_fare_monitor(
     min_full_ratio=0.30,
     route_scope="all",
     market_country="BD",
+    trip_type=None,
+    return_date=None,
+    return_date_start=None,
+    return_date_end=None,
 ):
     engine = create_engine(db_url, pool_pre_ping=True, future=True)
     scrape_ctx = ScrapeContext(engine)
@@ -704,7 +790,16 @@ def generate_route_flight_fare_monitor(
         current_scrape = current_scrape_id
         previous_scrape = previous_scrape_id
     else:
-        if auto_skip_tiny:
+        if trip_type or return_date or return_date_start or return_date_end:
+            current_scrape, previous_scrape = _get_latest_two_trip_filtered_scrapes(
+                engine,
+                airline_codes=selection_airline_codes,
+                trip_type=trip_type,
+                return_date=return_date,
+                return_date_start=return_date_start,
+                return_date_end=return_date_end,
+            )
+        elif auto_skip_tiny:
             current_scrape, previous_scrape = scrape_ctx.get_latest_two_full_scrapes(
                 lookback=scrape_lookback,
                 min_rows_floor=min_full_scrape_rows,
@@ -742,6 +837,10 @@ def generate_route_flight_fare_monitor(
     comparison_df = cmp_engine.compare_scrapes(
         current_scrape=current_scrape,
         previous_scrape=previous_scrape,
+        trip_type=trip_type,
+        return_date=return_date,
+        return_date_start=return_date_start,
+        return_date_end=return_date_end,
     )
     scrape_time_map = scrape_ctx.get_scrape_time_map([current_scrape, previous_scrape])
     current_capture_label = _format_capture_label(scrape_time_map.get(current_scrape))
@@ -769,6 +868,10 @@ def generate_route_flight_fare_monitor(
         cabin=cabin,
         route_scope=route_scope,
         market_country=market_country,
+        trip_type=trip_type,
+        return_date=return_date,
+        return_date_start=return_date_start,
+        return_date_end=return_date_end,
     )
 
     base_output = Path(output_dir)
@@ -812,6 +915,10 @@ def parse_args():
     parser.add_argument("--cabin")
     parser.add_argument("--route-scope", choices=["all", "domestic", "international"], default="all")
     parser.add_argument("--market-country", default="BD")
+    parser.add_argument("--trip-type", choices=["OW", "RT"], help="Filter comparison rows to one-way or round-trip captures")
+    parser.add_argument("--return-date", help="Exact requested return date (YYYY-MM-DD) for RT report filtering")
+    parser.add_argument("--return-date-start", help="Requested return date lower bound (YYYY-MM-DD)")
+    parser.add_argument("--return-date-end", help="Requested return date upper bound (YYYY-MM-DD)")
     parser.add_argument("--current-scrape-id")
     parser.add_argument("--previous-scrape-id")
     parser.add_argument(
@@ -863,6 +970,10 @@ def main():
         cabin=args.cabin,
         route_scope=args.route_scope,
         market_country=args.market_country,
+        trip_type=args.trip_type,
+        return_date=args.return_date,
+        return_date_start=args.return_date_start,
+        return_date_end=args.return_date_end,
         current_scrape_id=args.current_scrape_id,
         previous_scrape_id=args.previous_scrape_id,
         auto_skip_tiny=not args.no_auto_skip_tiny,

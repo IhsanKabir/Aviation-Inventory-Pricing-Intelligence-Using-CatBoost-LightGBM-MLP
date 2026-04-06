@@ -958,7 +958,8 @@ def load_airlines() -> Dict[str, Dict[str, Any]]:
         airlines[code] = {
             "module": a["module"],
             "throttle": a.get("throttle_per_minute", 30),
-            "cabins": a.get("cabin_classes", ["Economy"])
+            "cabins": a.get("cabin_classes", ["Economy"]),
+            "fallback_modules": [str(m).strip() for m in (a.get("fallback_modules") or []) if str(m).strip()],
         }
     LOG.info("Enabled airlines: %s", list(airlines.keys()))
     return airlines
@@ -1340,6 +1341,27 @@ def _safe_call_fetch(fetch_fn, origin, dest, dt, cabin, *, timeout_seconds: floa
         "raw": resp.get("raw", resp),
         "originalResponse": resp.get("originalResponse"),
         "rows": resp.get("rows") if isinstance(resp.get("rows"), list) else []
+    }
+
+
+def _has_usable_rows(resp: Any) -> bool:
+    return (
+        isinstance(resp, dict)
+        and bool(resp.get("ok"))
+        and isinstance(resp.get("rows"), list)
+        and bool(resp.get("rows"))
+    )
+
+
+def _source_attempt_summary(source: str, resp: Any) -> Dict[str, Any]:
+    raw = resp.get("raw") if isinstance(resp, dict) else {}
+    rows = resp.get("rows") if isinstance(resp, dict) else None
+    return {
+        "source": source,
+        "ok": bool(resp.get("ok")) if isinstance(resp, dict) else False,
+        "rows": len(rows) if isinstance(rows, list) else None,
+        "error": (raw or {}).get("error") if isinstance(raw, dict) else None,
+        "message": (raw or {}).get("message") if isinstance(raw, dict) else None,
     }
 
 
@@ -1849,6 +1871,17 @@ def main():
         fetch_fn = getattr(mod, "fetch_flights", None)
         # legacy fallback name
         biman_fn = getattr(mod, "biman_search", None)
+        fallback_fetchers = []
+        for fallback_module in cfg.get("fallback_modules", []):
+            try:
+                fallback_mod = importlib.import_module(f"modules.{fallback_module}")
+                fallback_fetch_fn = getattr(fallback_mod, "fetch_flights", None)
+                if callable(fallback_fetch_fn):
+                    fallback_fetchers.append((fallback_module, fallback_fetch_fn))
+                else:
+                    LOG.warning("[%s] fallback module %s has no fetch_flights(); skipping", code, fallback_module)
+            except Exception as exc:
+                LOG.warning("[%s] Cannot import fallback module %s: %s", code, fallback_module, exc)
 
         for r, route_plan in resolved_routes:
             origin = r["origin"]
@@ -1944,6 +1977,8 @@ def main():
                         trip_type=window_trip_type,
                     )
 
+                    source_attempts = []
+
                     # 1) Primary attempt: fetch_flights if provided
                     resp = None
                     if callable(fetch_fn):
@@ -1958,6 +1993,7 @@ def main():
                             return_date=trip_context["requested_return_date"],
                             trip_request_id=trip_context["trip_request_id"],
                         )
+                        source_attempts.append(_source_attempt_summary(cfg["module"], resp))
 
                     # 2) If primary failed or not provided, try legacy biman_search fallback
                     if not (resp and resp.get("ok")):
@@ -2008,6 +2044,7 @@ def main():
                                 LOG.warning("[%s->%s %s %s] legacy fallback raised exception (soft-fail): %s", origin, dest, dt, cabin, exc)
                                 LOG.debug("exception details", exc_info=True)
                                 resp = {"ok": False, "raw": {}, "originalResponse": None, "rows": []}
+                            source_attempts.append(_source_attempt_summary(f"{cfg['module']}:legacy", resp))
                         else:
                             # No fallback available
                             LOG.info(
@@ -2029,6 +2066,41 @@ def main():
                                 }
                             else:
                                 resp = {"ok": False, "raw": {}, "originalResponse": None, "rows": []}
+
+                    # 3) Cross-module fallbacks: direct site first, then configured OTA modules.
+                    if not _has_usable_rows(resp):
+                        for fallback_module, fallback_fetch_fn in fallback_fetchers:
+                            LOG.info(
+                                "[%s] Trying configured fallback module %s for %s->%s %s (%s).",
+                                code,
+                                fallback_module,
+                                origin,
+                                dest,
+                                dt,
+                                cabin,
+                            )
+                            fallback_resp = _safe_call_fetch(
+                                fallback_fetch_fn, origin, dest, dt, cabin,
+                                timeout_seconds=args.query_timeout_seconds,
+                                airline_code=code,
+                                adt=args.adt,
+                                chd=args.chd,
+                                inf=args.inf,
+                                trip_type=trip_context["search_trip_type"],
+                                return_date=trip_context["requested_return_date"],
+                                trip_request_id=trip_context["trip_request_id"],
+                            )
+                            source_attempts.append(_source_attempt_summary(fallback_module, fallback_resp))
+                            if _has_usable_rows(fallback_resp):
+                                resp = fallback_resp
+                                break
+                            if not isinstance(resp, dict) or not bool(resp.get("ok")):
+                                resp = fallback_resp
+
+                    if isinstance(resp, dict):
+                        raw = resp.setdefault("raw", {})
+                        if isinstance(raw, dict):
+                            raw["source_attempts"] = source_attempts
 
                     # At this point resp exists and follows unified contract
                     rows = [

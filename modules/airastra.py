@@ -63,6 +63,7 @@ ENV_COOKIES_PATH = "AIRASTRA_COOKIES_PATH"
 ENV_PROXY_URL = "AIRASTRA_PROXY_URL"
 ENV_SOURCE_MODE = "AIRASTRA_SOURCE_MODE"
 ENV_FALLBACK_ON_EMPTY = "AIRASTRA_BDFARE_FALLBACK_ON_EMPTY"
+ENV_AUTO_SOURCE_CHAIN = "AIRASTRA_AUTO_SOURCE_CHAIN"
 
 
 def _env_true(name: str, default: bool = False) -> bool:
@@ -70,6 +71,166 @@ def _env_true(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _has_usable_rows(result: Any) -> bool:
+    rows = result.get("rows") if isinstance(result, dict) else None
+    ok = bool(result.get("ok")) if isinstance(result, dict) else False
+    return ok and isinstance(rows, list) and bool(rows)
+
+
+def _source_attempt_summary(source: str, result: Any) -> Dict[str, Any]:
+    raw = result.get("raw") if isinstance(result, dict) else {}
+    rows = result.get("rows") if isinstance(result, dict) else None
+    return {
+        "source": source,
+        "ok": bool(result.get("ok")) if isinstance(result, dict) else False,
+        "rows": len(rows) if isinstance(rows, list) else None,
+        "error": (raw or {}).get("error") if isinstance(raw, dict) else None,
+        "message": (raw or {}).get("message") if isinstance(raw, dict) else None,
+    }
+
+
+def _fetch_from_source(
+    source: str,
+    *,
+    origin: str,
+    destination: str,
+    date: str,
+    cabin: str,
+    adt: int,
+    chd: int,
+    inf: int,
+) -> Dict[str, Any]:
+    source_name = str(source or "").strip().lower()
+    if source_name == "bdfare":
+        return fetch_from_bdfare(
+            airline_code="2A",
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+    if source_name == "gozayaan":
+        return fetch_from_gozayaan(
+            airline_code="2A",
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+    if source_name == "amybd":
+        return fetch_from_amybd(
+            airline_code="2A",
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+    if source_name == "sharetrip":
+        return fetch_from_sharetrip(
+            airline_code="2A",
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+    if source_name == "ttinteractive":
+        cookies_path = os.getenv(ENV_COOKIES_PATH) or None
+        proxy_url = os.getenv(ENV_PROXY_URL) or None
+        return airastra_search(
+            origin=origin,
+            dest=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+            cookies_path=cookies_path,
+            proxy_url=proxy_url,
+        )
+    raise ValueError(f"Unsupported 2A source mode: {source}")
+
+
+def _auto_source_chain() -> List[str]:
+    raw = str(os.getenv(ENV_AUTO_SOURCE_CHAIN, "") or "").strip()
+    if raw:
+        parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
+        deduped: List[str] = []
+        for part in parts:
+            if part not in deduped:
+                deduped.append(part)
+        if deduped:
+            return deduped
+    return ["bdfare", "sharetrip"]
+
+
+def _run_auto_source_chain(
+    *,
+    origin: str,
+    destination: str,
+    date: str,
+    cabin: str,
+    adt: int,
+    chd: int,
+    inf: int,
+) -> Dict[str, Any]:
+    chain = _auto_source_chain()
+    attempts: List[Dict[str, Any]] = []
+    first_ok_result: Optional[Dict[str, Any]] = None
+    last_result: Optional[Dict[str, Any]] = None
+    for source in chain:
+        try:
+            result = _fetch_from_source(
+                source,
+                origin=origin,
+                destination=destination,
+                date=date,
+                cabin=cabin,
+                adt=adt,
+                chd=chd,
+                inf=inf,
+            )
+        except Exception as exc:
+            result = {
+                "raw": {"error": "source_execution_failed", "message": str(exc)},
+                "originalResponse": None,
+                "rows": [],
+                "ok": False,
+            }
+        attempts.append(_source_attempt_summary(source, result))
+        if isinstance(result, dict):
+            raw = result.setdefault("raw", {})
+            if isinstance(raw, dict):
+                raw["auto_source_chain"] = chain
+                raw["auto_source_attempts"] = attempts
+            if first_ok_result is None and bool(result.get("ok")):
+                first_ok_result = result
+            last_result = result
+        if _has_usable_rows(result):
+            return result
+    return first_ok_result or last_result or {
+        "raw": {
+            "error": "auto_chain_failed",
+            "auto_source_chain": chain,
+            "auto_source_attempts": attempts,
+        },
+        "originalResponse": None,
+        "rows": [],
+        "ok": False,
+    }
 
 
 def _sharetrip_fetch_with_bdfare_fallback(
@@ -118,6 +279,48 @@ def _sharetrip_fetch_with_bdfare_fallback(
         return bdfare_out
 
     return sharetrip_out if isinstance(sharetrip_out, dict) else bdfare_out
+
+
+def _bdfare_fetch_with_sharetrip_fallback(
+    origin: str,
+    destination: str,
+    date: str,
+    cabin: str,
+    adt: int,
+    chd: int,
+    inf: int,
+) -> Dict[str, Any]:
+    bdfare_out = fetch_from_bdfare(
+        airline_code="2A",
+        origin=origin,
+        destination=destination,
+        date=date,
+        cabin=cabin,
+        adt=adt,
+        chd=chd,
+        inf=inf,
+    )
+    bd_rows = bdfare_out.get("rows") if isinstance(bdfare_out, dict) else None
+    bd_ok = bool(bdfare_out.get("ok")) if isinstance(bdfare_out, dict) else False
+    if bd_ok and isinstance(bd_rows, list) and bd_rows:
+        return bdfare_out
+
+    LOG.warning("[2A] BDFare returned no usable rows; attempting ShareTrip fallback")
+    sharetrip_out = fetch_from_sharetrip(
+        airline_code="2A",
+        origin=origin,
+        destination=destination,
+        date=date,
+        cabin=cabin,
+        adt=adt,
+        chd=chd,
+        inf=inf,
+    )
+    st_rows = sharetrip_out.get("rows") if isinstance(sharetrip_out, dict) else None
+    st_ok = bool(sharetrip_out.get("ok")) if isinstance(sharetrip_out, dict) else False
+    if st_ok and isinstance(st_rows, list) and st_rows:
+        return sharetrip_out
+    return bdfare_out if isinstance(bdfare_out, dict) else sharetrip_out
 
 
 def _extract_data_config(html_text: str) -> Dict[str, Any]:
@@ -465,9 +668,30 @@ def fetch_flights(
     Unified contract for run_all.py:
     { raw, originalResponse, rows, ok }
     """
-    source_mode = (os.getenv(ENV_SOURCE_MODE) or "sharetrip").strip().lower()
+    source_mode = (os.getenv(ENV_SOURCE_MODE) or "auto").strip().lower()
+    if source_mode in {"auto", "bdfare_first"}:
+        return _run_auto_source_chain(
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
     if source_mode == "sharetrip":
         return _sharetrip_fetch_with_bdfare_fallback(
+            origin=origin,
+            destination=destination,
+            date=date,
+            cabin=cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+    if source_mode == "bdfare":
+        return fetch_from_bdfare(
+            airline_code="2A",
             origin=origin,
             destination=destination,
             date=date,

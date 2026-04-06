@@ -724,6 +724,8 @@ export async function getRouteMonitorMatrixPayload(
     returnDate?: string;
     returnDateStart?: string;
     returnDateEnd?: string;
+    startDate?: string;
+    endDate?: string;
     departureDate?: string;
     routeLimit?: number;
     historyLimit?: number;
@@ -742,6 +744,8 @@ export async function getRouteMonitorMatrixPayload(
       return_date: query.returnDate,
       return_date_start: query.returnDateStart,
       return_date_end: query.returnDateEnd,
+      start_date: query.startDate,
+      end_date: query.endDate,
       departure_date: query.departureDate,
       route_limit: query.routeLimit,
       history_limit: query.historyLimit,

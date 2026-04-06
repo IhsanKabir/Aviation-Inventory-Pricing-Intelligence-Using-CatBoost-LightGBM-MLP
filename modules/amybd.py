@@ -13,7 +13,10 @@ import datetime as dt
 import json
 import logging
 import os
+from pathlib import Path
 import re
+import subprocess
+import sys
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -46,6 +49,15 @@ ENV_ENABLE_PRICECOMBO = "AMYBD_ENABLE_PRICECOMBO"
 ENV_PRICECOMBO_MAX_OFFERS = "AMYBD_PRICECOMBO_MAX_OFFERS"
 ENV_PRICECOMBO_DISP_VALUES = "AMYBD_PRICECOMBO_DISP_VALUES"
 ENV_DISABLE_DEFAULT_TOKEN = "AMYBD_DISABLE_DEFAULT_TOKEN"
+ENV_HEADERS_FILE = "AMYBD_HEADERS_FILE"
+ENV_SESSION_AUTO_REFRESH = "AMYBD_SESSION_AUTO_REFRESH"
+ENV_SESSION_REFRESH_CMD = "AMYBD_SESSION_REFRESH_CMD"
+ENV_SESSION_REFRESH_TIMEOUT_SEC = "AMYBD_SESSION_REFRESH_TIMEOUT_SEC"
+ENV_SESSION_SUMMARY_FILE = "AMYBD_SESSION_SUMMARY_FILE"
+
+DEFAULT_SESSION_SUMMARY_FILE = "output/manual_sessions/amybd_session_latest.json"
+DEFAULT_COOKIES_CACHE_FILE = "output/manual_sessions/amybd_cookies.json"
+DEFAULT_HEADERS_CACHE_FILE = "output/manual_sessions/amybd_headers_latest.json"
 
 AIRPORT_LABELS = {
     "DAC": "Dhaka - DAC - BANGLADESH",
@@ -82,6 +94,86 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _safe_str(v: Any) -> str:
+    return str(v or "").strip()
+
+
+def _session_summary_file() -> str:
+    return _safe_str(os.getenv(ENV_SESSION_SUMMARY_FILE)) or DEFAULT_SESSION_SUMMARY_FILE
+
+
+def _cookies_cache_file() -> str:
+    return _safe_str(os.getenv(ENV_COOKIES_PATH)) or DEFAULT_COOKIES_CACHE_FILE
+
+
+def _headers_cache_file() -> str:
+    return _safe_str(os.getenv(ENV_HEADERS_FILE)) or DEFAULT_HEADERS_CACHE_FILE
+
+
+def _load_json_dict(path_str: str) -> Dict[str, Any]:
+    path = Path(path_str)
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _load_session_summary() -> Dict[str, Any]:
+    return _load_json_dict(_session_summary_file())
+
+
+def _load_extra_headers_from_cache() -> Dict[str, str]:
+    raw = _load_json_dict(_headers_cache_file())
+    excluded = {
+        "host",
+        "content-length",
+        "cookie",
+        "connection",
+        "accept-encoding",
+    }
+    out: Dict[str, str] = {}
+    for k, v in raw.items():
+        name = _safe_str(k)
+        if not name or name.lower() in excluded:
+            continue
+        out[name] = str(v or "")
+    return out
+
+
+def _session_value(*keys: str) -> str:
+    summary = _load_session_summary()
+    for key in keys:
+        value = _safe_str(summary.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _resolve_initial_cookies_path(explicit: Optional[str]) -> Optional[str]:
+    if explicit:
+        return explicit
+    env_path = _safe_str(os.getenv(ENV_COOKIES_PATH))
+    if env_path:
+        return env_path
+    default_path = Path(DEFAULT_COOKIES_CACHE_FILE)
+    if default_path.exists():
+        return str(default_path)
+    return None
+
+
+def _has_reusable_session_material(cookies_path: Optional[str]) -> bool:
+    summary = _load_session_summary()
+    search_success = bool(summary.get("search_success"))
+    authid = _safe_str(os.getenv(ENV_AUTHID)) or _safe_str(summary.get("authid"))
+    chauth = _safe_str(os.getenv(ENV_CAUTH)) or _safe_str(summary.get("chauth"))
+    token = _safe_str(os.getenv(ENV_TOKEN)) or _safe_str(summary.get("token"))
+    cookies_ok = bool(cookies_path and Path(cookies_path).exists())
+    return search_success and cookies_ok and bool(authid or chauth or token)
 
 
 def _clip_text(v: Any, size: int = 300) -> str:
@@ -126,8 +218,10 @@ def _date_to_amybd(d: str) -> str:
 
 
 def _default_headers() -> Dict[str, str]:
-    origin = os.getenv(ENV_ORIGIN, "https://www.amybd.com").strip() or "https://www.amybd.com"
-    referer = os.getenv(ENV_REFERER, "https://www.amybd.com/flights").strip() or "https://www.amybd.com/flights"
+    summary_origin = _session_value("origin")
+    summary_referer = _session_value("referer")
+    origin = _safe_str(os.getenv(ENV_ORIGIN)) or summary_origin or "https://www.amybd.com"
+    referer = _safe_str(os.getenv(ENV_REFERER)) or summary_referer or "https://www.amybd.com/flights"
     headers = {
         "Accept": "application/json, text/javascript, */*; q=0.01",
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -136,12 +230,13 @@ def _default_headers() -> Dict[str, str]:
         "User-Agent": USER_AGENT,
         "X-Requested-With": "XMLHttpRequest",
     }
-    authid = os.getenv(ENV_AUTHID, "").strip()
-    chauth = os.getenv(ENV_CAUTH, "").strip()
+    authid = _safe_str(os.getenv(ENV_AUTHID)) or _session_value("authid")
+    chauth = _safe_str(os.getenv(ENV_CAUTH)) or _session_value("chauth")
     if authid:
         headers["authid"] = authid
     if chauth:
         headers["chauth"] = chauth
+    headers.update(_load_extra_headers_from_cache())
     return headers
 
 
@@ -177,7 +272,7 @@ def build_search_payload(
         "DOBC3": "01-Mar-2017",
         "DOBC4": "01-Mar-2017",
     }
-    token = str(token_override if token_override is not None else os.getenv(ENV_TOKEN, "")).strip()
+    token = _safe_str(token_override if token_override is not None else os.getenv(ENV_TOKEN, "")) or _session_value("token")
     should_include_token = include_token if include_token is not None else bool(token)
     if should_include_token and token:
         payload["TOKEN"] = token
@@ -204,12 +299,126 @@ def _build_search_attempts() -> List[str]:
 
 
 def _token_candidates() -> List[Optional[str]]:
-    env_token = os.getenv(ENV_TOKEN, "").strip()
+    env_token = _safe_str(os.getenv(ENV_TOKEN)) or _session_value("token")
     if env_token:
         return [None, env_token]
     if _env_bool(ENV_DISABLE_DEFAULT_TOKEN, default=False):
         return [None]
     return [None, DEFAULT_FALLBACK_TOKEN]
+
+
+def _refresh_command_context(
+    *,
+    origin: str,
+    destination: str,
+    date: str,
+    cabin: str,
+    adt: int,
+    chd: int,
+    inf: int,
+) -> Dict[str, Any]:
+    return {
+        "origin": _safe_str(origin),
+        "destination": _safe_str(destination),
+        "date": _safe_str(date),
+        "cabin": _safe_str(cabin or "Economy"),
+        "adt": int(max(1, int(adt or 1))),
+        "chd": int(max(0, int(chd or 0))),
+        "inf": int(max(0, int(inf or 0))),
+        "session_file": _session_summary_file(),
+        "cookies_file": _cookies_cache_file(),
+        "headers_file": _headers_cache_file(),
+        "python": sys.executable or "python",
+    }
+
+
+def _default_refresh_command(**ctx: Any) -> str:
+    return (
+        f'"{ctx["python"]}" tools/refresh_amybd_session.py '
+        f'--non-interactive '
+        f'--origin "{ctx["origin"]}" --destination "{ctx["destination"]}" '
+        f'--date "{ctx["date"]}" --cabin "{ctx["cabin"]}" '
+        f'--adt {ctx["adt"]} --chd {ctx["chd"]} --inf {ctx["inf"]} '
+        f'--out "{ctx["session_file"]}" '
+        f'--cookies-out "{ctx["cookies_file"]}" '
+        f'--headers-out "{ctx["headers_file"]}"'
+    )
+
+
+def _run_refresh_command(**ctx: Any) -> Dict[str, Any]:
+    command_template = _safe_str(os.getenv(ENV_SESSION_REFRESH_CMD))
+    if command_template:
+        try:
+            command = command_template.format(**ctx)
+        except Exception:
+            command = command_template
+    else:
+        command = _default_refresh_command(**ctx)
+    timeout_sec = _safe_float(os.getenv(ENV_SESSION_REFRESH_TIMEOUT_SEC))
+    timeout_sec = float(timeout_sec if timeout_sec is not None else 180.0)
+    timeout_sec = max(30.0, timeout_sec)
+    LOG.info("Running AMYBD session refresh command")
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            check=False,
+        )
+        return {
+            "ok": proc.returncode == 0,
+            "command": command,
+            "returncode": proc.returncode,
+            "context": ctx,
+            "stdout_tail": "\n".join((proc.stdout or "").splitlines()[-10:]),
+            "stderr_tail": "\n".join((proc.stderr or "").splitlines()[-10:]),
+            "timeout_sec": timeout_sec,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "command": command,
+            "context": ctx,
+            "error": str(exc),
+            "timeout_sec": timeout_sec,
+        }
+
+
+def _missing_session_material() -> bool:
+    return not any(
+        (
+            _safe_str(os.getenv(ENV_AUTHID)),
+            _safe_str(os.getenv(ENV_CAUTH)),
+            _safe_str(os.getenv(ENV_TOKEN)),
+            _session_value("authid"),
+            _session_value("chauth"),
+            _session_value("token"),
+        )
+    )
+
+
+def _body_indicates_invalid_session(body: Any) -> bool:
+    text = ""
+    if isinstance(body, dict):
+        text = " ".join(
+            str(body.get(k) or "")
+            for k in ("message", "error", "detail", "status")
+        ).lower()
+    else:
+        text = str(body or "").lower()
+    return any(
+        needle in text
+        for needle in (
+            "invalid login",
+            "login",
+            "auth",
+            "unauthor",
+            "session expired",
+            "forbidden",
+        )
+    )
 
 
 def _extract_svdid(search_body: Any) -> Optional[str]:
@@ -390,8 +599,23 @@ def fetch_flights_for_airline(
     cookies_path: Optional[str] = None,
     proxy_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    cookies = cookies_path or os.getenv(ENV_COOKIES_PATH) or None
+    cookies = _resolve_initial_cookies_path(cookies_path)
     proxy = proxy_url or os.getenv(ENV_PROXY_URL) or None
+    auto_refresh_session = _env_bool(ENV_SESSION_AUTO_REFRESH, default=False)
+    refresh_ctx = _refresh_command_context(
+        origin=origin,
+        destination=destination,
+        date=date,
+        cabin=cabin,
+        adt=adt,
+        chd=chd,
+        inf=inf,
+    )
+    if auto_refresh_session and not _has_reusable_session_material(cookies):
+        pre_refresh = _run_refresh_command(**refresh_ctx)
+        cookies = _resolve_initial_cookies_path(cookies) or _cookies_cache_file()
+    else:
+        pre_refresh = None
     req = Requester(cookies_path=cookies, user_agent=USER_AGENT, proxy_url=proxy)
     headers = _default_headers()
 
@@ -406,6 +630,10 @@ def fetch_flights_for_airline(
                 "has_cookie_session": bool(req.session.cookies),
                 "has_authid": bool(headers.get("authid")),
                 "has_chauth": bool(headers.get("chauth")),
+                "session_summary_file": _session_summary_file(),
+                "headers_cache_file": _headers_cache_file(),
+                "cookies_cache_file": _cookies_cache_file(),
+                "session_auto_refresh": auto_refresh_session,
             },
             "search_attempts": [],
         },
@@ -413,6 +641,8 @@ def fetch_flights_for_airline(
         "rows": [],
         "ok": False,
     }
+    if pre_refresh is not None:
+        out["raw"]["pre_search_session_refresh"] = pre_refresh
 
     selected_status: Optional[int] = None
     selected_body: Any = None
@@ -454,6 +684,69 @@ def fetch_flights_for_airline(
     out["raw"]["search_payload"] = selected_payload
     out["raw"]["search_status"] = selected_status
     out["raw"]["search_response"] = selected_body
+
+    should_retry_refresh = (
+        auto_refresh_session
+        and (
+            selected_status in {401, 403}
+            or _body_indicates_invalid_session(selected_body)
+        )
+    )
+    if should_retry_refresh:
+        refresh_meta = _run_refresh_command(**refresh_ctx)
+        out["raw"]["session_refresh"] = refresh_meta
+        retry_cookies = _cookies_cache_file()
+        retry_req = Requester(cookies_path=retry_cookies, user_agent=USER_AGENT, proxy_url=proxy)
+        retry_headers = _default_headers()
+        retry_status: Optional[int] = None
+        retry_body: Any = None
+        retry_payload: Optional[Dict[str, Any]] = None
+        retry_cmd = selected_cmd
+        for cmd in _build_search_attempts():
+            for token_candidate in _token_candidates():
+                payload = build_search_payload(
+                    origin=origin,
+                    destination=destination,
+                    date=date,
+                    cabin=cabin,
+                    adt=adt,
+                    chd=chd,
+                    inf=inf,
+                    cmnd=cmd,
+                    include_token=bool(token_candidate),
+                    token_override=token_candidate or "",
+                )
+                status, body = _post_form(retry_req, payload, retry_headers)
+                out["raw"]["search_attempts"].append(
+                    {
+                        "cmnd": cmd,
+                        "token_included": bool(token_candidate),
+                        "status": status,
+                        "is_json_dict": isinstance(body, dict),
+                        "success_flag": bool(body.get("success")) if isinstance(body, dict) else None,
+                        "after_session_refresh": True,
+                    }
+                )
+                retry_status = status
+                retry_body = body
+                retry_payload = payload
+                retry_cmd = cmd
+                if status == 200 and isinstance(body, dict) and bool(body.get("success", False)):
+                    break
+            if retry_status == 200 and isinstance(retry_body, dict) and bool(retry_body.get("success", False)):
+                break
+        selected_status = retry_status
+        selected_body = retry_body
+        selected_payload = retry_payload
+        selected_cmd = retry_cmd
+        headers = retry_headers
+        req = retry_req
+        out["raw"]["search_command_used"] = selected_cmd
+        out["raw"]["search_payload"] = selected_payload
+        out["raw"]["search_status"] = selected_status
+        out["raw"]["search_response"] = selected_body
+        out["raw"]["search_retry_attempted"] = True
+
     if selected_status != 200 or not isinstance(selected_body, dict):
         out["raw"]["error"] = "search_failed"
         return out
