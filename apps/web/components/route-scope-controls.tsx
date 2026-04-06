@@ -786,7 +786,7 @@ export function RouteScopeControls({
             <div className="scope-window-copy">
               Use this for the departure range you want to review across the matrix.
             </div>
-            <div className="field-grid route-scope-grid">
+            <div className="scope-window-fields">
               <label className="field">
                 <span>Outbound start</span>
                 <input
@@ -812,7 +812,7 @@ export function RouteScopeControls({
               <div className="scope-window-copy">
                 Narrow the collected return dates without changing the outbound side of the trip.
               </div>
-              <div className="field-grid route-scope-grid">
+              <div className="scope-window-fields">
                 <label className="field">
                   <span>Inbound start</span>
                   <input

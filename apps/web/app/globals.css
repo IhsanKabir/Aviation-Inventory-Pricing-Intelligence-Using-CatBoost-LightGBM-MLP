@@ -428,6 +428,21 @@ a {
   line-height: 1.5;
 }
 
+.scope-window-fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.scope-window-fields .field span {
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.scope-window-fields .field input {
+  min-width: 0;
+}
+
 .field-grid {
   display: grid;
   gap: 14px;
@@ -1533,6 +1548,7 @@ a {
   .report-toolbar-row,
   .report-toolbar-meta,
   .scope-section-header,
+  .scope-window-fields,
   .route-scope-grid,
   .changes-trend-row,
   .changes-summary-grid,
