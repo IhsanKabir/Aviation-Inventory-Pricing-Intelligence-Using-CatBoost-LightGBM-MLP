@@ -190,6 +190,27 @@
       "return_date_ranges": [],
       "return_date_offset_ranges": []
     },
+    "holiday_return_routes_next7_departure_plus3_grid": {
+      "description": "Holiday return routes: search the next seven outbound departure dates, and for each departure check seven return options at three-day intervals.",
+      "trip_type": "RT",
+      "day_offset_ranges": [
+        {
+          "start": 0,
+          "end": 6
+        }
+      ],
+      "return_date_offsets": [
+        3,
+        6,
+        9,
+        12,
+        15,
+        18,
+        21
+      ],
+      "return_date_ranges": [],
+      "return_date_offset_ranges": []
+    },
     "inventory_anchor_departure_tracking_default": {
       "description": "Training-only inventory anchor profile. Repeatedly observe the same near-term departure horizon so forecasting can learn how quickly inventory fills or reopens and how fares react around that anchored departure date.",
       "trip_type": "OW",

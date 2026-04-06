@@ -1873,17 +1873,18 @@ class OutputWriter:
         sheet = workbook.add_worksheet("Route Block Index")
         sheet.hide()
 
-        headers = ["route", "start_row", "end_row", "airlines_csv", "signals_csv"]
+        headers = ["sheet_name", "route", "start_row", "end_row", "airlines_csv", "signals_csv"]
         for c, h in enumerate(headers):
             sheet.write(0, c, h)
 
         row = 1
         for b in blocks or []:
-            sheet.write(row, 0, str(b.get("route") or ""))
-            sheet.write(row, 1, int(b.get("start_row") or 0))
-            sheet.write(row, 2, int(b.get("end_row") or 0))
-            sheet.write(row, 3, str(b.get("airlines_csv") or ""))
-            sheet.write(row, 4, str(b.get("signals_csv") or ""))
+            sheet.write(row, 0, str(b.get("sheet_name") or ""))
+            sheet.write(row, 1, str(b.get("route") or ""))
+            sheet.write(row, 2, int(b.get("start_row") or 0))
+            sheet.write(row, 3, int(b.get("end_row") or 0))
+            sheet.write(row, 4, str(b.get("airlines_csv") or ""))
+            sheet.write(row, 5, str(b.get("signals_csv") or ""))
             row += 1
 
     def _write_route_row_index(self, workbook, rows):
@@ -1891,6 +1892,7 @@ class OutputWriter:
         sheet.hide()
 
         headers = [
+            "sheet_name",
             "route",
             "row_number",
             "variant_key",
@@ -1906,15 +1908,16 @@ class OutputWriter:
 
         row = 1
         for rec in rows or []:
-            sheet.write(row, 0, str(rec.get("route") or ""))
-            sheet.write(row, 1, int(rec.get("row_number") or 0))
-            sheet.write(row, 2, str(rec.get("variant_key") or ""))
-            sheet.write(row, 3, str(rec.get("flight_date") or ""))
-            sheet.write(row, 4, str(rec.get("airlines_csv") or ""))
-            sheet.write(row, 5, str(rec.get("signals_csv") or ""))
-            sheet.write(row, 6, str(rec.get("airline_signals_csv") or ""))
-            sheet.write(row, 7, int(rec.get("is_primary_variant") or 0))
-            sheet.write(row, 8, int(rec.get("has_history_stack") or 0))
+            sheet.write(row, 0, str(rec.get("sheet_name") or ""))
+            sheet.write(row, 1, str(rec.get("route") or ""))
+            sheet.write(row, 2, int(rec.get("row_number") or 0))
+            sheet.write(row, 3, str(rec.get("variant_key") or ""))
+            sheet.write(row, 4, str(rec.get("flight_date") or ""))
+            sheet.write(row, 5, str(rec.get("airlines_csv") or ""))
+            sheet.write(row, 6, str(rec.get("signals_csv") or ""))
+            sheet.write(row, 7, str(rec.get("airline_signals_csv") or ""))
+            sheet.write(row, 8, int(rec.get("is_primary_variant") or 0))
+            sheet.write(row, 9, int(rec.get("has_history_stack") or 0))
             row += 1
 
     def _write_route_column_index(self, workbook, cols):
@@ -1922,6 +1925,7 @@ class OutputWriter:
         sheet.hide()
 
         headers = [
+            "sheet_name",
             "route",
             "start_row",
             "end_row",
@@ -1936,14 +1940,15 @@ class OutputWriter:
 
         row = 1
         for rec in cols or []:
-            sheet.write(row, 0, str(rec.get("route") or ""))
-            sheet.write(row, 1, int(rec.get("start_row") or 0))
-            sheet.write(row, 2, int(rec.get("end_row") or 0))
-            sheet.write(row, 3, str(rec.get("airline") or ""))
-            sheet.write(row, 4, int(rec.get("start_col") or 0))
-            sheet.write(row, 5, int(rec.get("end_col") or 0))
-            sheet.write(row, 6, int(rec.get("data_start_row") or 0))
-            sheet.write(row, 7, int(rec.get("data_end_row") or 0))
+            sheet.write(row, 0, str(rec.get("sheet_name") or ""))
+            sheet.write(row, 1, str(rec.get("route") or ""))
+            sheet.write(row, 2, int(rec.get("start_row") or 0))
+            sheet.write(row, 3, int(rec.get("end_row") or 0))
+            sheet.write(row, 4, str(rec.get("airline") or ""))
+            sheet.write(row, 5, int(rec.get("start_col") or 0))
+            sheet.write(row, 6, int(rec.get("end_col") or 0))
+            sheet.write(row, 7, int(rec.get("data_start_row") or 0))
+            sheet.write(row, 8, int(rec.get("data_end_row") or 0))
             row += 1
 
     def _write_execution_plan_status(self, workbook, execution_plan_status):
@@ -2018,12 +2023,13 @@ class OutputWriter:
         sheet.set_column(2, 2, 80)
         sheet.freeze_panes(4, 0)
 
-    def write_route_flight_fare_monitor(
+    def _write_route_flight_fare_monitor_sheet(
         self,
-        writer,
+        workbook,
         df: pd.DataFrame,
+        *,
+        sheet_name: str,
         full_capture_history: pd.DataFrame | None = None,
-        execution_plan_status=None,
     ):
         required_cols = [
             "min_seats",
@@ -2045,19 +2051,8 @@ class OutputWriter:
             if c not in df.columns:
                 raise RuntimeError(f"{c} missing in dataframe")
 
-        workbook = writer.book
-        trip_types_present = sorted(
-            {
-                str(v).strip().upper()
-                for v in df.get("search_trip_type", pd.Series(dtype=object)).dropna().astype(str).tolist()
-                if str(v).strip()
-            }
-        )
-        if trip_types_present == ["RT"]:
-            sheet_name = "Route Fare Monitor - RT"
-        else:
-            sheet_name = "Route Flight Fare Monitor"
         sheet = workbook.add_worksheet(sheet_name)
+        is_round_trip_sheet = str(sheet_name or "").upper().endswith("RT")
         cfg = self._style_cfg()
         sheet.set_zoom(cfg["zoom"])
         sheet.set_default_row(cfg["default_row"])
@@ -2079,7 +2074,7 @@ class OutputWriter:
         fmt_sheet_title = workbook.add_format({"font_name": "Segoe UI", "bold": True, "font_size": cfg["title"] + 1, "align": "center", "valign": "vcenter", "bg_color": "#F2F2F2", "border": 1})
         fmt_route = workbook.add_format({"font_name": "Segoe UI", "bold": True, "font_size": cfg["title"]})
         fmt_note = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "font_color": "#555555"})
-        fmt_route_leader_default = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "bold": True, "align": "left", "valign": "vcenter", "text_wrap": True, "bg_color": "#F2F2F2", "border": 1})
+        fmt_route_leader_default = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "bold": True, "align": "left", "valign": "vcenter", "text_wrap": True, "bg_color": "#F2F2F2", "border": 1, "indent": 1})
         fmt_header = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["header"], "bold": True, "border": 1, "align": "center", "valign": "vcenter"})
         fmt_cell = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "border": 1, "align": "center"})
         fmt_gray = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "border": 1, "align": "center", "font_color": "#777777"})
@@ -2154,7 +2149,7 @@ class OutputWriter:
             fmt_gray_airline_bottom[code] = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "border": 1, "bottom": block_border, "align": "center", "bg_color": t["cell_bg"], "font_color": "#777777"})
             fmt_gray_airline_left_bottom[code] = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "border": 1, "left": block_border, "bottom": block_border, "align": "center", "bg_color": t["cell_bg"], "font_color": "#777777"})
             fmt_gray_airline_right_bottom[code] = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "border": 1, "right": block_border, "bottom": block_border, "align": "center", "bg_color": t["cell_bg"], "font_color": "#777777"})
-            fmt_route_leader_airline[code] = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "bold": True, "align": "left", "valign": "vcenter", "text_wrap": True, "bg_color": t["subheader_bg"], "font_color": t["text_font"], "border": 1})
+            fmt_route_leader_airline[code] = workbook.add_format({"font_name": "Segoe UI", "font_size": cfg["body"], "bold": True, "align": "left", "valign": "vcenter", "text_wrap": True, "bg_color": t["subheader_bg"], "font_color": t["text_font"], "border": 1, "indent": 1})
 
         df = df.sort_values(["route", "flight_date", "departure_time"])
         if "day_name" not in df.columns:
@@ -2201,6 +2196,7 @@ class OutputWriter:
         history_day_variants = {}
         history_offer_map = {}
         history_day_capture_rows = {}
+        history_day_capture_labels = {}
         if isinstance(full_capture_history, pd.DataFrame) and not full_capture_history.empty:
             hist = full_capture_history.copy()
             need_cols = {
@@ -2247,6 +2243,12 @@ class OutputWriter:
                     row_dict = rr.to_dict()
                     history_offer_map[offer_key] = row_dict
                     history_day_capture_rows.setdefault((route_key, date_key, str(rr.get("requested_return_date") or ""), cap_key), []).append(row_dict)
+                    history_day_capture_labels.setdefault((route_key, date_key, str(rr.get("requested_return_date") or "")), [])
+                    capture_label_value = str(rr.get("capture_label") or cap_key or "").strip()
+                    if capture_label_value:
+                        label_bucket = history_day_capture_labels[(route_key, date_key, str(rr.get("requested_return_date") or ""))]
+                        if not label_bucket or label_bucket[-1] != capture_label_value:
+                            label_bucket.append(capture_label_value)
 
                 changed = hist[hist["state_changed_flag"].astype(str).str.upper() != "NO_CHANGE"].copy()
                 if not changed.empty:
@@ -2264,54 +2266,23 @@ class OutputWriter:
                         if vals:
                             history_day_variants[(str(route_key), str(date_key), str(return_date_key or ""))] = vals
 
-        sheet.set_column(0, 0, 12)
-        sheet.set_column(1, 1, 16)
-        sheet.set_column(2, 2, 14)
-        sheet.set_column(3, 3, 16)
-        sheet.set_column(4, 4, 12)
-        sheet.set_column(5, 5, 18)
+        leading_col_count = 6 if is_round_trip_sheet else 3
 
-        legend_airlines = [str(a).strip().upper() for a in airline_codes if str(a).strip()]
-        signal_specs = [
-            ("INCREASE", f"{arrow_up} Increase"),
-            ("DECREASE", f"{arrow_down} Decrease"),
-            ("NEW", "NEW"),
-            ("SOLD OUT", "SOLD OUT"),
-            ("UNKNOWN", f"{emdash} Unknown"),
-        ]
-        legend_airline_end_col = len(legend_airlines)
-        legend_status_end_col = len(signal_specs)
-        title_end_col = max(12, 1 + max(legend_airline_end_col, legend_status_end_col))
-        sheet.merge_range(0, 0, 0, title_end_col, "Aero Pulse Intelligence Monitor", fmt_sheet_title)
-
-        sheet.write(1, 0, "Airlines", fmt_legend_key)
-        lc = 1
-        for a in legend_airlines:
-            theme = a if a in fmt_header_airline else "DEFAULT"
-            sheet.write(1, lc, a, fmt_header_airline[theme])
-            lc += 1
-
-        sheet.write(2, 0, "Signals", fmt_legend_key)
-        signal_col_map = {}
-        signal_fmt_map = {}
-        signal_label_map = {}
-        for idx, (signal_key, signal_label) in enumerate(signal_specs):
-            col = 1 + idx
-            if signal_key == "NEW":
-                fmt = fmt_tag_new
-            elif signal_key == "SOLD OUT":
-                fmt = fmt_tag_soldout
-            elif signal_key == "UNKNOWN":
-                fmt = fmt_gray
+        def _apply_leading_column_widths():
+            sheet.set_column(0, 0, 14)
+            if is_round_trip_sheet:
+                sheet.set_column(1, 1, 15)
+                sheet.set_column(2, 2, 13)
+                sheet.set_column(3, 3, 15)
+                sheet.set_column(4, 4, 13)
+                sheet.set_column(5, 5, 16)
             else:
-                fmt = fmt_cell
-            signal_col_map[signal_key] = col
-            signal_fmt_map[signal_key] = fmt
-            signal_label_map[signal_key] = signal_label
-            sheet.write(2, col, signal_label, fmt)
+                sheet.set_column(1, 1, 13)
+                sheet.set_column(2, 2, 16)
 
-        sheet.set_row(1, cfg["legend_row"])
-        sheet.set_row(2, cfg["legend_row"])
+        _apply_leading_column_widths()
+
+        title_end_col = 12
         max_flight_cols = 1
         if not df.empty:
             for _, route_df_for_cols in df.groupby("route", sort=False):
@@ -2319,8 +2290,6 @@ class OutputWriter:
                 for _, flight_df_for_cols in route_df_for_cols.groupby("flight_key", sort=False):
                     route_col_width += 5 if self._has_inventory_signal(flight_df_for_cols) else 3
                 max_flight_cols = max(max_flight_cols, route_col_width)
-        note_start_col = max(10, 6 + max_flight_cols + 2)
-        self._write_methodology_note(sheet, 0, note_start_col, workbook)
 
         def _changed(day_frame: pd.DataFrame) -> bool:
             if day_frame is None or day_frame.empty:
@@ -2339,12 +2308,7 @@ class OutputWriter:
                         pass
             return False
 
-        trip_label = ", ".join(workbook_trip_types) if workbook_trip_types else "OW"
-        return_label = ", ".join(workbook_return_dates[:8]) if workbook_return_dates else "--"
-        if len(workbook_return_dates) > 8:
-            return_label += f" (+{len(workbook_return_dates) - 8})"
-        sheet.merge_range(4, 0, 4, title_end_col, f"Trip Type: {trip_label} | Return Dates: {return_label}", fmt_note)
-        row = 6
+        row = 0
         route_blocks = []
         route_row_entries = []
         route_col_entries = []
@@ -2355,6 +2319,7 @@ class OutputWriter:
             route_block_start = row
             route_display = str(route).replace("-", route_sep)
             sheet.write(row, 0, route_display, fmt_route)
+            rt_merge_groups = []
 
             leader_df = route_df[route_df["leader"] & route_df["min_fare"].notna()]
             flights = (
@@ -2371,7 +2336,7 @@ class OutputWriter:
                     flight_metrics[f.flight_key] = ["Min Fare", "Max Fare", "Tax Amount"]
 
             total_flight_cols = max(1, sum(len(flight_metrics.get(f.flight_key, [])) for _, f in flights.iterrows()))
-            leader_end_col = 5 + total_flight_cols
+            leader_end_col = (leading_col_count - 1) + total_flight_cols
             if leader_df.empty:
                 leader_txt = "Route Price Leader (Lowest Fare): \u2014"
                 leader_fmt = fmt_route_leader_default
@@ -2395,18 +2360,23 @@ class OutputWriter:
             sheet.set_row(row, cfg["route_title_row"])
             row += 1
 
-            sheet.merge_range(row, 0, row + 2, 0, "Outbound Date", fmt_header)
-            sheet.merge_range(row, 1, row + 2, 1, "Outbound Weekday", fmt_header)
-            sheet.merge_range(row, 2, row + 2, 2, "Inbound Date", fmt_header)
-            sheet.merge_range(row, 3, row + 2, 3, "Inbound Weekday", fmt_header)
-            sheet.merge_range(row, 4, row + 2, 4, "Length of Stay", fmt_header)
-            sheet.merge_range(row, 5, row + 2, 5, "Capture Date/Time", fmt_header)
+            if is_round_trip_sheet:
+                sheet.merge_range(row, 0, row + 2, 0, "Outbound Date", fmt_header)
+                sheet.merge_range(row, 1, row + 2, 1, "Outbound Weekday", fmt_header)
+                sheet.merge_range(row, 2, row + 2, 2, "Inbound Date", fmt_header)
+                sheet.merge_range(row, 3, row + 2, 3, "Inbound Weekday", fmt_header)
+                sheet.merge_range(row, 4, row + 2, 4, "Length of Stay", fmt_header)
+                sheet.merge_range(row, 5, row + 2, 5, "Capture Date/Time", fmt_header)
+            else:
+                sheet.merge_range(row, 0, row + 2, 0, "Travel Date", fmt_header)
+                sheet.merge_range(row, 1, row + 2, 1, "Weekday", fmt_header)
+                sheet.merge_range(row, 2, row + 2, 2, "Capture Date/Time", fmt_header)
             col_map = {}
             col_airline = {}
             col_flight_number = {}
             col_departure_time = {}
             route_col_groups = []
-            col = 6
+            col = leading_col_count
             for _, f in flights.iterrows():
                 aircraft = f.aircraft if pd.notna(f.aircraft) else "Aircraft NA"
                 code = self._flight_code_label(f.airline, f.flight_number)
@@ -2480,6 +2450,11 @@ class OutputWriter:
                     and not day_df.get("previous_capture_label", pd.Series(dtype=object)).dropna().empty
                     else prev_cap
                 )
+                day_capture_history = history_day_capture_labels.get((str(route), str(date), str(return_date_key or "")), [])
+                if day_curr_cap.strip().lower() in {"current snapshot", "latest snapshot"} and day_capture_history:
+                    day_curr_cap = str(day_capture_history[-1])
+                if day_prev_cap.strip().lower() == "previous snapshot" and len(day_capture_history) >= 2:
+                    day_prev_cap = str(day_capture_history[-2])
                 variants = [("current", day_curr_cap)]
                 if _changed(day_df):
                     day_key = (str(route), str(date), str(return_date_key or ""))
@@ -2490,8 +2465,6 @@ class OutputWriter:
                         variants = [("previous", day_prev_cap), ("current", day_curr_cap)]
                 span = len(variants)
 
-                # Keep Date/Day unmerged on data rows so interactive row hiding in XLSM
-                # mode can safely hide a single variant row without merged-cell errors.
                 variant_date_fmts = []
                 for vidx in range(span):
                     row_i = row + vidx
@@ -2504,9 +2477,23 @@ class OutputWriter:
                     variant_date_fmts.append(date_group_fmt)
                     sheet.write(row_i, 0, str(date), date_group_fmt)
                     sheet.write(row_i, 1, day, date_group_fmt)
-                    sheet.write(row_i, 2, str(return_date_label or "--"), date_group_fmt)
-                    sheet.write(row_i, 3, str(return_day_name or "--"), date_group_fmt)
-                    sheet.write(row_i, 4, str(stay_label or "--"), date_group_fmt)
+                    if is_round_trip_sheet:
+                        sheet.write(row_i, 2, str(return_date_label or "--"), date_group_fmt)
+                        sheet.write(row_i, 3, str(return_day_name or "--"), date_group_fmt)
+                        sheet.write(row_i, 4, str(stay_label or "--"), date_group_fmt)
+
+                if is_round_trip_sheet:
+                    rt_merge_groups.append(
+                        {
+                            "start_row": int(row),
+                            "end_row": int(row + span - 1),
+                            "outbound_date": str(date),
+                            "outbound_weekday": str(day),
+                            "inbound_date": str(return_date_label or "--"),
+                            "inbound_weekday": str(return_day_name or "--"),
+                            "is_last_day": bool(is_last_day),
+                        }
+                    )
 
                 has_history_stack = span > 1
                 for vidx, variant in enumerate(variants):
@@ -2520,7 +2507,7 @@ class OutputWriter:
                     capture_label = str(vlabel or "")
                     if has_history_stack and is_primary_variant:
                         capture_label = f"[+] {capture_label}"
-                    sheet.write(row_i, 5, capture_label, variant_date_fmts[vidx])
+                    sheet.write(row_i, leading_col_count - 1, capture_label, variant_date_fmts[vidx])
                     if has_history_stack:
                         if is_primary_variant:
                             sheet.set_row(
@@ -2625,6 +2612,7 @@ class OutputWriter:
                     )
                     route_row_entries.append(
                         {
+                            "sheet_name": sheet_name,
                             "route": str(route),
                             "row_number": int(row_i + 1),
                             "variant_key": str(vkey),
@@ -2908,6 +2896,32 @@ class OutputWriter:
 
                 row += span
 
+            if is_round_trip_sheet and rt_merge_groups:
+                merge_fields = [
+                    (0, "outbound_date"),
+                    (1, "outbound_weekday"),
+                    (2, "inbound_date"),
+                    (3, "inbound_weekday"),
+                ]
+                for col_idx, field_name in merge_fields:
+                    start_idx = 0
+                    while start_idx < len(rt_merge_groups):
+                        start_rec = rt_merge_groups[start_idx]
+                        start_row = int(start_rec["start_row"])
+                        value = str(start_rec[field_name])
+                        end_idx = start_idx
+                        while (
+                            end_idx + 1 < len(rt_merge_groups)
+                            and int(rt_merge_groups[end_idx + 1]["start_row"]) == int(rt_merge_groups[end_idx]["end_row"]) + 1
+                            and str(rt_merge_groups[end_idx + 1][field_name]) == value
+                        ):
+                            end_idx += 1
+                        end_row = int(rt_merge_groups[end_idx]["end_row"])
+                        if end_row > start_row:
+                            merge_fmt = fmt_date_row_bottom if bool(rt_merge_groups[end_idx].get("is_last_day")) else fmt_date_row
+                            sheet.merge_range(start_row, col_idx, end_row, col_idx, value, merge_fmt)
+                        start_idx = end_idx + 1
+
             route_airlines = sorted(
                 {
                     str(a).strip().upper()
@@ -2918,6 +2932,7 @@ class OutputWriter:
             route_signals = self._collect_route_signals(route_df)
             route_blocks.append(
                 {
+                    "sheet_name": sheet_name,
                     "route": str(route),
                     "start_row": int(route_block_start + 1),
                     "end_row": int(max(route_block_start + 1, row)),
@@ -2935,6 +2950,7 @@ class OutputWriter:
             for grp in route_col_groups:
                 route_col_entries.append(
                     {
+                        "sheet_name": sheet_name,
                         "route": str(route),
                         "start_row": header_start_row_excel,
                         "end_row": header_end_row_excel,
@@ -2945,52 +2961,6 @@ class OutputWriter:
                         "data_end_row": route_end_row_excel,
                     }
                 )
-
-        def _normalize_signal_token(raw_token: str) -> str:
-            token = str(raw_token or "").strip().upper()
-            if not token:
-                return ""
-            if "INCREASE" in token:
-                return "INCREASE"
-            if "DECREASE" in token:
-                return "DECREASE"
-            if token == "NEW":
-                return "NEW"
-            if "SOLD" in token:
-                return "SOLD OUT"
-            if "UNKNOWN" in token or token == "STABLE":
-                return "UNKNOWN"
-            return token
-
-        signal_row_counts = {"INCREASE": 0, "DECREASE": 0, "NEW": 0, "SOLD OUT": 0}
-        for rec in route_row_entries:
-            sig_csv = str(rec.get("signals_csv") or "")
-            uniq = set()
-            for part in sig_csv.split(","):
-                norm = _normalize_signal_token(part)
-                if norm in signal_row_counts:
-                    uniq.add(norm)
-            for norm in uniq:
-                signal_row_counts[norm] += 1
-
-        for signal_key, signal_label in signal_specs:
-            col = signal_col_map.get(signal_key)
-            fmt = signal_fmt_map.get(signal_key, fmt_cell)
-            if col is None:
-                continue
-            if signal_key == "UNKNOWN":
-                sheet.write(2, col, signal_label, fmt)
-                continue
-            count_val = int(signal_row_counts.get(signal_key, 0))
-            sheet.write_rich_string(
-                2,
-                col,
-                fmt,
-                f"{signal_label} ",
-                fmt_sig_count_sub,
-                f"({count_val})",
-                fmt,
-            )
 
         for col_rec in route_col_entries:
             try:
@@ -3036,13 +3006,58 @@ class OutputWriter:
                 sheet.autofit()
             except Exception:
                 pass
-        sheet.freeze_panes(5, 6)
-        self._write_airline_ops_compare(workbook, df, full_capture_history=full_capture_history)
-        self._write_changes_summary(workbook, df)
-        self._write_fare_trend_sparklines(workbook, df)
-        self._write_penalty_comparison(workbook, df)
-        self._write_tax_comparison(workbook, df)
-        self._write_route_filter_view(workbook, df)
+        _apply_leading_column_widths()
+        sheet.freeze_panes(4, leading_col_count)
+        return route_blocks, route_row_entries, route_col_entries
+
+    def write_route_flight_fare_monitor(
+        self,
+        writer,
+        df: pd.DataFrame,
+        full_capture_history: pd.DataFrame | None = None,
+        execution_plan_status=None,
+    ):
+        workbook = writer.book
+        work = df.copy()
+        if "search_trip_type" not in work.columns:
+            work["search_trip_type"] = "OW"
+        work["search_trip_type"] = (
+            work["search_trip_type"].fillna("OW").astype(str).str.upper()
+        )
+
+        trip_types_present = [
+            trip_type
+            for trip_type in ("OW", "RT")
+            if trip_type in set(work["search_trip_type"].dropna().astype(str).tolist())
+        ]
+        if not trip_types_present:
+            trip_types_present = ["OW"]
+
+        route_blocks = []
+        route_row_entries = []
+        route_col_entries = []
+
+        for trip_type in trip_types_present:
+            subset = work[work["search_trip_type"] == trip_type].copy()
+            if subset.empty:
+                continue
+            sheet_name = f"Route Fare Monitor - {trip_type}"
+            blocks, row_entries, col_entries = self._write_route_flight_fare_monitor_sheet(
+                workbook,
+                subset,
+                sheet_name=sheet_name,
+                full_capture_history=full_capture_history,
+            )
+            route_blocks.extend(blocks)
+            route_row_entries.extend(row_entries)
+            route_col_entries.extend(col_entries)
+
+        self._write_airline_ops_compare(workbook, work, full_capture_history=full_capture_history)
+        self._write_changes_summary(workbook, work)
+        self._write_fare_trend_sparklines(workbook, work)
+        self._write_penalty_comparison(workbook, work)
+        self._write_tax_comparison(workbook, work)
+        self._write_route_filter_view(workbook, work)
         self._write_route_block_index(workbook, route_blocks)
         self._write_route_row_index(workbook, route_row_entries)
         self._write_route_column_index(workbook, route_col_entries)

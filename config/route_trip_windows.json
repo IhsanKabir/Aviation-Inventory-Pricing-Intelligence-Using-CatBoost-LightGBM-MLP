@@ -461,16 +461,19 @@
         "BKK-DAC": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "tourism_bkk_can_round_trip",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "tourism_bkk_can_round_trip",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "BZL-DAC": {
@@ -587,16 +590,19 @@
         "DAC-BKK": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "tourism_bkk_can_round_trip",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "tourism_bkk_can_round_trip",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "DAC-BZL": {
@@ -734,16 +740,19 @@
         "DAC-KUL": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "regional_round_trip_flexible",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "regional_round_trip_flexible",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "DAC-MAA": {
@@ -773,16 +782,19 @@
         "DAC-MLE": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "regional_round_trip_flexible",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "regional_round_trip_flexible",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "DAC-RJH": {
@@ -1000,31 +1012,37 @@
         "KUL-CGP": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "regional_round_trip_flexible",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "regional_round_trip_flexible",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "KUL-DAC": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "regional_round_trip_flexible",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "regional_round_trip_flexible",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "KWI-CXB": {
@@ -1138,16 +1156,19 @@
         "MLE-DAC": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "regional_round_trip_flexible",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "regional_round_trip_flexible",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "RJH-DAC": {
@@ -1310,16 +1331,19 @@
         "BKK-DAC": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "tourism_bkk_can_round_trip",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "tourism_bkk_can_round_trip",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "BZL-DAC": {
@@ -1436,16 +1460,19 @@
         "DAC-BKK": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "tourism_bkk_can_round_trip",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "tourism_bkk_can_round_trip",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "DAC-BZL": {
@@ -1579,16 +1606,19 @@
         "DAC-KUL": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "regional_round_trip_flexible",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "regional_round_trip_flexible",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "DAC-MAA": {
@@ -1618,16 +1648,19 @@
         "DAC-MLE": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "regional_round_trip_flexible",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "regional_round_trip_flexible",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "DAC-RJH": {
@@ -1845,31 +1878,37 @@
         "KUL-CGP": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "regional_round_trip_flexible",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "regional_round_trip_flexible",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "KUL-DAC": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "regional_round_trip_flexible",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "regional_round_trip_flexible",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "KWI-CXB": {
@@ -1983,16 +2022,19 @@
         "MLE-DAC": {
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profile": "regional_round_trip_flexible",
           "active_market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
             "regional_round_trip_flexible",
-            "tourism_mle_bkk_kul_one_way_plus7"
+            "tourism_mle_bkk_kul_one_way_plus7",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "RJH-DAC": {
@@ -2487,26 +2529,34 @@
       "routes": {
         "BKK-DAC": {
           "active_market_trip_profiles": [
-            "default_one_way_monitoring"
+            "default_one_way_monitoring",
+            "tourism_bkk_can_round_trip",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
-            "tourism_bkk_can_round_trip"
+            "tourism_bkk_can_round_trip",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_bkk_can_round_trip"
+            "tourism_bkk_can_round_trip",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         },
         "DAC-BKK": {
           "active_market_trip_profiles": [
-            "default_one_way_monitoring"
+            "default_one_way_monitoring",
+            "tourism_bkk_can_round_trip",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "training_market_trip_profiles": [
-            "tourism_bkk_can_round_trip"
+            "tourism_bkk_can_round_trip",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ],
           "market_trip_profiles": [
             "default_one_way_monitoring",
-            "tourism_bkk_can_round_trip"
+            "tourism_bkk_can_round_trip",
+            "holiday_return_routes_next7_departure_plus3_grid"
           ]
         }
       },

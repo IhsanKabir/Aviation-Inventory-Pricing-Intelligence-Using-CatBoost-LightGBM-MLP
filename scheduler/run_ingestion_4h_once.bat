@@ -18,6 +18,7 @@ set "CYCLE_STATE=%ROOT%\output\reports\accumulation_cycle_latest.json"
 set "RESCHEDULER=%ROOT%\scheduler\reschedule_finish_driven_task.ps1"
 set "TASK_NAME=AirlineIntel_Ingestion4H"
 set "ENVFILE=%ROOT%\.env"
+set "OPERATIONAL_SKIP_BIGQUERY_SYNC="
 
 if not exist "%PYEXE%" (
   echo [%date% %time%] python exe not found: %PYEXE%>> "%LOGFILE%"
@@ -31,11 +32,13 @@ if exist "%ENVFILE%" (
     if /I "%%~A"=="GOOGLE_APPLICATION_CREDENTIALS" set "GOOGLE_APPLICATION_CREDENTIALS=%%~B"
     if /I "%%~A"=="OPERATIONAL_COMPLETION_BUFFER_MINUTES" set "OPERATIONAL_COMPLETION_BUFFER_MINUTES=%%~B"
     if /I "%%~A"=="ACCUMULATION_COMPLETION_BUFFER_MINUTES" set "ACCUMULATION_COMPLETION_BUFFER_MINUTES=%%~B"
+    if /I "%%~A"=="OPERATIONAL_SKIP_BIGQUERY_SYNC" set "OPERATIONAL_SKIP_BIGQUERY_SYNC=%%~B"
   )
 )
 
 if not defined OPERATIONAL_COMPLETION_BUFFER_MINUTES set "OPERATIONAL_COMPLETION_BUFFER_MINUTES=%ACCUMULATION_COMPLETION_BUFFER_MINUTES%"
 if not defined OPERATIONAL_COMPLETION_BUFFER_MINUTES set "OPERATIONAL_COMPLETION_BUFFER_MINUTES=90"
+if not defined OPERATIONAL_SKIP_BIGQUERY_SYNC set "OPERATIONAL_SKIP_BIGQUERY_SYNC=0"
 
 if not defined BIGQUERY_PROJECT_ID (
   echo [%date% %time%] warning: BIGQUERY_PROJECT_ID not set; automatic BigQuery sync will be skipped>> "%LOGFILE%"
@@ -49,7 +52,11 @@ if defined BIGQUERY_PROJECT_ID if defined BIGQUERY_DATASET if not defined GOOGLE
 
 if exist "%RECOVERY_HELPER%" (
   echo [%date% %time%] ingestion cycle launch check>> "%LOGFILE%"
-  "%PYEXE%" "%RECOVERY_HELPER%" --mode guarded-run --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%OPERATIONAL_COMPLETION_BUFFER_MINUTES%" -- "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --skip-bigquery-sync >> "%LOGFILE%" 2>&1
+  if /I "%OPERATIONAL_SKIP_BIGQUERY_SYNC%"=="1" (
+    "%PYEXE%" "%RECOVERY_HELPER%" --mode guarded-run --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%OPERATIONAL_COMPLETION_BUFFER_MINUTES%" -- "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --skip-bigquery-sync >> "%LOGFILE%" 2>&1
+  ) else (
+    "%PYEXE%" "%RECOVERY_HELPER%" --mode guarded-run --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%OPERATIONAL_COMPLETION_BUFFER_MINUTES%" -- "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local >> "%LOGFILE%" 2>&1
+  )
   set "RC=%ERRORLEVEL%"
   set "RESCHEDULED=0"
   if exist "%RESCHEDULER%" (
@@ -80,7 +87,11 @@ if exist "%RECOVERY_HELPER%" (
 )
 
 echo [%date% %time%] starting ingestion cycle>> "%LOGFILE%"
-"%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --skip-bigquery-sync >> "%LOGFILE%" 2>&1
+if /I "%OPERATIONAL_SKIP_BIGQUERY_SYNC%"=="1" (
+  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --skip-bigquery-sync >> "%LOGFILE%" 2>&1
+) else (
+  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local >> "%LOGFILE%" 2>&1
+)
 set "RC=%ERRORLEVEL%"
 set "RESCHEDULED=0"
 if exist "%RESCHEDULER%" (

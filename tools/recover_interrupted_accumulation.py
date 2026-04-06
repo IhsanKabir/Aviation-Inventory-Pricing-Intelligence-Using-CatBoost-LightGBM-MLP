@@ -376,6 +376,31 @@ def _heartbeat_completed_recent(payload: dict, min_completed_gap_minutes: float)
     return _heartbeat_state(payload) == "completed" and age is not None and age < float(min_completed_gap_minutes)
 
 
+def _heartbeat_running_stale(payload: dict, stale_minutes: float) -> bool:
+    if _heartbeat_state(payload) != "running":
+        return False
+    age = _heartbeat_age_minutes(payload)
+    if age is None:
+        return True
+    return age >= float(stale_minutes)
+
+
+def _reconcile_stale_running_heartbeat(status_file: Path, heartbeat: dict, stale_minutes: float, reason: str) -> dict:
+    if not _heartbeat_running_stale(heartbeat, stale_minutes):
+        return heartbeat or {}
+    payload = dict(heartbeat or {})
+    now_iso = _now_utc().isoformat()
+    payload["state"] = "interrupted"
+    payload["reason"] = reason
+    payload["phase"] = payload.get("phase") or "stale"
+    payload["completed_at_utc"] = payload.get("completed_at_utc") or now_iso
+    payload["written_at_utc"] = now_iso
+    payload["accumulation_written_at_utc"] = now_iso
+    payload["stale_reconciled_at_utc"] = now_iso
+    _write_json(status_file, payload)
+    return payload
+
+
 def _list_relevant_processes() -> list[dict]:
     if os.name == "nt":
         ps_cmd = r"""
@@ -936,6 +961,12 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 10
+    heartbeat = _reconcile_stale_running_heartbeat(
+        status_file,
+        heartbeat,
+        args.stale_minutes,
+        "stale_heartbeat_no_active_pipeline",
+    )
     if _heartbeat_running_recent(heartbeat, stale_minutes=args.stale_minutes):
         payload = _build_status(
             mode="preflight",
@@ -1076,6 +1107,12 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 0
+    heartbeat = _reconcile_stale_running_heartbeat(
+        status_file,
+        heartbeat,
+        args.stale_minutes,
+        "stale_heartbeat_no_active_pipeline",
+    )
 
     hb_state = _heartbeat_state(heartbeat) if heartbeat else ""
     hb_age = _heartbeat_age_minutes(heartbeat) if heartbeat else None
@@ -1297,6 +1334,12 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
         )
         print(json.dumps(payload, ensure_ascii=False))
         return 10
+    heartbeat = _reconcile_stale_running_heartbeat(
+        status_file,
+        heartbeat,
+        args.stale_minutes,
+        "stale_heartbeat_no_active_pipeline",
+    )
 
     if _heartbeat_running_recent(heartbeat, stale_minutes=args.stale_minutes):
         payload = _build_status(
