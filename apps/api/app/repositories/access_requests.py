@@ -87,13 +87,37 @@ def _normalize_code_list(values: Any) -> list[str]:
     return sorted(normalized)
 
 
+def _normalize_route_pair_list(values: Any) -> list[str]:
+    if not values:
+        return []
+    normalized: set[str] = set()
+    for value in values:
+        cleaned = str(value or "").strip().upper()
+        if not cleaned:
+            continue
+        if "-" not in cleaned:
+            continue
+        origin, destination = cleaned.split("-", 1)
+        origin = origin.strip().upper()
+        destination = destination.strip().upper()
+        if origin and destination:
+            normalized.add(f"{origin}-{destination}")
+    return sorted(normalized)
+
+
 def normalize_request_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
     raw = scope or {}
+    normalized_origin = _normalize_scalar(raw.get("origin"))
+    normalized_destination = _normalize_scalar(raw.get("destination"))
+    normalized_route_pairs = _normalize_route_pair_list(raw.get("route_pair"))
+    if not normalized_route_pairs and normalized_origin and normalized_destination:
+        normalized_route_pairs = [f"{normalized_origin.upper()}-{normalized_destination.upper()}"]
     normalized: dict[str, Any] = {
         "cycle_id": _normalize_scalar(raw.get("cycle_id")),
         "airline": _normalize_code_list(raw.get("airline")),
-        "origin": _normalize_scalar(raw.get("origin")),
-        "destination": _normalize_scalar(raw.get("destination")),
+        "origin": normalized_origin,
+        "destination": normalized_destination,
+        "route_pair": normalized_route_pairs,
         "cabin": _normalize_scalar(raw.get("cabin")),
         "trip_type": _normalize_scalar(raw.get("trip_type")),
         "start_date": _normalize_scalar(raw.get("start_date")),
@@ -380,6 +404,14 @@ def require_approved_request(
 
 
 def _scope_matches(approved_scope: dict[str, Any], current_scope: dict[str, Any]) -> bool:
+    approved_route_pairs = approved_scope.get("route_pair") or []
+    current_route_pairs = current_scope.get("route_pair") or []
+    if approved_route_pairs:
+        if not current_route_pairs:
+            return False
+        if not set(current_route_pairs).issubset(set(approved_route_pairs)):
+            return False
+
     for key in ("cycle_id", "origin", "destination", "cabin", "trip_type", "return_date"):
         approved_value = approved_scope.get(key)
         if approved_value and current_scope.get(key) != approved_value:

@@ -86,6 +86,30 @@ def _normalize_code_prefix(value: str | None, uppercase: bool = True) -> str | N
     return cleaned.upper() if uppercase else cleaned
 
 
+def _normalize_route_pair_keys(values: Sequence[str] | None) -> list[str]:
+    if not values:
+        return []
+    normalized: set[str] = set()
+    for value in values:
+        cleaned = str(value or "").strip().upper()
+        if not cleaned or "-" not in cleaned:
+            continue
+        origin, destination = cleaned.split("-", 1)
+        origin = origin.strip().upper()
+        destination = destination.strip().upper()
+        if origin and destination:
+            normalized.add(f"{origin}-{destination}")
+    return sorted(normalized)
+
+
+def _route_pairs_from_keys(route_keys: Sequence[str] | None) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for route_key in _normalize_route_pair_keys(route_keys):
+        origin, destination = route_key.split("-", 1)
+        pairs.append((origin, destination))
+    return pairs
+
+
 def _normalize_scalar_cache_value(value: Any) -> Any:
     if isinstance(value, date):
         return value.isoformat()
@@ -655,6 +679,7 @@ def _get_route_date_availability_from_bigquery(
     airlines: Sequence[str] | None = None,
     origins: Sequence[str] | None = None,
     destinations: Sequence[str] | None = None,
+    route_pairs: Sequence[str] | None = None,
     cabins: Sequence[str] | None = None,
     trip_types: Sequence[str] | None = None,
 ) -> dict[str, Any]:
@@ -662,17 +687,21 @@ def _get_route_date_availability_from_bigquery(
     if not resolved_cycle_id:
         return {"cycle_id": None, "departure_dates": [], "return_dates": []}
 
+    normalized_route_pairs = _normalize_route_pair_keys(route_pairs)
     filters = ["cycle_id = @cycle_id"]
     params: list[bigquery.ScalarQueryParameter] = [
         bigquery.ScalarQueryParameter("cycle_id", "STRING", resolved_cycle_id)
     ]
+    if normalized_route_pairs:
+        filters.append("route_key IN UNNEST(@route_pairs)")
+        params.append(bigquery.ArrayQueryParameter("route_pairs", "STRING", normalized_route_pairs))
     if airlines:
         filters.append("airline IN UNNEST(@airlines)")
         params.append(bigquery.ArrayQueryParameter("airlines", "STRING", _normalize_codes(airlines)))
-    if origins:
+    if origins and not normalized_route_pairs:
         filters.append("origin IN UNNEST(@origins)")
         params.append(bigquery.ArrayQueryParameter("origins", "STRING", _normalize_codes(origins)))
-    if destinations:
+    if destinations and not normalized_route_pairs:
         filters.append("destination IN UNNEST(@destinations)")
         params.append(bigquery.ArrayQueryParameter("destinations", "STRING", _normalize_codes(destinations)))
     if cabins:
@@ -727,11 +756,13 @@ def get_route_date_availability(
     airlines: Sequence[str] | None = None,
     origins: Sequence[str] | None = None,
     destinations: Sequence[str] | None = None,
+    route_pairs: Sequence[str] | None = None,
     cabins: Sequence[str] | None = None,
     trip_types: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     started_at = time.perf_counter()
     normalized_trip_types = [value for value in _normalize_codes(trip_types) if value in {"OW", "RT"}]
+    normalized_route_pairs = _normalize_route_pair_keys(route_pairs)
     prefer_sql = session is not None
     if not prefer_sql and _bigquery_ready():
         try:
@@ -743,6 +774,7 @@ def get_route_date_availability(
                 airlines=_normalize_sequence_cache_value(airlines),
                 origins=_normalize_sequence_cache_value(origins),
                 destinations=_normalize_sequence_cache_value(destinations),
+                route_pairs=tuple(normalized_route_pairs),
                 cabins=_normalize_sequence_cache_value(cabins, uppercase=False),
                 trip_types=tuple(normalized_trip_types),
             )
@@ -771,6 +803,7 @@ def get_route_date_availability(
                 airlines=airlines,
                 origins=origins,
                 destinations=destinations,
+                route_pairs=normalized_route_pairs,
                 cabins=cabins,
                 trip_types=normalized_trip_types,
             )
@@ -812,6 +845,7 @@ def get_route_date_availability(
         airlines=_normalize_sequence_cache_value(airlines),
         origins=_normalize_sequence_cache_value(origins),
         destinations=_normalize_sequence_cache_value(destinations),
+        route_pairs=tuple(normalized_route_pairs),
         cabins=_normalize_sequence_cache_value(cabins, uppercase=False),
         trip_types=tuple(normalized_trip_types),
     )
@@ -838,9 +872,12 @@ def get_route_date_availability(
 
     clauses = ["fo.scrape_id = CAST(:cycle_id AS uuid)"]
     params: dict[str, Any] = {"cycle_id": resolved_cycle_id}
+    if normalized_route_pairs:
+        _apply_in_filter(clauses, params, "(fo.origin || '-' || fo.destination)", normalized_route_pairs, "availability_route_pair")
     _apply_in_filter(clauses, params, "fo.airline", airlines, "availability_airline")
-    _apply_in_filter(clauses, params, "fo.origin", origins, "availability_origin")
-    _apply_in_filter(clauses, params, "fo.destination", destinations, "availability_destination")
+    if not normalized_route_pairs:
+        _apply_in_filter(clauses, params, "fo.origin", origins, "availability_origin")
+        _apply_in_filter(clauses, params, "fo.destination", destinations, "availability_destination")
     _apply_in_filter(clauses, params, "fo.cabin", cabins, "availability_cabin", uppercase=False)
     if normalized_trip_types:
         _apply_in_filter(
@@ -2368,6 +2405,7 @@ def _get_route_monitor_matrix_from_bigquery(
     airlines: Sequence[str] | None = None,
     origins: Sequence[str] | None = None,
     destinations: Sequence[str] | None = None,
+    route_pairs: Sequence[str] | None = None,
     cabins: Sequence[str] | None = None,
     trip_types: Sequence[str] | None = None,
     return_date: date | None = None,
@@ -2384,18 +2422,23 @@ def _get_route_monitor_matrix_from_bigquery(
     if not resolved_cycle_id:
         return {"cycle_id": None, "routes": []}
 
+    normalized_route_pairs = _normalize_route_pair_keys(route_pairs)
+    effective_route_limit = max(route_limit, len(normalized_route_pairs)) if normalized_route_pairs else route_limit
     route_filters = ["cycle_id = @cycle_id"]
     route_params: list[bigquery.ScalarQueryParameter] = [
         bigquery.ScalarQueryParameter("cycle_id", "STRING", resolved_cycle_id),
-        bigquery.ScalarQueryParameter("route_limit", "INT64", route_limit),
+        bigquery.ScalarQueryParameter("route_limit", "INT64", effective_route_limit),
     ]
     if airlines:
         route_filters.append("airline IN UNNEST(@airlines)")
         route_params.append(bigquery.ArrayQueryParameter("airlines", "STRING", _normalize_codes(airlines)))
-    if origins:
+    if normalized_route_pairs:
+        route_filters.append("route_key IN UNNEST(@route_pairs)")
+        route_params.append(bigquery.ArrayQueryParameter("route_pairs", "STRING", normalized_route_pairs))
+    if origins and not normalized_route_pairs:
         route_filters.append("origin IN UNNEST(@origins)")
         route_params.append(bigquery.ArrayQueryParameter("origins", "STRING", _normalize_codes(origins)))
-    if destinations:
+    if destinations and not normalized_route_pairs:
         route_filters.append("destination IN UNNEST(@destinations)")
         route_params.append(bigquery.ArrayQueryParameter("destinations", "STRING", _normalize_codes(destinations)))
     if cabins:
@@ -2415,7 +2458,7 @@ def _get_route_monitor_matrix_from_bigquery(
         if return_date_end:
             route_filters.append("requested_return_date <= @return_date_end")
             route_params.append(bigquery.ScalarQueryParameter("return_date_end", "DATE", return_date_end))
-    if normalized_trip_types:
+    if normalized_trip_types and not normalized_route_pairs:
         if origins:
             route_filters.append("trip_origin IN UNNEST(@trip_origins)")
             route_params.append(bigquery.ArrayQueryParameter("trip_origins", "STRING", _normalize_codes(origins)))
@@ -2862,6 +2905,7 @@ def get_route_monitor_matrix(
     airlines: Sequence[str] | None = None,
     origins: Sequence[str] | None = None,
     destinations: Sequence[str] | None = None,
+    route_pairs: Sequence[str] | None = None,
     cabins: Sequence[str] | None = None,
     trip_types: Sequence[str] | None = None,
     return_date: date | None = None,
@@ -2876,6 +2920,8 @@ def get_route_monitor_matrix(
 ) -> dict[str, Any]:
     started_at = time.perf_counter()
     normalized_trip_types = [value for value in _normalize_codes(trip_types) if value in {"OW", "RT"}]
+    normalized_route_pairs = _normalize_route_pair_keys(route_pairs)
+    effective_route_limit = max(route_limit, len(normalized_route_pairs)) if normalized_route_pairs else route_limit
     prefer_sql = session is not None
     if not prefer_sql and _bigquery_ready():
         try:
@@ -2887,6 +2933,7 @@ def get_route_monitor_matrix(
                 airlines=_normalize_sequence_cache_value(airlines),
                 origins=_normalize_sequence_cache_value(origins),
                 destinations=_normalize_sequence_cache_value(destinations),
+                route_pairs=tuple(normalized_route_pairs),
                 cabins=_normalize_sequence_cache_value(cabins, uppercase=False),
                 trip_types=tuple(normalized_trip_types),
                 return_date=return_date,
@@ -2895,7 +2942,7 @@ def get_route_monitor_matrix(
                 start_date=start_date,
                 end_date=end_date,
                 departure_date=departure_date,
-                route_limit=route_limit,
+                route_limit=effective_route_limit,
                 history_limit=history_limit,
                 compact_history=compact_history,
             )
@@ -2919,6 +2966,7 @@ def get_route_monitor_matrix(
                 airlines=airlines,
                 origins=origins,
                 destinations=destinations,
+                route_pairs=normalized_route_pairs,
                 cabins=cabins,
                 trip_types=normalized_trip_types,
                 return_date=return_date,
@@ -2972,6 +3020,7 @@ def get_route_monitor_matrix(
         airlines=_normalize_sequence_cache_value(airlines),
         origins=_normalize_sequence_cache_value(origins),
         destinations=_normalize_sequence_cache_value(destinations),
+        route_pairs=tuple(normalized_route_pairs),
         cabins=_normalize_sequence_cache_value(cabins, uppercase=False),
         trip_types=tuple(normalized_trip_types),
         return_date=return_date,
@@ -2980,7 +3029,7 @@ def get_route_monitor_matrix(
         start_date=start_date,
         end_date=end_date,
         departure_date=departure_date,
-        route_limit=route_limit,
+        route_limit=effective_route_limit,
         history_limit=history_limit,
         compact_history=compact_history,
     )
@@ -3002,9 +3051,11 @@ def get_route_monitor_matrix(
 
     route_started_at = time.perf_counter()
     route_clauses = ["fo.scrape_id = CAST(:cycle_id AS uuid)"]
-    route_params: dict[str, Any] = {"cycle_id": resolved_cycle_id, "route_limit": route_limit}
+    route_params: dict[str, Any] = {"cycle_id": resolved_cycle_id, "route_limit": effective_route_limit}
     _apply_in_filter(route_clauses, route_params, "fo.airline", airlines, "route_airline")
     _apply_in_filter(route_clauses, route_params, "fo.cabin", cabins, "route_cabin", uppercase=False)
+    if normalized_route_pairs:
+        _apply_in_filter(route_clauses, route_params, "(fo.origin || '-' || fo.destination)", normalized_route_pairs, "route_pair")
     if normalized_trip_types:
         _apply_in_filter(route_clauses, route_params, "COALESCE(frm.search_trip_type, 'OW')", normalized_trip_types, "route_trip_type")
     if return_date:
@@ -3026,10 +3077,10 @@ def get_route_monitor_matrix(
     if departure_date:
         route_clauses.append("fo.departure::date = :route_departure_date")
         route_params["route_departure_date"] = departure_date.isoformat()
-    if normalized_trip_types:
+    if normalized_trip_types and not normalized_route_pairs:
         _apply_in_filter(route_clauses, route_params, "COALESCE(frm.trip_origin, fo.origin)", origins, "route_trip_origin")
         _apply_in_filter(route_clauses, route_params, "COALESCE(frm.trip_destination, fo.destination)", destinations, "route_trip_destination")
-    else:
+    elif not normalized_route_pairs:
         _apply_in_filter(route_clauses, route_params, "fo.origin", origins, "route_origin")
         _apply_in_filter(route_clauses, route_params, "fo.destination", destinations, "route_destination")
 

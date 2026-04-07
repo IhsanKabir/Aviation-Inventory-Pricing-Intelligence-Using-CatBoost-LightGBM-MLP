@@ -357,8 +357,8 @@ a {
 
 .scope-section-card {
   display: grid;
-  gap: 16px;
-  padding: 18px 20px;
+  gap: 12px;
+  padding: 14px 16px;
   border-radius: 22px;
   border: 1px solid rgba(16, 35, 59, 0.1);
   background:
@@ -368,42 +368,42 @@ a {
 
 .scope-section-header {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   grid-template-columns: minmax(0, 1.2fr) minmax(240px, 0.9fr);
   align-items: start;
 }
 
 .scope-section-kicker {
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.7rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .scope-section-title {
-  margin: 6px 0 0;
-  font-size: 1.08rem;
+  margin: 4px 0 0;
+  font-size: 1rem;
   line-height: 1.3;
 }
 
 .scope-section-copy {
   margin: 0;
   color: var(--muted);
-  font-size: 0.9rem;
-  line-height: 1.6;
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .scope-window-grid {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
 .scope-window-card {
   display: grid;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 18px;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 16px;
   border: 1px solid rgba(16, 35, 59, 0.08);
   background: rgba(255, 255, 255, 0.68);
 }
@@ -418,29 +418,32 @@ a {
 }
 
 .scope-window-title {
-  font-size: 0.98rem;
+  font-size: 0.9rem;
   font-weight: 700;
 }
 
 .scope-window-copy {
   color: var(--muted);
-  font-size: 0.88rem;
-  line-height: 1.5;
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 
 .scope-window-fields {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .scope-window-fields .field span {
-  line-height: 1.35;
+  line-height: 1.2;
   white-space: normal;
+  font-size: 0.68rem;
 }
 
 .scope-window-fields .field input {
   min-width: 0;
+  padding: 10px 12px;
+  min-height: 40px;
 }
 
 .field-grid {
@@ -701,7 +704,7 @@ a {
 }
 
 .route-scope-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .route-hint-row {
@@ -725,9 +728,10 @@ a {
 }
 
 .route-date-chip {
-  min-height: 34px;
-  padding: 8px 12px;
+  min-height: 30px;
+  padding: 6px 10px;
   cursor: default;
+  font-size: 0.8rem;
 }
 
 .availability-toggle {
@@ -750,12 +754,12 @@ a {
 }
 
 .route-hint-chip {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.65);
   color: var(--ink);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 600;
 }
 

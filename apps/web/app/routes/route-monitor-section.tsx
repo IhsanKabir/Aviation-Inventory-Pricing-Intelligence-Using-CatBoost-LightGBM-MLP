@@ -160,6 +160,7 @@ export async function RouteMonitorSection({
   requestId,
   cycleId,
   selectedAirlines,
+  routePairs,
   origin,
   destination,
   cabin,
@@ -176,6 +177,7 @@ export async function RouteMonitorSection({
   requestId: string;
   cycleId?: string;
   selectedAirlines: string[];
+  routePairs?: string[];
   origin?: string;
   destination?: string;
   cabin?: string;
@@ -193,6 +195,7 @@ export async function RouteMonitorSection({
     requestId,
     cycleId,
     airlines: selectedAirlines.length ? selectedAirlines : undefined,
+    routePairKeys: routePairs?.length ? routePairs : undefined,
     origins: origin ? [origin] : undefined,
     destinations: destination ? [destination] : undefined,
     cabins: cabin ? [cabin] : undefined,
@@ -278,6 +281,7 @@ export async function RouteMonitorSection({
               requestId,
               cycleId,
               airlines: selectedAirlines,
+              routePairs,
               origin,
               destination,
               cabin,

@@ -547,6 +547,7 @@ export type SnapshotQuery = {
   airlines?: string[];
   origins?: string[];
   destinations?: string[];
+  routePairKeys?: string[];
   cabins?: string[];
   limit?: number;
 };
@@ -723,6 +724,7 @@ export async function getCurrentSnapshotPayload(query: SnapshotQuery) {
       airline: query.airlines,
       origin: query.origins,
       destination: query.destinations,
+      route_pair: query.routePairKeys,
       cabin: query.cabins,
       limit: query.limit
     }),
@@ -751,6 +753,7 @@ export async function getRouteMonitorMatrixPayload(
       airline: query.airlines,
       origin: query.origins,
       destination: query.destinations,
+      route_pair: query.routePairKeys,
       cabin: query.cabins,
       trip_type: query.tripTypes,
       return_date: query.returnDate,
@@ -779,6 +782,7 @@ export async function getRouteDateAvailabilityPayload(
       airline: query.airlines,
       origin: query.origins,
       destination: query.destinations,
+      route_pair: query.routePairKeys,
       cabin: query.cabins,
       trip_type: query.tripTypes
     }),

@@ -67,6 +67,18 @@ function normalizeAirportCode(value?: string | null) {
   return normalized || undefined;
 }
 
+function normalizeRoutePair(value?: string | null) {
+  const cleaned = value?.trim().toUpperCase();
+  if (!cleaned || !cleaned.includes("-")) {
+    return undefined;
+  }
+  const [origin, destination] = cleaned.split("-", 2);
+  if (!origin || !destination) {
+    return undefined;
+  }
+  return `${origin.trim().toUpperCase()}-${destination.trim().toUpperCase()}`;
+}
+
 function getRouteSuggestionLimit(origin?: string, destination?: string) {
   return origin || destination ? 24 : 16;
 }
@@ -150,6 +162,9 @@ function getConfiguredRouteOptions(
 export default async function RoutesPage({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {};
   const selectedAirlines = manyParams(params, "airline").map((item) => item.trim().toUpperCase()).filter(Boolean);
+  const selectedRoutePairs = manyParams(params, "route_pair")
+    .map((item) => normalizeRoutePair(item))
+    .filter((item): item is string => Boolean(item));
   const origin = normalizeAirportCode(firstParam(params, "origin"));
   const destination = normalizeAirportCode(firstParam(params, "destination"));
   const cabin = firstParam(params, "cabin");
@@ -167,7 +182,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
   const requestId = firstParam(params, "request_id") ?? undefined;
   const routeLimit = parseLimit(firstParam(params, "route_limit"), 5);
   const historyLimit = parseLimit(firstParam(params, "history_limit"), 6);
-  const routeSelectionReady = Boolean(origin && destination);
+  const routeSelectionReady = Boolean(selectedRoutePairs.length || (origin && destination));
   const effectiveReturnDate = undefined;
   const effectiveReturnDateStart =
     tripType === "RT" ? returnDateStart ?? undefined : undefined;
@@ -222,6 +237,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
             initialState={{
               cycleId: cycleId ?? "",
               airlines: selectedAirlines,
+              routePairs: selectedRoutePairs,
               origin: origin ?? "",
               destination: destination ?? "",
               cabin: cabin ?? "",
@@ -251,6 +267,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
             scope={{
               cycleId,
               airlines: selectedAirlines,
+              routePairs: selectedRoutePairs,
               origin,
               destination,
               cabin: cabin ?? undefined,
@@ -275,6 +292,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
               destination={destination}
               historyLimit={historyLimit}
               origin={origin}
+              routePairs={selectedRoutePairs}
               recentCycles={recentCycleOptions}
               requestId={requestId}
               startDate={startDate}

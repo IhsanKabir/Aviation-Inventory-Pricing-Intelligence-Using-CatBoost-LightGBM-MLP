@@ -8,6 +8,7 @@ import { getApiBaseUrl, type ReportAccessRequest } from "@/lib/api";
 type RouteAccessScope = {
   cycleId?: string;
   airlines: string[];
+  routePairs?: string[];
   origin?: string;
   destination?: string;
   cabin?: string;
@@ -23,11 +24,13 @@ type RouteAccessScope = {
 };
 
 function buildScopePayload(scope: RouteAccessScope) {
+  const hasExactRoutePairs = Boolean(scope.routePairs?.length);
   return {
     cycle_id: scope.cycleId,
     airline: scope.airlines,
-    origin: scope.origin,
-    destination: scope.destination,
+    route_pair: scope.routePairs,
+    origin: hasExactRoutePairs ? undefined : scope.origin,
+    destination: hasExactRoutePairs ? undefined : scope.destination,
     cabin: scope.cabin,
     trip_type: scope.tripType,
     start_date: scope.startDate,
@@ -81,7 +84,11 @@ export function ReportAccessRequestPanel({
 
   const scopeSummary = useMemo(() => {
     const lines: string[] = [];
-    lines.push(`Route: ${scope.origin || "any"} -> ${scope.destination || "any"}`);
+    if (scope.routePairs?.length) {
+      lines.push(`Routes: ${scope.routePairs.join(", ")}`);
+    } else {
+      lines.push(`Route: ${scope.origin || "any"} -> ${scope.destination || "any"}`);
+    }
     lines.push(`Trip: ${scope.tripType === "RT" ? "Round-trip" : "One-way"}`);
     if (scope.airlines.length) {
       lines.push(`Airlines: ${scope.airlines.join(", ")}`);

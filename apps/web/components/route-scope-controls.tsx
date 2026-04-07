@@ -44,6 +44,7 @@ type RouteOptionsState = {
 type ScopeState = {
   cycleId: string;
   airlines: string[];
+  routePairs: string[];
   origin: string;
   destination: string;
   cabin: string;
@@ -74,6 +75,20 @@ function normalizeAirportCode(value: string) {
   return value.trim().toUpperCase();
 }
 
+function normalizeRouteKey(value: string) {
+  const cleaned = value.trim().toUpperCase();
+  if (!cleaned.includes("-")) {
+    return "";
+  }
+  const [origin, destination] = cleaned.split("-", 2);
+  const normalizedOrigin = normalizeAirportCode(origin ?? "");
+  const normalizedDestination = normalizeAirportCode(destination ?? "");
+  if (!normalizedOrigin || !normalizedDestination) {
+    return "";
+  }
+  return `${normalizedOrigin}-${normalizedDestination}`;
+}
+
 function buildQueryString(state: ScopeState) {
   const next = new URLSearchParams();
   const returnScope = deriveReturnScope(state);
@@ -87,10 +102,16 @@ function buildQueryString(state: ScopeState) {
       next.append("airline", normalizedAirline);
     }
   }
-  if (normalizeAirportCode(state.origin)) {
+  for (const routePair of state.routePairs) {
+    const normalizedRoutePair = normalizeRouteKey(routePair);
+    if (normalizedRoutePair) {
+      next.append("route_pair", normalizedRoutePair);
+    }
+  }
+  if (!state.routePairs.length && normalizeAirportCode(state.origin)) {
     next.set("origin", normalizeAirportCode(state.origin));
   }
-  if (normalizeAirportCode(state.destination)) {
+  if (!state.routePairs.length && normalizeAirportCode(state.destination)) {
     next.set("destination", normalizeAirportCode(state.destination));
   }
   if (state.cabin.trim()) {
@@ -136,12 +157,18 @@ function buildAvailabilityQueryString(state: ScopeState) {
       next.append("airline", normalizedAirline);
     }
   }
+  for (const routePair of state.routePairs) {
+    const normalizedRoutePair = normalizeRouteKey(routePair);
+    if (normalizedRoutePair) {
+      next.append("route_pair", normalizedRoutePair);
+    }
+  }
   const normalizedOrigin = normalizeAirportCode(state.origin);
-  if (normalizedOrigin) {
+  if (normalizedOrigin && !state.routePairs.length) {
     next.append("origin", normalizedOrigin);
   }
   const normalizedDestination = normalizeAirportCode(state.destination);
-  if (normalizedDestination) {
+  if (normalizedDestination && !state.routePairs.length) {
     next.append("destination", normalizedDestination);
   }
   if (state.cabin.trim()) {
@@ -385,9 +412,16 @@ export function RouteScopeControls({
   );
   const normalizedOrigin = useMemo(() => normalizeAirportCode(state.origin), [state.origin]);
   const normalizedDestination = useMemo(() => normalizeAirportCode(state.destination), [state.destination]);
+  const normalizedSelectedRoutePairs = useMemo(
+    () => state.routePairs.map((item) => normalizeRouteKey(item)).filter(Boolean),
+    [state.routePairs]
+  );
   const matrixScopeReady = useMemo(() => {
     if (!airportCodesAreValid) {
       return false;
+    }
+    if (normalizedSelectedRoutePairs.length) {
+      return true;
     }
     if (!normalizedOrigin && !normalizedDestination) {
       return true;
@@ -397,10 +431,15 @@ export function RouteScopeControls({
     }
     return false;
   }, [airportCodesAreValid, exactRouteMatch, normalizedDestination, normalizedOrigin]);
-  const availabilityScopeReady = useMemo(
-    () => Boolean(accessGranted && airportCodesAreValid && normalizedOrigin && normalizedDestination && exactRouteMatch),
-    [accessGranted, airportCodesAreValid, exactRouteMatch, normalizedDestination, normalizedOrigin]
-  );
+  const availabilityScopeReady = useMemo(() => {
+    if (!accessGranted || !airportCodesAreValid) {
+      return false;
+    }
+    if (normalizedSelectedRoutePairs.length) {
+      return true;
+    }
+    return Boolean(normalizedOrigin && normalizedDestination && exactRouteMatch);
+  }, [accessGranted, airportCodesAreValid, exactRouteMatch, normalizedDestination, normalizedOrigin, normalizedSelectedRoutePairs.length]);
   const returnScope = useMemo(() => deriveReturnScope(state), [state]);
   const availabilityDeferred = !availabilityScopeReady;
   const exportHref = useMemo(() => {
@@ -411,8 +450,9 @@ export function RouteScopeControls({
       request_id: requestId,
       cycle_id: state.cycleId || undefined,
       airline: state.airlines.length ? state.airlines : undefined,
-      origin: normalizeAirportCode(state.origin) || undefined,
-      destination: normalizeAirportCode(state.destination) || undefined,
+      route_pair: normalizedSelectedRoutePairs.length ? normalizedSelectedRoutePairs : undefined,
+      origin: normalizedSelectedRoutePairs.length ? undefined : normalizeAirportCode(state.origin) || undefined,
+      destination: normalizedSelectedRoutePairs.length ? undefined : normalizeAirportCode(state.destination) || undefined,
       cabin: state.cabin.trim() || undefined,
       trip_type: state.tripType,
       start_date: state.outboundDateStart || undefined,
@@ -427,7 +467,7 @@ export function RouteScopeControls({
       history_limit: state.historyLimit || undefined
     };
     return buildReportingExportUrl(params, ["routes"]);
-  }, [accessGranted, requestId, returnScope, state]);
+  }, [accessGranted, normalizedSelectedRoutePairs, requestId, returnScope, state]);
   const availabilityQueryString = useMemo(
     () => (availabilityScopeReady ? buildAvailabilityQueryString(state) : null),
     [availabilityScopeReady, state]
@@ -630,10 +670,26 @@ export function RouteScopeControls({
   }
 
   function selectRoute(option: RouteOption) {
-    updateState({
-      origin: option.origin,
-      destination: option.destination
+    const routeKey = normalizeRouteKey(option.routeKey);
+    if (!routeKey) {
+      return;
+    }
+    setState((current) => {
+      const nextRoutePairs = current.routePairs.includes(routeKey)
+        ? current.routePairs.filter((item) => item !== routeKey)
+        : [...current.routePairs, routeKey];
+      return {
+        ...current,
+        routePairs: nextRoutePairs
+      };
     });
+  }
+
+  function removeRoutePair(routeKey: string) {
+    setState((current) => ({
+      ...current,
+      routePairs: current.routePairs.filter((item) => item !== routeKey)
+    }));
   }
 
   function selectCycle(cycleId: string | null) {
@@ -653,6 +709,7 @@ export function RouteScopeControls({
     setState({
       cycleId: "",
       airlines: [],
+      routePairs: [],
       origin: "",
       destination: "",
       cabin: "",
@@ -769,26 +826,43 @@ export function RouteScopeControls({
         </label>
       </div>
 
+      <div className="filter-group">
+        <div className="filter-label">Selected routes</div>
+        {normalizedSelectedRoutePairs.length ? (
+          <div className="chip-row">
+            {normalizedSelectedRoutePairs.map((routePair) => (
+              <button
+                key={`selected-${routePair}`}
+                className="chip"
+                data-active={true}
+                onClick={() => removeRoutePair(routePair)}
+                type="button"
+              >
+                {routePair} ×
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">Choose one or more exact route chips below to build a multi-route view.</div>
+        )}
+      </div>
+
       <div className="scope-section-card">
         <div className="scope-section-header">
           <div>
             <div className="scope-section-kicker">Travel windows</div>
-            <h3 className="scope-section-title">Choose the outbound view first{state.tripType === "RT" ? ", then narrow the inbound view" : ""}</h3>
+            <h3 className="scope-section-title">Set the date window{state.tripType === "RT" ? ", then narrow inbound" : ""}</h3>
           </div>
-          <p className="scope-section-copy">
-            Leave either side blank to keep that edge open. The route table and Excel export will follow the same date window.
-          </p>
+          <p className="scope-section-copy">Blank edge = open range. Table and Excel will follow this window.</p>
         </div>
 
         <div className="scope-window-grid">
           <section className="scope-window-card" data-tone="outbound">
-            <div className="scope-window-title">Outbound travel window</div>
-            <div className="scope-window-copy">
-              Use this for the departure range you want to review across the matrix.
-            </div>
+            <div className="scope-window-title">Outbound dates</div>
+            <div className="scope-window-copy">Departure range for this view.</div>
             <div className="scope-window-fields">
               <label className="field">
-                <span>Outbound start</span>
+                <span>From</span>
                 <input
                   onChange={(event) => updateState({ outboundDateStart: event.target.value })}
                   type="date"
@@ -796,7 +870,7 @@ export function RouteScopeControls({
                 />
               </label>
               <label className="field">
-                <span>Outbound end</span>
+                <span>To</span>
                 <input
                   onChange={(event) => updateState({ outboundDateEnd: event.target.value })}
                   type="date"
@@ -808,13 +882,11 @@ export function RouteScopeControls({
 
           {state.tripType === "RT" ? (
             <section className="scope-window-card" data-tone="inbound">
-              <div className="scope-window-title">Inbound travel window</div>
-              <div className="scope-window-copy">
-                Narrow the collected return dates without changing the outbound side of the trip.
-              </div>
+              <div className="scope-window-title">Inbound dates</div>
+              <div className="scope-window-copy">Return range within the chosen outbound view.</div>
               <div className="scope-window-fields">
                 <label className="field">
-                  <span>Inbound start</span>
+                  <span>From</span>
                   <input
                     onChange={(event) =>
                       updateState({
@@ -827,7 +899,7 @@ export function RouteScopeControls({
                   />
                 </label>
                 <label className="field">
-                  <span>Inbound end</span>
+                  <span>To</span>
                   <input
                     onChange={(event) =>
                       updateState({
@@ -929,7 +1001,7 @@ export function RouteScopeControls({
             departureDateOptions.length ? (
               <div className="availability-section">
                 <div className="chip-row">
-                  {visibleDepartureDates.map((item) => (
+            {visibleDepartureDates.map((item) => (
                     <span className="chip route-date-chip" key={`departure-${item.date}`}>
                       {item.date} ({item.row_count})
                     </span>
@@ -1028,6 +1100,7 @@ export function RouteScopeControls({
             <button
               key={item.routeKey}
               className="route-hint-chip"
+              data-active={normalizedSelectedRoutePairs.includes(item.routeKey)}
               data-pending={isPending}
               onClick={() => selectRoute(item)}
               type="button"
@@ -1042,7 +1115,13 @@ export function RouteScopeControls({
           Enter complete 3-letter airport codes before applying the route filters.
         </div>
       ) : null}
+      {normalizedSelectedRoutePairs.length ? (
+        <div className="status-banner">
+          Exact route selection is active for {normalizedSelectedRoutePairs.length} route{normalizedSelectedRoutePairs.length === 1 ? "" : "s"}.
+        </div>
+      ) : null}
       {airportCodesAreValid &&
+      !normalizedSelectedRoutePairs.length &&
       normalizeAirportCode(state.origin) &&
       normalizeAirportCode(state.destination) &&
       !routeOptionsState.loading &&

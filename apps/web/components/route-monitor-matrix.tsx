@@ -19,6 +19,7 @@ type RouteMonitorScopeQuery = {
   requestId?: string;
   cycleId?: string;
   airlines?: string[];
+  routePairs?: string[];
   origin?: string;
   destination?: string;
   cabin?: string;
@@ -489,6 +490,7 @@ export function RouteMonitorMatrix({
         requestId: scopeQuery.requestId,
         cycleId: scopeQuery.cycleId,
         airlines: scopeQuery.airlines?.length ? scopeQuery.airlines : undefined,
+        routePairKeys: scopeQuery.routePairs?.length ? scopeQuery.routePairs : undefined,
         origins: [route.origin],
         destinations: [route.destination],
         cabins: scopeQuery.cabin ? [scopeQuery.cabin] : undefined,
