@@ -932,7 +932,7 @@ def fetch_flights_for_airline(
     proxy = proxy_url or os.getenv(ENV_PROXY_URL) or None
     min_ttl_sec = _safe_int(os.getenv(ENV_TOKEN_MIN_TTL_SEC))
     min_ttl_sec = int(min_ttl_sec if min_ttl_sec is not None else 300)
-    auto_refresh_token = _env_truthy(ENV_TOKEN_AUTO_REFRESH, default=False)
+    auto_refresh_token = _env_truthy(ENV_TOKEN_AUTO_REFRESH, default=True)
     token_ctx = _resolve_active_kong_token(min_ttl_sec=min_ttl_sec)
     token_value = str((token_ctx or {}).get("token") or "").strip()
     headers = _build_headers(token=token_value or None)

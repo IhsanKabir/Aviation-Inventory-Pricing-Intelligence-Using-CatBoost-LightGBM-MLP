@@ -15,8 +15,9 @@ class _DummyResp:
 
 
 class GozayaanConnectorTests(unittest.TestCase):
+    @patch("modules.gozayaan._active_rate_limit_state", return_value=None)
     @patch("modules.gozayaan.Requester")
-    def test_bs_row_normalization_and_penalties(self, mock_requester_cls):
+    def test_bs_row_normalization_and_penalties(self, mock_requester_cls, _mock_cooldown):
         requester = MagicMock()
         requester.timeout = 30
         requester.session = MagicMock()
@@ -170,8 +171,9 @@ class GozayaanConnectorTests(unittest.TestCase):
         self.assertEqual(3500.0, row["fare_change_fee_no_show"])
         self.assertEqual(3500.0, row["fare_cancel_fee_no_show"])
 
+    @patch("modules.gozayaan._active_rate_limit_state", return_value=None)
     @patch("modules.gozayaan.Requester")
-    def test_populates_via_airports_from_multisegment_journey(self, mock_requester_cls):
+    def test_populates_via_airports_from_multisegment_journey(self, mock_requester_cls, _mock_cooldown):
         requester = MagicMock()
         requester.timeout = 30
         requester.session = MagicMock()
@@ -286,6 +288,7 @@ class GozayaanConnectorTests(unittest.TestCase):
         self.assertTrue(out["ok"])
         self.assertEqual("AUH", out["rows"][0]["via_airports"])
 
+    @patch("modules.gozayaan._active_rate_limit_state", return_value=None)
     @patch("modules.gozayaan.Requester")
     @patch("modules.gozayaan._run_refresh_command")
     @patch("modules.gozayaan._resolve_active_kong_token")
@@ -294,6 +297,7 @@ class GozayaanConnectorTests(unittest.TestCase):
         mock_resolve_token,
         mock_refresh_command,
         mock_requester_cls,
+        _mock_cooldown,
     ):
         requester = MagicMock()
         requester.timeout = 30
