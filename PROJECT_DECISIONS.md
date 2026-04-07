@@ -990,3 +990,32 @@ Current observed route issue:
   completed offer snapshot has no collected rows for those route/date queries,
   not because the operational OW config omitted them
 - website visibility also remains gated by downstream warehouse publish time
+
+## Resume Recovery Follow-Up (2026-04-07)
+
+Checkpoint-resume work has now been added in code, but it still needs a real
+shutdown test before it can be treated as fully validated production behavior.
+
+Current implementation state:
+
+- `run_all.py` now writes per-airline per-cycle checkpoint files under
+  `output/reports/`
+- completed query scopes are remembered and should be skipped on restart for the
+  same `cycle_id`
+- `run_pipeline.py` now accepts and forwards `--cycle-id`
+- `tools/recover_interrupted_accumulation.py` now reuses the prior `cycle_id`
+  when restarting a stale/interrupted run
+
+Still pending:
+
+- perform one controlled interruption test:
+  - start a real operational cycle
+  - stop it mid-run
+  - relaunch through the guarded wrapper
+  - verify that completed airline queries are skipped and the cycle continues
+    from checkpointed progress instead of restarting from zero
+
+Until that validation is completed, treat resume-after-shutdown as:
+
+- improved and likely usable
+- but not yet formally verified end-to-end
