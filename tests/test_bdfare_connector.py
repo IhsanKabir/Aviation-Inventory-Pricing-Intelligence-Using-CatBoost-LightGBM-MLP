@@ -94,7 +94,7 @@ class BdfareConnectorTests(unittest.TestCase):
             ],
         }
 
-        def _post_side_effect(url, json=None, headers=None, timeout=None):  # noqa: ARG001
+        def _post_side_effect(url, json_payload=None, headers=None, timeout=None, **kwargs):  # noqa: ARG001
             if url.endswith("/AirSearch"):
                 return _DummyResp(200, airsearch_body)
             if "/GetAirSearch?requestId=rid-123" in url:
@@ -103,7 +103,7 @@ class BdfareConnectorTests(unittest.TestCase):
                 return _DummyResp(200, {"requestId": "rid-123", "resultCompleted": True})
             return _DummyResp(500, {"error": "unexpected url"})
 
-        requester.session.post.side_effect = _post_side_effect
+        requester.post_raw.side_effect = _post_side_effect
 
         out = fetch_flights_for_airline(
             airline_code="BS",
@@ -172,7 +172,7 @@ class BdfareConnectorTests(unittest.TestCase):
             ],
         }
 
-        def _post_side_effect(url, json=None, headers=None, timeout=None):  # noqa: ARG001
+        def _post_side_effect(url, json_payload=None, headers=None, timeout=None, **kwargs):  # noqa: ARG001
             if url.endswith("/AirSearch"):
                 return _DummyResp(200, airsearch_body)
             if "/GetAirSearch?requestId=rid-via" in url:
@@ -181,7 +181,7 @@ class BdfareConnectorTests(unittest.TestCase):
                 return _DummyResp(200, {"requestId": "rid-via", "resultCompleted": True})
             return _DummyResp(500, {"error": "unexpected url"})
 
-        requester.session.post.side_effect = _post_side_effect
+        requester.post_raw.side_effect = _post_side_effect
 
         out = fetch_flights_for_airline(
             airline_code="BS",
