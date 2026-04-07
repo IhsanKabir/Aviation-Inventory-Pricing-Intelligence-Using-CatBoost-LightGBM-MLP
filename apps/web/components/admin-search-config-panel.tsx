@@ -1,8 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
-import type { AdminHolidayEntry, AdminSearchConfig } from "@/lib/search-config";
+import type {
+  AdminHolidayEntry,
+  AdminRouteProfileEntry,
+  AdminSearchConfig,
+  AdminTripProfileEntry,
+} from "@/lib/search-config";
 
 function emptyHoliday(): AdminHolidayEntry {
   return {
@@ -21,6 +26,10 @@ function summarizeList(values: string[]) {
   return values.join(", ");
 }
 
+function toggleValue(values: string[], item: string) {
+  return values.includes(item) ? values.filter((value) => value !== item) : [...values, item];
+}
+
 export function AdminSearchConfigPanel({
   initialConfig,
 }: {
@@ -29,7 +38,30 @@ export function AdminSearchConfigPanel({
   const [config, setConfig] = useState(initialConfig);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedRouteKey, setSelectedRouteKey] = useState(initialConfig.routeProfiles[0]?.key || "");
+  const [selectedTripProfileKey, setSelectedTripProfileKey] = useState(initialConfig.tripProfiles[0]?.key || "");
+  const [routeFilter, setRouteFilter] = useState("");
   const [isPending, startTransition] = useTransition();
+
+  const filteredRoutes = useMemo(() => {
+    const needle = routeFilter.trim().toLowerCase();
+    if (!needle) {
+      return config.routeProfiles;
+    }
+    return config.routeProfiles.filter((item) =>
+      `${item.airline} ${item.routeCode}`.toLowerCase().includes(needle),
+    );
+  }, [config.routeProfiles, routeFilter]);
+
+  const selectedRoute = useMemo(
+    () => filteredRoutes.find((item) => item.key === selectedRouteKey) || config.routeProfiles.find((item) => item.key === selectedRouteKey) || null,
+    [config.routeProfiles, filteredRoutes, selectedRouteKey],
+  );
+
+  const selectedTripProfile = useMemo(
+    () => config.tripProfiles.find((item) => item.key === selectedTripProfileKey) || null,
+    [config.tripProfiles, selectedTripProfileKey],
+  );
 
   async function refreshConfig() {
     const response = await fetch("/api/admin/search-config", { cache: "no-store" });
@@ -38,6 +70,12 @@ export function AdminSearchConfigPanel({
       throw new Error(payload?.detail || "Unable to refresh search configuration.");
     }
     setConfig(payload);
+    if (!payload.routeProfiles.some((item) => item.key === selectedRouteKey)) {
+      setSelectedRouteKey(payload.routeProfiles[0]?.key || "");
+    }
+    if (!payload.tripProfiles.some((item) => item.key === selectedTripProfileKey)) {
+      setSelectedTripProfileKey(payload.tripProfiles[0]?.key || "");
+    }
   }
 
   async function saveConfig() {
@@ -55,7 +93,7 @@ export function AdminSearchConfigPanel({
       throw new Error(payload?.detail || "Unable to save search configuration.");
     }
     setConfig(payload);
-    setMessage("Search configuration saved. The next run will use these local file settings.");
+    setMessage("Search configuration saved. The next local run will use these file settings.");
   }
 
   function updateHoliday(index: number, nextValue: Partial<AdminHolidayEntry>) {
@@ -74,6 +112,20 @@ export function AdminSearchConfigPanel({
     }));
   }
 
+  function updateTripProfile(key: string, updater: (profile: AdminTripProfileEntry) => AdminTripProfileEntry) {
+    setConfig((current) => ({
+      ...current,
+      tripProfiles: current.tripProfiles.map((item) => (item.key === key ? updater(item) : item)),
+    }));
+  }
+
+  function updateRouteProfile(key: string, updater: (profile: AdminRouteProfileEntry) => AdminRouteProfileEntry) {
+    setConfig((current) => ({
+      ...current,
+      routeProfiles: current.routeProfiles.map((item) => (item.key === key ? updater(item) : item)),
+    }));
+  }
+
   return (
     <div className="stack">
       <div className="status-banner">
@@ -84,7 +136,7 @@ export function AdminSearchConfigPanel({
         <section className="card panel admin-config-card">
           <h3>Run schedule</h3>
           <div className="panel-copy">
-            Choose how often the scraper should run and which outbound dates are searched by default.
+            These settings control the local scheduler plan. The start times below are the anchor times used when autorun tasks are installed or reinstalled.
           </div>
 
           <div className="field-grid three-up">
@@ -132,6 +184,71 @@ export function AdminSearchConfigPanel({
                   }))
                 }
               />
+            </label>
+          </div>
+
+          <div className="field-grid three-up">
+            <label className="field">
+              <span>Ingestion start time</span>
+              <input
+                type="time"
+                value={config.schedule.ingestionStartTime}
+                onChange={(event) =>
+                  setConfig((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, ingestionStartTime: event.target.value },
+                  }))
+                }
+              />
+            </label>
+
+            <label className="field">
+              <span>Training enrichment start</span>
+              <input
+                type="time"
+                value={config.schedule.trainingEnrichmentStartTime}
+                onChange={(event) =>
+                  setConfig((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, trainingEnrichmentStartTime: event.target.value },
+                  }))
+                }
+              />
+            </label>
+
+            <label className="field">
+              <span>Training deep start</span>
+              <input
+                type="time"
+                value={config.schedule.trainingDeepStartTime}
+                onChange={(event) =>
+                  setConfig((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, trainingDeepStartTime: event.target.value },
+                  }))
+                }
+              />
+            </label>
+          </div>
+
+          <div className="field-grid three-up">
+            <label className="field">
+              <span>Training deep weekday</span>
+              <select
+                value={config.schedule.trainingDeepDayOfWeek}
+                onChange={(event) =>
+                  setConfig((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, trainingDeepDayOfWeek: event.target.value },
+                  }))
+                }
+              >
+                {["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((day) => (
+                  <option key={day} value={day}>
+                    {day}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
 
@@ -342,35 +459,12 @@ export function AdminSearchConfigPanel({
         <div className="admin-holiday-list">
           {config.holidays.map((holiday, index) => (
             <div className="admin-holiday-row" key={`${holiday.date}-${holiday.name}-${index}`}>
-              <input
-                type="date"
-                value={holiday.date}
-                onChange={(event) => updateHoliday(index, { date: event.target.value })}
-              />
-              <input
-                type="text"
-                placeholder="Holiday name"
-                value={holiday.name}
-                onChange={(event) => updateHoliday(index, { name: event.target.value })}
-              />
-              <input
-                type="text"
-                placeholder="Type"
-                value={holiday.type}
-                onChange={(event) => updateHoliday(index, { type: event.target.value })}
-              />
-              <input
-                type="text"
-                placeholder="Country"
-                value={holiday.country}
-                onChange={(event) => updateHoliday(index, { country: event.target.value })}
-              />
+              <input type="date" value={holiday.date} onChange={(event) => updateHoliday(index, { date: event.target.value })} />
+              <input type="text" placeholder="Holiday name" value={holiday.name} onChange={(event) => updateHoliday(index, { name: event.target.value })} />
+              <input type="text" placeholder="Type" value={holiday.type} onChange={(event) => updateHoliday(index, { type: event.target.value })} />
+              <input type="text" placeholder="Country" value={holiday.country} onChange={(event) => updateHoliday(index, { country: event.target.value })} />
               <label className="holiday-toggle">
-                <input
-                  type="checkbox"
-                  checked={holiday.highDemand}
-                  onChange={(event) => updateHoliday(index, { highDemand: event.target.checked })}
-                />
+                <input type="checkbox" checked={holiday.highDemand} onChange={(event) => updateHoliday(index, { highDemand: event.target.checked })} />
                 <span>High demand</span>
               </label>
               <button className="button-link ghost" type="button" onClick={() => removeHoliday(index)}>
@@ -379,6 +473,160 @@ export function AdminSearchConfigPanel({
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="card panel admin-config-card">
+        <h3>Round-trip and trip profile setup</h3>
+        <div className="panel-copy">
+          Choose a profile to adjust its trip type, outbound offsets, and return offsets. Return offsets are the core round-trip search setup.
+        </div>
+
+        <div className="field-grid three-up">
+          <label className="field">
+            <span>Trip profile</span>
+            <select value={selectedTripProfileKey} onChange={(event) => setSelectedTripProfileKey(event.target.value)}>
+              {config.tripProfiles.map((item) => (
+                <option key={item.key} value={item.key}>
+                  {item.key}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {selectedTripProfile ? (
+          <div className="admin-route-editor">
+            <div className="field-grid three-up">
+              <label className="field">
+                <span>Description</span>
+                <input
+                  type="text"
+                  value={selectedTripProfile.description}
+                  onChange={(event) =>
+                    updateTripProfile(selectedTripProfile.key, (current) => ({
+                      ...current,
+                      description: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>Trip type</span>
+                <select
+                  value={selectedTripProfile.tripType}
+                  onChange={(event) =>
+                    updateTripProfile(selectedTripProfile.key, (current) => ({
+                      ...current,
+                      tripType: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="OW">One-way</option>
+                  <option value="RT">Round-trip</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>Outbound offsets</span>
+                <input
+                  type="text"
+                  placeholder="0, 3, 5, 15, 30"
+                  value={selectedTripProfile.dayOffsets}
+                  onChange={(event) =>
+                    updateTripProfile(selectedTripProfile.key, (current) => ({
+                      ...current,
+                      dayOffsets: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+            </div>
+            <label className="field">
+              <span>Return offsets</span>
+              <input
+                type="text"
+                placeholder="3, 5, 7, 10, 14"
+                value={selectedTripProfile.returnDateOffsets}
+                onChange={(event) =>
+                  updateTripProfile(selectedTripProfile.key, (current) => ({
+                    ...current,
+                    returnDateOffsets: event.target.value,
+                  }))
+                }
+              />
+            </label>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="card panel admin-config-card">
+        <h3>Route-wise setup</h3>
+        <div className="panel-copy">
+          Pick a specific airline route and decide which trip profiles are available, which run in live collection, and which are training-only or deep-only.
+        </div>
+
+        <div className="field-grid three-up">
+          <label className="field">
+            <span>Find route</span>
+            <input type="text" placeholder="DAC-BKK or BG" value={routeFilter} onChange={(event) => setRouteFilter(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Selected route</span>
+            <select value={selectedRouteKey} onChange={(event) => setSelectedRouteKey(event.target.value)}>
+              {filteredRoutes.map((item) => (
+                <option key={item.key} value={item.key}>
+                  {item.airline} | {item.routeCode}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {selectedRoute ? (
+          <div className="admin-route-editor">
+            <div className="admin-config-readables">
+              {[
+                ["Profiles available on this route", "marketTripProfiles"] as const,
+                ["Run in operational mode", "activeMarketTripProfiles"] as const,
+                ["Extra for training mode", "trainingMarketTripProfiles"] as const,
+                ["Extra for deep mode", "deepMarketTripProfiles"] as const,
+              ].map(([label, field]) => (
+                <div key={field}>
+                  <strong>{label}</strong>
+                  <div className="admin-profile-chip-grid">
+                    {config.tripProfiles.map((profile) => {
+                      const active = selectedRoute[field].includes(profile.key);
+                      return (
+                        <button
+                          key={`${field}-${profile.key}`}
+                          className="chip"
+                          data-active={active}
+                          type="button"
+                          onClick={() =>
+                            updateRouteProfile(selectedRoute.key, (current) => {
+                              const nextValues = toggleValue(current[field], profile.key);
+                              const nextProfile = { ...current, [field]: nextValues };
+                              if (field === "activeMarketTripProfiles" && nextValues.includes(profile.key)) {
+                                nextProfile.marketTripProfiles = Array.from(
+                                  new Set([...nextProfile.marketTripProfiles, profile.key]),
+                                );
+                              }
+                              if (field === "marketTripProfiles" && !nextValues.includes(profile.key)) {
+                                nextProfile.activeMarketTripProfiles = nextProfile.activeMarketTripProfiles.filter((item) => item !== profile.key);
+                              }
+                              return nextProfile;
+                            })
+                          }
+                        >
+                          {profile.key}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="card panel admin-config-card">

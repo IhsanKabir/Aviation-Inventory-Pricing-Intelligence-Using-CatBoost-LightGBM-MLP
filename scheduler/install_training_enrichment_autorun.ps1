@@ -1,7 +1,7 @@
 param(
     [string]$TaskName = "AirlineIntel_TrainingEnrichment",
-    [string]$StartTime = "01:30",
-    [int]$RepeatMinutes = 1440,
+    [string]$StartTime = "",
+    [int]$RepeatMinutes = 0,
     [switch]$WhatIf
 )
 
@@ -9,11 +9,9 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $batchPath = Join-Path $repoRoot "scheduler\run_training_enrichment_once.bat"
+$schedulePath = Join-Path $repoRoot "config\schedule.json"
 if (-not (Test-Path $batchPath)) {
     throw "Training enrichment wrapper not found: $batchPath"
-}
-if ($RepeatMinutes -lt 60) {
-    throw "RepeatMinutes must be >= 60"
 }
 
 function Parse-Time {
@@ -23,6 +21,22 @@ function Parse-Time {
     }
     catch {
         throw "Invalid time format '$Value'. Expected HH:mm."
+    }
+}
+
+function Load-ScheduleDefaults {
+    if (-not (Test-Path $schedulePath)) {
+        return @{}
+    }
+    try {
+        $schedule = Get-Content $schedulePath -Raw | ConvertFrom-Json
+    }
+    catch {
+        return @{}
+    }
+    return @{
+        StartTime = [string]($schedule.task_windows.training_enrichment.start_time)
+        RepeatMinutes = 1440
     }
 }
 
@@ -70,6 +84,16 @@ function Show-TaskSummary {
     }
 }
 
+$scheduleDefaults = Load-ScheduleDefaults
+if (-not $StartTime) {
+    $StartTime = if ($scheduleDefaults.StartTime) { $scheduleDefaults.StartTime } else { "01:30" }
+}
+if ($RepeatMinutes -le 0) {
+    $RepeatMinutes = if ($scheduleDefaults.RepeatMinutes -ge 60) { $scheduleDefaults.RepeatMinutes } else { 1440 }
+}
+if ($RepeatMinutes -lt 60) {
+    throw "RepeatMinutes must be >= 60"
+}
 $startAt = Parse-Time $StartTime
 Register-TrainingTask -Name $TaskName -TargetBatch $batchPath -At $startAt
 Show-TaskSummary -Name $TaskName

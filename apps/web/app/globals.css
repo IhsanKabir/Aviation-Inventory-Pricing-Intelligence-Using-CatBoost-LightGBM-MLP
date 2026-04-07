@@ -1614,6 +1614,22 @@ a {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.admin-route-editor {
+  display: grid;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 35, 59, 0.08);
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.admin-profile-chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .admin-json-textarea {
   min-height: 320px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

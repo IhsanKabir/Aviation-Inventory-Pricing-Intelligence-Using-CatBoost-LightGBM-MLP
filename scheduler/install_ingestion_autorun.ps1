@@ -1,8 +1,8 @@
 param(
     [string]$TaskName = "AirlineIntel_Ingestion4H",
     [string]$OnLogonTaskName = "AirlineIntel_IngestionOnLogon",
-    [string]$StartTime = "00:05",
-    [int]$RepeatMinutes = 360,
+    [string]$StartTime = "",
+    [int]$RepeatMinutes = 0,
     [switch]$SkipStartupShortcut,
     [switch]$SkipOnLogonTask,
     [switch]$WhatIf
@@ -12,11 +12,9 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $batchPath = Join-Path $repoRoot "scheduler\run_ingestion_4h_once.bat"
+$schedulePath = Join-Path $repoRoot "config\schedule.json"
 if (-not (Test-Path $batchPath)) {
     throw "Ingestion wrapper not found: $batchPath"
-}
-if ($RepeatMinutes -lt 60) {
-    throw "RepeatMinutes must be >= 60"
 }
 
 function Parse-Time {
@@ -26,6 +24,29 @@ function Parse-Time {
     }
     catch {
         throw "Invalid time format '$Value'. Expected HH:mm."
+    }
+}
+
+function Load-ScheduleDefaults {
+    if (-not (Test-Path $schedulePath)) {
+        return @{}
+    }
+    try {
+        $schedule = Get-Content $schedulePath -Raw | ConvertFrom-Json
+    }
+    catch {
+        return @{}
+    }
+    $repeatMinutes = 360
+    if ($schedule.task_windows.ingestion.repeat_minutes) {
+        $repeatMinutes = [int]$schedule.task_windows.ingestion.repeat_minutes
+    }
+    elseif ($schedule.auto_run_interval_hours) {
+        $repeatMinutes = [int]$schedule.auto_run_interval_hours * 60
+    }
+    return @{
+        StartTime = [string]($schedule.task_windows.ingestion.start_time)
+        RepeatMinutes = $repeatMinutes
     }
 }
 
@@ -148,6 +169,16 @@ function Show-TaskSummary {
     }
 }
 
+$scheduleDefaults = Load-ScheduleDefaults
+if (-not $StartTime) {
+    $StartTime = if ($scheduleDefaults.StartTime) { $scheduleDefaults.StartTime } else { "00:05" }
+}
+if ($RepeatMinutes -le 0) {
+    $RepeatMinutes = if ($scheduleDefaults.RepeatMinutes -ge 60) { $scheduleDefaults.RepeatMinutes } else { 360 }
+}
+if ($RepeatMinutes -lt 60) {
+    throw "RepeatMinutes must be >= 60"
+}
 $startAt = Parse-Time $StartTime
 
 Register-IngestionTask -Name $TaskName -TargetBatch $batchPath -At $startAt

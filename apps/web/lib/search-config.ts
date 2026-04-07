@@ -10,6 +10,7 @@ const PASSENGER_PATH = path.join(CONFIG_ROOT, "passenger.json");
 const OUTPUT_PATH = path.join(CONFIG_ROOT, "output.json");
 const HOLIDAY_PATH = path.join(CONFIG_ROOT, "holiday_calendar.json");
 const MARKET_PRIORS_PATH = path.join(CONFIG_ROOT, "market_priors.json");
+const ROUTE_TRIP_WINDOWS_PATH = path.join(CONFIG_ROOT, "route_trip_windows.json");
 
 export type AdminHolidayEntry = {
   date: string;
@@ -17,6 +18,24 @@ export type AdminHolidayEntry = {
   type: string;
   country: string;
   highDemand: boolean;
+};
+
+export type AdminTripProfileEntry = {
+  key: string;
+  description: string;
+  tripType: string;
+  dayOffsets: string;
+  returnDateOffsets: string;
+};
+
+export type AdminRouteProfileEntry = {
+  key: string;
+  airline: string;
+  routeCode: string;
+  marketTripProfiles: string[];
+  activeMarketTripProfiles: string[];
+  trainingMarketTripProfiles: string[];
+  deepMarketTripProfiles: string[];
 };
 
 export type AdminSearchConfig = {
@@ -27,6 +46,10 @@ export type AdminSearchConfig = {
     defaultDateStart: string;
     defaultDateEnd: string;
     defaultDateOffsets: string;
+    ingestionStartTime: string;
+    trainingEnrichmentStartTime: string;
+    trainingDeepStartTime: string;
+    trainingDeepDayOfWeek: string;
   };
   passengers: {
     adt: number;
@@ -53,6 +76,8 @@ export type AdminSearchConfig = {
     holidayReturnOffsets: number[];
     tripProfileCount: number;
   };
+  tripProfiles: AdminTripProfileEntry[];
+  routeProfiles: AdminRouteProfileEntry[];
   advanced: {
     marketPriorsJson: string;
   };
@@ -64,6 +89,8 @@ type SearchConfigUpdate = {
   passengers: AdminSearchConfig["passengers"];
   output: AdminSearchConfig["output"];
   holidays: AdminHolidayEntry[];
+  tripProfiles: AdminTripProfileEntry[];
+  routeProfiles: AdminRouteProfileEntry[];
   advanced: AdminSearchConfig["advanced"];
 };
 
@@ -143,14 +170,60 @@ function buildMarketSummary(payload: any): AdminSearchConfig["marketSummary"] {
   };
 }
 
+function buildTripProfiles(payload: any): AdminTripProfileEntry[] {
+  const tripProfiles = payload?.trip_date_profiles && typeof payload.trip_date_profiles === "object"
+    ? payload.trip_date_profiles
+    : {};
+  return Object.entries(tripProfiles)
+    .map(([key, value]) => {
+      const profile = value as any;
+      return {
+        key,
+        description: String(profile?.description || ""),
+        tripType: String(profile?.trip_type || "OW"),
+        dayOffsets: normalizeOffsetCsv(Array.isArray(profile?.day_offsets) ? profile.day_offsets.join(",") : ""),
+        returnDateOffsets: normalizeOffsetCsv(
+          Array.isArray(profile?.return_date_offsets) ? profile.return_date_offsets.join(",") : "",
+        ),
+      };
+    })
+    .sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function buildRouteProfiles(payload: any): AdminRouteProfileEntry[] {
+  const airlines = payload?.airlines && typeof payload.airlines === "object" ? payload.airlines : {};
+  const items: AdminRouteProfileEntry[] = [];
+  for (const [airline, airlineConfig] of Object.entries(airlines)) {
+    const routes = (airlineConfig as any)?.routes;
+    if (!routes || typeof routes !== "object") {
+      continue;
+    }
+    for (const [routeCode, routeConfig] of Object.entries(routes)) {
+      const route = routeConfig as any;
+      items.push({
+        key: `${String(airline).toUpperCase()}::${String(routeCode).toUpperCase()}`,
+        airline: String(airline).toUpperCase(),
+        routeCode: String(routeCode).toUpperCase(),
+        marketTripProfiles: Array.isArray(route?.market_trip_profiles) ? route.market_trip_profiles : [],
+        activeMarketTripProfiles: Array.isArray(route?.active_market_trip_profiles) ? route.active_market_trip_profiles : [],
+        trainingMarketTripProfiles: Array.isArray(route?.training_market_trip_profiles) ? route.training_market_trip_profiles : [],
+        deepMarketTripProfiles: Array.isArray(route?.deep_market_trip_profiles) ? route.deep_market_trip_profiles : [],
+      });
+    }
+  }
+  return items.sort((left, right) => `${left.airline}-${left.routeCode}`.localeCompare(`${right.airline}-${right.routeCode}`));
+}
+
 export async function readAdminSearchConfig(): Promise<AdminSearchConfig> {
-  const [schedule, passenger, output, holidayCalendar, marketPriors] = await Promise.all([
+  const [schedule, passenger, output, holidayCalendar, marketPriors, routeTripWindows] = await Promise.all([
     readJsonFile<any>(SCHEDULE_PATH),
     readJsonFile<any>(PASSENGER_PATH),
     readJsonFile<any>(OUTPUT_PATH),
     readJsonFile<any>(HOLIDAY_PATH),
     readJsonFile<any>(MARKET_PRIORS_PATH),
+    readJsonFile<any>(ROUTE_TRIP_WINDOWS_PATH),
   ]);
+  const taskWindows = schedule?.task_windows && typeof schedule.task_windows === "object" ? schedule.task_windows : {};
 
   return {
     schedule: {
@@ -164,6 +237,10 @@ export async function readAdminSearchConfig(): Promise<AdminSearchConfig> {
           ? schedule.auto_run_date_ranges.default.date_offsets.join(",")
           : schedule?.auto_run_date_ranges?.default?.date_offsets || "",
       ),
+      ingestionStartTime: String(taskWindows?.ingestion?.start_time || "00:05"),
+      trainingEnrichmentStartTime: String(taskWindows?.training_enrichment?.start_time || "01:30"),
+      trainingDeepStartTime: String(taskWindows?.training_deep?.start_time || "02:00"),
+      trainingDeepDayOfWeek: String(taskWindows?.training_deep?.day_of_week || "Sunday"),
     },
     passengers: {
       adt: asPositiveInt(passenger?.ADT, 1),
@@ -189,6 +266,8 @@ export async function readAdminSearchConfig(): Promise<AdminSearchConfig> {
         )
       : [],
     marketSummary: buildMarketSummary(marketPriors),
+    tripProfiles: buildTripProfiles(marketPriors),
+    routeProfiles: buildRouteProfiles(routeTripWindows),
     advanced: {
       marketPriorsJson: JSON.stringify(marketPriors, null, 2),
     },
@@ -198,11 +277,12 @@ export async function readAdminSearchConfig(): Promise<AdminSearchConfig> {
 }
 
 export async function writeAdminSearchConfig(update: SearchConfigUpdate): Promise<AdminSearchConfig> {
-  const [schedule, passenger, output, holidayCalendar] = await Promise.all([
+  const [schedule, passenger, output, holidayCalendar, routeTripWindows] = await Promise.all([
     readJsonFile<any>(SCHEDULE_PATH),
     readJsonFile<any>(PASSENGER_PATH),
     readJsonFile<any>(OUTPUT_PATH),
     readJsonFile<any>(HOLIDAY_PATH),
+    readJsonFile<any>(ROUTE_TRIP_WINDOWS_PATH),
   ]);
 
   let marketPriors: any;
@@ -223,6 +303,17 @@ export async function writeAdminSearchConfig(update: SearchConfigUpdate): Promis
   schedule.auto_run_date_ranges.default.date_start = String(update.schedule.defaultDateStart || "").trim() || null;
   schedule.auto_run_date_ranges.default.date_end = String(update.schedule.defaultDateEnd || "").trim() || null;
   schedule.auto_run_date_ranges.default.date_offsets = parseOffsetCsv(update.schedule.defaultDateOffsets);
+  schedule.task_windows = schedule.task_windows || {};
+  schedule.task_windows.ingestion = schedule.task_windows.ingestion || {};
+  schedule.task_windows.ingestion.start_time = String(update.schedule.ingestionStartTime || "00:05").trim() || "00:05";
+  schedule.task_windows.training_enrichment = schedule.task_windows.training_enrichment || {};
+  schedule.task_windows.training_enrichment.start_time =
+    String(update.schedule.trainingEnrichmentStartTime || "01:30").trim() || "01:30";
+  schedule.task_windows.training_deep = schedule.task_windows.training_deep || {};
+  schedule.task_windows.training_deep.start_time =
+    String(update.schedule.trainingDeepStartTime || "02:00").trim() || "02:00";
+  schedule.task_windows.training_deep.day_of_week =
+    String(update.schedule.trainingDeepDayOfWeek || "Sunday").trim() || "Sunday";
 
   passenger.ADT = Math.max(0, asPositiveInt(update.passengers.adt, 1));
   passenger.CHD = Math.max(0, asPositiveInt(update.passengers.chd, 0));
@@ -246,12 +337,44 @@ export async function writeAdminSearchConfig(update: SearchConfigUpdate): Promis
       high_demand: item.highDemand,
     }));
 
+  marketPriors.trip_date_profiles = marketPriors.trip_date_profiles || {};
+  for (const tripProfile of update.tripProfiles || []) {
+    const key = String(tripProfile?.key || "").trim();
+    if (!key || !marketPriors.trip_date_profiles[key] || typeof marketPriors.trip_date_profiles[key] !== "object") {
+      continue;
+    }
+    marketPriors.trip_date_profiles[key].description = String(tripProfile.description || "").trim();
+    marketPriors.trip_date_profiles[key].trip_type = String(tripProfile.tripType || "OW").trim() || "OW";
+    marketPriors.trip_date_profiles[key].day_offsets = parseOffsetCsv(tripProfile.dayOffsets || "");
+    marketPriors.trip_date_profiles[key].return_date_offsets = parseOffsetCsv(tripProfile.returnDateOffsets || "");
+  }
+
+  routeTripWindows.airlines = routeTripWindows.airlines || {};
+  for (const routeProfile of update.routeProfiles || []) {
+    const airline = String(routeProfile.airline || "").trim().toUpperCase();
+    const routeCode = String(routeProfile.routeCode || "").trim().toUpperCase();
+    if (!airline || !routeCode) {
+      continue;
+    }
+    const routeConfig = routeTripWindows?.airlines?.[airline]?.routes?.[routeCode];
+    if (!routeConfig || typeof routeConfig !== "object") {
+      continue;
+    }
+    routeConfig.market_trip_profiles = Array.from(
+      new Set([...(routeProfile.marketTripProfiles || []), ...(routeProfile.activeMarketTripProfiles || [])]),
+    );
+    routeConfig.active_market_trip_profiles = routeProfile.activeMarketTripProfiles || [];
+    routeConfig.training_market_trip_profiles = routeProfile.trainingMarketTripProfiles || [];
+    routeConfig.deep_market_trip_profiles = routeProfile.deepMarketTripProfiles || [];
+  }
+
   await Promise.all([
     writeJsonFile(SCHEDULE_PATH, schedule),
     writeJsonFile(PASSENGER_PATH, passenger),
     writeJsonFile(OUTPUT_PATH, output),
     writeJsonFile(HOLIDAY_PATH, holidayCalendar),
     writeJsonFile(MARKET_PRIORS_PATH, marketPriors),
+    writeJsonFile(ROUTE_TRIP_WINDOWS_PATH, routeTripWindows),
   ]);
 
   return readAdminSearchConfig();

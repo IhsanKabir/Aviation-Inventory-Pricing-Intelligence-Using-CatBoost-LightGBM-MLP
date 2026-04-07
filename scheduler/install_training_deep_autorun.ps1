@@ -1,6 +1,6 @@
 param(
     [string]$TaskName = "AirlineIntel_TrainingDeep",
-    [string]$StartTime = "02:00",
+    [string]$StartTime = "",
     [ValidateSet("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")]
     [string]$DayOfWeek = "Sunday",
     [switch]$WhatIf
@@ -10,6 +10,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $batchPath = Join-Path $repoRoot "scheduler\run_training_deep_once.bat"
+$schedulePath = Join-Path $repoRoot "config\schedule.json"
 if (-not (Test-Path $batchPath)) {
     throw "Deep training wrapper not found: $batchPath"
 }
@@ -21,6 +22,22 @@ function Parse-Time {
     }
     catch {
         throw "Invalid time format '$Value'. Expected HH:mm."
+    }
+}
+
+function Load-ScheduleDefaults {
+    if (-not (Test-Path $schedulePath)) {
+        return @{}
+    }
+    try {
+        $schedule = Get-Content $schedulePath -Raw | ConvertFrom-Json
+    }
+    catch {
+        return @{}
+    }
+    return @{
+        StartTime = [string]($schedule.task_windows.training_deep.start_time)
+        DayOfWeek = [string]($schedule.task_windows.training_deep.day_of_week)
     }
 }
 
@@ -63,6 +80,13 @@ function Show-TaskSummary {
     }
 }
 
+$scheduleDefaults = Load-ScheduleDefaults
+if (-not $StartTime) {
+    $StartTime = if ($scheduleDefaults.StartTime) { $scheduleDefaults.StartTime } else { "02:00" }
+}
+if ($DayOfWeek -eq "Sunday" -and $scheduleDefaults.DayOfWeek) {
+    $DayOfWeek = $scheduleDefaults.DayOfWeek
+}
 $startAt = Parse-Time $StartTime
 Register-DeepTask -Name $TaskName -TargetBatch $batchPath -At $startAt -Weekday $DayOfWeek
 Show-TaskSummary -Name $TaskName
