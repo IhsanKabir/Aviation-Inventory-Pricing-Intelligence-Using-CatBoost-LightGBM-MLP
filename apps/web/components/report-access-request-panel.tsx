@@ -74,10 +74,10 @@ export function ReportAccessRequestPanel({
   const [isPending, startTransition] = useTransition();
   const [requesterName, setRequesterName] = useState("");
   const [requesterContact, setRequesterContact] = useState("");
-  const [requestedStartDate, setRequestedStartDate] = useState("");
-  const [requestedEndDate, setRequestedEndDate] = useState("");
   const [notes, setNotes] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const requestedStartDate = scope.startDate || undefined;
+  const requestedEndDate = scope.endDate || scope.startDate || undefined;
 
   const scopeSummary = useMemo(() => {
     const lines: string[] = [];
@@ -109,10 +109,6 @@ export function ReportAccessRequestPanel({
   }, [scope]);
 
   async function submitRequest() {
-    if (!requestedStartDate || !requestedEndDate) {
-      setSubmitError("Start and end dates are required before the request can be submitted.");
-      return;
-    }
     setSubmitError(null);
     try {
       const response = await fetch(`${getApiBaseUrl()}/api/v1/access-requests`, {
@@ -172,11 +168,14 @@ export function ReportAccessRequestPanel({
           Submit the route and travel window first. After approval, this page will unlock the route view.
         </div>
         <div className="table-list" style={{ marginTop: "0.9rem" }}>
-          {scopeSummary.map((item) => (
+      {scopeSummary.map((item) => (
             <div className="table-row" key={item}>
               <strong>{item}</strong>
             </div>
           ))}
+        </div>
+        <div className="mono" style={{ marginTop: "0.8rem" }}>
+          Request window: {requestedStartDate ?? "any"} to {requestedEndDate ?? "any"}
         </div>
       </div>
 
@@ -215,17 +214,6 @@ export function ReportAccessRequestPanel({
             <label className="field">
               <span>Contact</span>
               <input onChange={(event) => setRequesterContact(event.target.value)} placeholder="Email or phone" type="text" value={requesterContact} />
-            </label>
-          </div>
-
-          <div className="field-grid">
-            <label className="field">
-              <span>Requested start date</span>
-              <input onChange={(event) => setRequestedStartDate(event.target.value)} type="date" value={requestedStartDate} />
-            </label>
-            <label className="field">
-              <span>Requested end date</span>
-              <input onChange={(event) => setRequestedEndDate(event.target.value)} type="date" value={requestedEndDate} />
             </label>
           </div>
 
