@@ -2897,11 +2897,11 @@ class OutputWriter:
                 row += span
 
             if is_round_trip_sheet and rt_merge_groups:
+                # Keep each inbound option visible as its own row while grouping
+                # the left-side outbound context across all matching return options.
                 merge_fields = [
                     (0, "outbound_date"),
                     (1, "outbound_weekday"),
-                    (2, "inbound_date"),
-                    (3, "inbound_weekday"),
                 ]
                 for col_idx, field_name in merge_fields:
                     start_idx = 0
