@@ -204,7 +204,7 @@ def _build_payload(
 
 
 def _post_json(req: Requester, url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> tuple[int, Any]:
-    response = req.session.post(url, json=payload, headers=headers, timeout=req.timeout)
+    response = req.post_raw(url, json_payload=payload, headers=headers)
     try:
         body: Any = response.json()
     except Exception:

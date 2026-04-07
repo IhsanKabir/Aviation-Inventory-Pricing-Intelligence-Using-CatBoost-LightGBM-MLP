@@ -55,6 +55,7 @@ ENV_INIT_MAX_ATTEMPTS = "SHARETRIP_INIT_MAX_ATTEMPTS"
 ENV_INIT_RETRY_SLEEP_SEC = "SHARETRIP_INIT_RETRY_SLEEP_SEC"
 ENV_SOURCE_POLICY = "SHARETRIP_SOURCE_POLICY"
 ENV_BDFARE_AIRLINES = "SHARETRIP_BDFARE_AIRLINES"
+ENV_SOURCE_OVERRIDES = "SHARETRIP_SOURCE_OVERRIDES"
 
 
 def _safe_int(v: Any, default: Optional[int] = None) -> Optional[int]:
@@ -123,7 +124,29 @@ def _source_attempt_summary(source: str, result: Any) -> Dict[str, Any]:
     }
 
 
-def _sharetrip_source_policy() -> str:
+def _sharetrip_source_overrides() -> Dict[str, str]:
+    raw = str(os.getenv(ENV_SOURCE_OVERRIDES, "") or "").strip()
+    if not raw:
+        return {}
+    overrides: Dict[str, str] = {}
+    for part in raw.split(","):
+        piece = str(part or "").strip()
+        if not piece or "=" not in piece:
+            continue
+        airline, policy = piece.split("=", 1)
+        airline_code = str(airline or "").upper().strip()
+        policy_name = str(policy or "").strip().lower()
+        if airline_code and policy_name:
+            overrides[airline_code] = policy_name
+    return overrides
+
+
+def _sharetrip_source_policy(airline_code: Optional[str] = None) -> str:
+    airline = str(airline_code or "").upper().strip()
+    if airline:
+        override = _sharetrip_source_overrides().get(airline)
+        if override:
+            return override
     return str(os.getenv(ENV_SOURCE_POLICY, "sharetrip_only") or "sharetrip_only").strip().lower()
 
 
@@ -219,7 +242,11 @@ def build_initialize_params(
 def _post_search_page(req: Requester, search_id: str, page: int, limit: int, headers: Dict[str, str]) -> tuple[int, Any]:
     url = SEARCH_URL_TMPL.format(search_id=search_id)
     payload = {"page": page, "limit": limit}
-    response = req.session.post(url, json=payload, headers={**headers, "Content-Type": "application/json"}, timeout=req.timeout)
+    response = req.post_raw(
+        url,
+        json_payload=payload,
+        headers={**headers, "Content-Type": "application/json"},
+    )
     try:
         body: Any = response.json()
     except Exception:
@@ -686,7 +713,7 @@ def fetch_flights_for_airline(
     cookies_path: Optional[str] = None,
     proxy_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    policy = _sharetrip_source_policy()
+    policy = _sharetrip_source_policy(airline_code)
     airline = str(airline_code or "").upper().strip()
     can_try_bdfare = _bdfare_airline_scope_allows(airline)
     attempts: List[Dict[str, Any]] = []

@@ -12,6 +12,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+import time
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FRAGILE_MODULES = {"sharetrip", "airastra", "bs", "indigo"}
@@ -147,11 +148,39 @@ def _run_batch(airlines: list[dict], args, cycle_id: str, *, max_workers: int, c
             cmd = _build_cmd(args, code, cycle_id=cycle_id)
             fut_map[ex.submit(_run_one, cmd, code)] = code
             if cooldown_sec > 0 and idx < len(airlines) - 1:
-                import time
-
                 time.sleep(cooldown_sec)
         for fut in as_completed(fut_map):
             results.append(fut.result())
+    return results
+
+
+def _run_batches_concurrently(robust_airlines: list[dict], fragile_airlines: list[dict], args, cycle_id: str):
+    results = []
+    batch_futures = {}
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        if robust_airlines:
+            batch_futures[
+                ex.submit(
+                    _run_batch,
+                    robust_airlines,
+                    args,
+                    cycle_id,
+                    max_workers=args.max_workers,
+                )
+            ] = "robust"
+        if fragile_airlines:
+            batch_futures[
+                ex.submit(
+                    _run_batch,
+                    fragile_airlines,
+                    args,
+                    cycle_id,
+                    max_workers=args.fragile_max_workers,
+                    cooldown_sec=max(0.0, float(args.fragile_cooldown_sec or 0.0)),
+                )
+            ] = "fragile"
+        for fut in as_completed(batch_futures):
+            results.extend(fut.result())
     return results
 
 
@@ -171,17 +200,7 @@ def main():
     robust_airlines = [a for a in airlines if a.get("module") not in FRAGILE_MODULES]
     fragile_airlines = [a for a in airlines if a.get("module") in FRAGILE_MODULES]
 
-    results = []
-    results.extend(_run_batch(robust_airlines, args, cycle_id, max_workers=args.max_workers))
-    results.extend(
-        _run_batch(
-            fragile_airlines,
-            args,
-            cycle_id,
-            max_workers=args.fragile_max_workers,
-            cooldown_sec=max(0.0, float(args.fragile_cooldown_sec or 0.0)),
-        )
-    )
+    results = _run_batches_concurrently(robust_airlines, fragile_airlines, args, cycle_id)
 
     results = sorted(results, key=lambda x: x["airline"])
     failed = [r for r in results if r["rc"] != 0]
@@ -194,6 +213,7 @@ def main():
         "cycle_id": cycle_id,
         "airline_count": len(airlines),
         "max_workers": args.max_workers,
+        "robust_airline_count": len(robust_airlines),
         "fragile_max_workers": args.fragile_max_workers,
         "fragile_airline_count": len(fragile_airlines),
         "failed_count": len(failed),

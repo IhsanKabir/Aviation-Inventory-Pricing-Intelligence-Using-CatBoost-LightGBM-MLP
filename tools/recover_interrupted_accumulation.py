@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 
-ACTIVE_PIPELINE_MARKERS = ("run_pipeline.py", "run_all.py", "generate_reports.py")
+ACTIVE_PIPELINE_MARKERS = ("run_pipeline.py", "run_all.py", "generate_reports.py", "parallel_airline_runner.py")
 
 
 def parse_args():
@@ -399,6 +399,27 @@ def _reconcile_stale_running_heartbeat(status_file: Path, heartbeat: dict, stale
     payload["stale_reconciled_at_utc"] = now_iso
     _write_json(status_file, payload)
     return payload
+
+
+def _resume_cycle_id_from_heartbeat(heartbeat: dict) -> str | None:
+    if not isinstance(heartbeat, dict):
+        return None
+    raw = str(heartbeat.get("cycle_id") or heartbeat.get("accumulation_run_id") or heartbeat.get("scrape_id") or "").strip()
+    return raw or None
+
+
+def _command_has_flag(command: list[str], flag: str) -> bool:
+    return any(str(part or "").strip() == flag for part in command or [])
+
+
+def _with_resume_cycle_id(command: list[str], heartbeat: dict) -> list[str]:
+    cycle_id = _resume_cycle_id_from_heartbeat(heartbeat)
+    if not cycle_id or _command_has_flag(command, "--cycle-id"):
+        return list(command or [])
+    updated = list(command or [])
+    if any("run_pipeline.py" in str(part or "") for part in updated) or any("run_all.py" in str(part or "") for part in updated):
+        updated.extend(["--cycle-id", cycle_id])
+    return updated
 
 
 def _list_relevant_processes() -> list[dict]:
@@ -1424,6 +1445,8 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
     command = list(args.command or [])
     if command and command[0] == "--":
         command = command[1:]
+    if _heartbeat_state(heartbeat) in {"running", "interrupted"}:
+        command = _with_resume_cycle_id(command, heartbeat)
     if not command:
         payload = _build_status(
             mode="guarded-run",

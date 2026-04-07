@@ -41,13 +41,21 @@ class Requester:
         backoff_factor: float = 1.0,
     ):
         self.session = requests.Session()
+        # Avoid inheriting machine-wide proxy settings that can break
+        # scraper traffic independently from browser access.
+        self.session.trust_env = False
         self.timeout = timeout
         self.cookies_path = Path(cookies_path) if cookies_path else None
         self.proxy_url = proxy_url or None
 
-        # Configure retry strategy
+        # Retry status responses like 429/5xx, but fail fast on connect-level
+        # socket errors so blocked hosts do not stall every query lane.
         retry_strategy = Retry(
-            total=max_retries,
+            total=None,
+            connect=0,
+            read=0,
+            status=max_retries,
+            other=0,
             backoff_factor=backoff_factor,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"],
@@ -57,8 +65,8 @@ class Requester:
         # Mount adapters with retry logic
         adapter = HTTPAdapter(
             max_retries=retry_strategy,
-            pool_connections=10,
-            pool_maxsize=20,
+            pool_connections=4,
+            pool_maxsize=8,
         )
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
@@ -133,6 +141,13 @@ class Requester:
             except Exception:
                 body = resp.text
             return ok, body, resp.status_code
+        except Exception as e:
+            self._raise_requester_error(e)
+
+    def post_raw(self, url: str, json_payload: dict, headers: dict | None = None, **kwargs):
+        try:
+            timeout = kwargs.pop("timeout", self.timeout)
+            return self.session.post(url, json=json_payload, headers=headers, timeout=timeout, **kwargs)
         except Exception as e:
             self._raise_requester_error(e)
 

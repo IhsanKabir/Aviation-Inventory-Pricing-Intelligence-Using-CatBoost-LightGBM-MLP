@@ -65,6 +65,10 @@ def parse_args():
         default=120.0,
         help="Soft timeout per search query passed to run_all (default: 120s).",
     )
+    parser.add_argument(
+        "--cycle-id",
+        help="Optional shared cycle UUID. Reuse this to resume an interrupted accumulation cycle.",
+    )
     parser.add_argument("--profile-runtime", action="store_true", help="Enable runtime profiling output from run_all")
     parser.add_argument(
         "--skip-scrape",
@@ -965,6 +969,7 @@ def build_scrape_cmd(args):
         _add_arg(cmd, "--dates-file", args.dates_file)
         _add_arg(cmd, "--schedule-file", args.schedule_file)
         _add_arg(cmd, "--trip-plan-mode", args.trip_plan_mode)
+        _add_arg(cmd, "--cycle-id", args.cycle_id)
         _add_arg(cmd, "--cabin", args.cabin)
         _add_arg(cmd, "--adt", args.adt)
         _add_arg(cmd, "--chd", args.chd)
@@ -993,6 +998,7 @@ def build_scrape_cmd(args):
     _add_arg(cmd, "--dates-file", args.dates_file)
     _add_arg(cmd, "--schedule-file", args.schedule_file)
     _add_arg(cmd, "--trip-plan-mode", args.trip_plan_mode)
+    _add_arg(cmd, "--cycle-id", args.cycle_id)
     _add_arg(cmd, "--cabin", args.cabin)
     _add_arg(cmd, "--adt", args.adt)
     _add_arg(cmd, "--chd", args.chd)

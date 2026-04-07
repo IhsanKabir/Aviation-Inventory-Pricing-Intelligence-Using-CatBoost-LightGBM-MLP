@@ -1285,6 +1285,68 @@ def _write_run_status(status: Dict[str, Any], *, latest_path: Path, run_path: Pa
         LOG.debug("Failed to write run heartbeat/status file: %s", exc)
 
 
+def _checkpoint_paths(scrape_id, airline_code: str) -> tuple[Path, Path]:
+    airline = str(airline_code or "").upper().strip() or "UNKNOWN"
+    latest = RUN_STATUS_OUTPUT_DIR / f"run_all_checkpoint_latest_{scrape_id}_{airline}.json"
+    run = RUN_STATUS_OUTPUT_DIR / f"run_all_checkpoint_{scrape_id}_{airline}.json"
+    return latest, run
+
+
+def _query_checkpoint_key(*, origin: str, destination: str, departure_date: str, return_date: str | None, cabin: str, trip_type: str) -> str:
+    return json.dumps(
+        {
+            "origin": str(origin or "").upper().strip(),
+            "destination": str(destination or "").upper().strip(),
+            "departure_date": str(departure_date or "").strip(),
+            "return_date": str(return_date or "").strip() or None,
+            "cabin": str(cabin or "").strip(),
+            "trip_type": normalize_trip_type(trip_type or "OW"),
+        },
+        sort_keys=True,
+    )
+
+
+def _load_query_checkpoint(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+    items = payload.get("completed_queries")
+    if not isinstance(items, list):
+        return set()
+    return {str(item) for item in items if str(item or "").strip()}
+
+
+def _write_query_checkpoint(
+    *,
+    latest_path: Path,
+    run_path: Path,
+    scrape_id,
+    airline_code: str,
+    completed_queries: set[str],
+    meta: Dict[str, Any],
+) -> None:
+    try:
+        payload = {
+            "scrape_id": str(scrape_id),
+            "cycle_id": str(scrape_id),
+            "airline": str(airline_code or "").upper().strip(),
+            "updated_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "completed_query_count": len(completed_queries),
+            "completed_queries": sorted(completed_queries),
+            "meta": dict(meta or {}),
+        }
+        text_out = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
+        latest_path.write_text(text_out, encoding="utf-8")
+        run_path.write_text(text_out, encoding="utf-8")
+    except Exception as exc:
+        LOG.debug("Failed to write query checkpoint file: %s", exc)
+
+
 def _call_with_timeout(fn, timeout_seconds: float, *args, **kwargs):
     if timeout_seconds is None or timeout_seconds <= 0:
         return fn(*args, **kwargs)
@@ -1797,6 +1859,10 @@ def main():
 
     for code, cfg in airlines.items():
         LOG.info("\n=== Airline loaded: %s module: %s ===", code, cfg["module"])
+        checkpoint_latest, checkpoint_run = _checkpoint_paths(scrape_id, code)
+        completed_query_keys = _load_query_checkpoint(checkpoint_latest)
+        if completed_query_keys:
+            LOG.info("[%s] Resume checkpoint loaded: %d completed queries for cycle %s", code, len(completed_query_keys), scrape_id)
         routes = load_routes_for_airline(code)
         if args.origin:
             routes = [r for r in routes if str(r.get("origin", "")).upper() == args.origin.strip().upper()]
@@ -1853,6 +1919,7 @@ def main():
             airline_query_total += airline_route_cabins * len(route_plan["search_windows"])
         airline_query_completed = 0
         airline_elapsed_total = 0.0
+        resumed_query_count = 0
         LOG.info(
             "[%s] Work plan: routes=%d route-cabin-pairs=%d dates=%d planned_queries=%d",
             code,
@@ -1933,6 +2000,37 @@ def main():
                     dt = str(window["departure_date"])
                     return_date = window.get("return_date")
                     window_trip_type = normalize_trip_type(window.get("trip_type") or route_plan["trip_type"])
+                    checkpoint_key = _query_checkpoint_key(
+                        origin=origin,
+                        destination=dest,
+                        departure_date=dt,
+                        return_date=return_date,
+                        cabin=cabin,
+                        trip_type=window_trip_type,
+                    )
+                    if checkpoint_key in completed_query_keys:
+                        airline_query_completed += 1
+                        overall_query_completed += 1
+                        resumed_query_count += 1
+                        run_status.update(
+                            {
+                                "state": "running",
+                                "current_airline": code,
+                                "current_origin": origin,
+                                "current_destination": dest,
+                                "current_date": dt,
+                                "current_return_date": return_date,
+                                "current_cabin": cabin,
+                                "airline_query_completed": airline_query_completed,
+                                "airline_query_total": airline_query_total,
+                                "overall_query_completed": overall_query_completed,
+                                "overall_query_total": overall_query_total,
+                                "phase": "resuming",
+                                "airline_resumed_query_count": resumed_query_count,
+                            }
+                        )
+                        _write_run_status(run_status, latest_path=heartbeat_latest, run_path=heartbeat_run)
+                        continue
                     airline_query_completed += 1
                     overall_query_completed += 1
                     run_status.update(
@@ -1949,6 +2047,7 @@ def main():
                             "overall_query_completed": overall_query_completed,
                             "overall_query_total": overall_query_total,
                             "phase": "fetching",
+                            "airline_resumed_query_count": resumed_query_count,
                         }
                     )
                     _write_run_status(run_status, latest_path=heartbeat_latest, run_path=heartbeat_run)
@@ -2151,9 +2250,28 @@ def main():
                             "last_query_rows": int(len(rows)),
                             "last_query_ok": bool(resp.get("ok")),
                             "last_query_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                            "airline_resumed_query_count": resumed_query_count,
                         }
                     )
                     _write_run_status(run_status, latest_path=heartbeat_latest, run_path=heartbeat_run)
+                    completed_query_keys.add(checkpoint_key)
+                    _write_query_checkpoint(
+                        latest_path=checkpoint_latest,
+                        run_path=checkpoint_run,
+                        scrape_id=scrape_id,
+                        airline_code=code,
+                        completed_queries=completed_query_keys,
+                        meta={
+                            "airline_query_total": airline_query_total,
+                            "airline_query_completed": airline_query_completed,
+                            "resumed_query_count": resumed_query_count,
+                            "last_origin": origin,
+                            "last_destination": dest,
+                            "last_departure_date": dt,
+                            "last_return_date": return_date,
+                            "last_cabin": cabin,
+                        },
+                    )
                     if rows:
                         # ----------------------------
                         # 1. Normalize CORE rows
@@ -2427,6 +2545,7 @@ def main():
                             {
                                 "phase": "query_complete",
                                 "total_rows_accumulated": len(all_rows),
+                                "airline_resumed_query_count": resumed_query_count,
                             }
                         )
                         _write_run_status(run_status, latest_path=heartbeat_latest, run_path=heartbeat_run)
@@ -2483,6 +2602,7 @@ def main():
                             {
                                 "phase": "query_complete",
                                 "total_rows_accumulated": len(all_rows),
+                                "airline_resumed_query_count": resumed_query_count,
                             }
                         )
                         _write_run_status(run_status, latest_path=heartbeat_latest, run_path=heartbeat_run)
