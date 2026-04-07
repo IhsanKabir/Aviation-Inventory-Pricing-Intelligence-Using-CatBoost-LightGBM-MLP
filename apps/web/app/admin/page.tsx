@@ -1,8 +1,10 @@
 import { AdminAccessRequestsDashboard } from "@/components/admin-access-requests-dashboard";
+import { AdminSearchConfigPanel } from "@/components/admin-search-config-panel";
 import { DataPanel } from "@/components/data-panel";
 import { requireAdminSession } from "@/lib/admin";
 import type { ReportAccessRequest } from "@/lib/api";
 import { getApiBaseUrl } from "@/lib/api";
+import { readAdminSearchConfig } from "@/lib/search-config";
 
 async function loadInitialRequests() {
   const adminToken =
@@ -33,7 +35,10 @@ async function loadInitialRequests() {
 
 export default async function AdminPage() {
   await requireAdminSession("/admin");
-  const initialItems = await loadInitialRequests();
+  const [initialItems, initialConfig] = await Promise.all([
+    loadInitialRequests(),
+    readAdminSearchConfig(),
+  ]);
 
   return (
     <>
@@ -43,6 +48,13 @@ export default async function AdminPage() {
       </p>
 
       <div className="stack">
+        <DataPanel
+          title="Search configuration"
+          copy="Use the friendly fields below to control default search behavior without editing JSON by hand. Advanced users can still adjust the raw market-priors block."
+        >
+          <AdminSearchConfigPanel initialConfig={initialConfig} />
+        </DataPanel>
+
         <DataPanel
           title="Access request review"
           copy="Pending items stay at the top. Use this queue to approve route views, request payment, or reject mismatched scopes."

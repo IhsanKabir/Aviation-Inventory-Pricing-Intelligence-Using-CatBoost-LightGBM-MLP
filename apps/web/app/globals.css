@@ -1541,6 +1541,85 @@ a {
   gap: 16px;
 }
 
+.admin-config-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-config-card {
+  display: grid;
+  gap: 16px;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-field input {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-holiday-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-holiday-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 160px minmax(220px, 1.6fr) 140px 110px 120px auto;
+  align-items: center;
+}
+
+.holiday-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.admin-config-summary-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.admin-config-summary {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(16, 35, 59, 0.08);
+  background: rgba(255, 255, 255, 0.58);
+  display: grid;
+  gap: 6px;
+}
+
+.admin-config-summary strong {
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.admin-config-summary span {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.admin-config-readables {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-json-textarea {
+  min-height: 320px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88rem;
+}
+
 .admin-scope-grid {
   display: grid;
   gap: 14px;
@@ -1561,7 +1640,8 @@ a {
 @media (max-width: 1100px) {
   .grid.cards,
   .section-grid,
-  .operations-summary-grid {
+  .operations-summary-grid,
+  .admin-config-summary-grid {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -1574,7 +1654,10 @@ a {
 
   .grid.cards,
   .section-grid,
-  .operations-summary-grid {
+  .operations-summary-grid,
+  .admin-config-grid,
+  .admin-config-readables,
+  .admin-config-summary-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1588,6 +1671,7 @@ a {
   .route-scope-grid,
   .changes-trend-row,
   .changes-summary-grid,
+  .admin-holiday-row,
   .forecast-banner,
   .forecast-grid,
   .forecast-grid-split {

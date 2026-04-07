@@ -15,7 +15,7 @@ import time
 import os
 from pathlib import Path
 from typing import Dict, Any, Tuple
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
 from comparison_engine import ComparisonEngine
 from strategy_engine import StrategyEngine
 from sqlalchemy import func, text
@@ -1255,6 +1255,45 @@ def _heartbeat_paths(scrape_id) -> tuple[Path, Path]:
     return latest, run
 
 
+def _read_status_payload(path: Path) -> Dict[str, Any]:
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+def _status_payload_score(payload: Dict[str, Any]) -> tuple:
+    state = str(payload.get("state") or "").strip().lower()
+    phase = str(payload.get("phase") or "").strip().lower()
+    cycle_id = str(payload.get("cycle_id") or payload.get("scrape_id") or "").strip()
+    return (
+        1 if bool(cycle_id) else 0,
+        1 if state == "completed" else 0,
+        1 if state == "running" else 0,
+        1 if bool(payload.get("current_airline")) else 0,
+        1 if bool(payload.get("current_origin")) else 0,
+        1 if bool(payload.get("current_destination")) else 0,
+        1 if bool(payload.get("last_query_at_utc")) else 0,
+        1 if phase in {"fetching", "post_fetch", "query_complete", "done"} else 0,
+        int(payload.get("overall_query_completed") or 0),
+        int(payload.get("airline_query_completed") or 0),
+        int(payload.get("total_rows_accumulated") or 0),
+        str(payload.get("last_query_at_utc") or ""),
+        str(payload.get("written_at_utc") or ""),
+    )
+
+
+def _should_replace_latest_status(existing: Dict[str, Any], candidate: Dict[str, Any]) -> bool:
+    if not existing:
+        return True
+    existing_cycle = str(existing.get("cycle_id") or existing.get("scrape_id") or "").strip()
+    candidate_cycle = str(candidate.get("cycle_id") or candidate.get("scrape_id") or "").strip()
+    if candidate_cycle and existing_cycle and candidate_cycle != existing_cycle:
+        return True
+    return _status_payload_score(candidate) >= _status_payload_score(existing)
+
+
 def _write_run_status(status: Dict[str, Any], *, latest_path: Path, run_path: Path | None = None) -> None:
     try:
         payload = dict(status)
@@ -1270,7 +1309,9 @@ def _write_run_status(status: Dict[str, Any], *, latest_path: Path, run_path: Pa
             payload["accumulation_last_query_at_utc"] = payload.get("last_query_at_utc")
         payload["accumulation_written_at_utc"] = payload.get("written_at_utc")
         text_out = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
-        latest_path.write_text(text_out, encoding="utf-8")
+        existing_latest = _read_status_payload(latest_path)
+        if _should_replace_latest_status(existing_latest, payload):
+            latest_path.write_text(text_out, encoding="utf-8")
         if run_path is not None:
             run_path.write_text(text_out, encoding="utf-8")
         # Also write accumulation-named heartbeat aliases (same payload, same content).
@@ -1278,7 +1319,9 @@ def _write_run_status(status: Dict[str, Any], *, latest_path: Path, run_path: Pa
         acc_run = None
         if run_path is not None:
             acc_run = run_path.parent / run_path.name.replace("run_all_status_", "run_all_accumulation_status_")
-        acc_latest.write_text(text_out, encoding="utf-8")
+        existing_acc_latest = _read_status_payload(acc_latest)
+        if _should_replace_latest_status(existing_acc_latest, payload):
+            acc_latest.write_text(text_out, encoding="utf-8")
         if acc_run is not None:
             acc_run.write_text(text_out, encoding="utf-8")
     except Exception as exc:
@@ -1424,6 +1467,216 @@ def _source_attempt_summary(source: str, resp: Any) -> Dict[str, Any]:
         "rows": len(rows) if isinstance(rows, list) else None,
         "error": (raw or {}).get("error") if isinstance(raw, dict) else None,
         "message": (raw or {}).get("message") if isinstance(raw, dict) else None,
+    }
+
+
+MODULE_QUERY_WORKER_DEFAULTS = {
+    "biman": 3,
+    "novoair": 3,
+    "indigo": 2,
+    "sharetrip": 1,
+    "airastra": 1,
+    "bs": 1,
+}
+
+
+def _safe_positive_int(value: Any, default: int = 1) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        return int(default)
+    return max(1, parsed)
+
+
+def _resolve_module_query_workers(module_name: str) -> int:
+    normalized = str(module_name or "").strip().lower()
+    env_specific = os.getenv(f"RUN_ALL_QUERY_WORKERS__{normalized.upper()}")
+    if env_specific not in (None, ""):
+        return _safe_positive_int(env_specific, default=1)
+    env_default = os.getenv("RUN_ALL_QUERY_WORKERS_DEFAULT")
+    if env_default not in (None, ""):
+        return _safe_positive_int(env_default, default=1)
+    return _safe_positive_int(MODULE_QUERY_WORKER_DEFAULTS.get(normalized, 1), default=1)
+
+
+def _fetch_query_execution(
+    *,
+    airline_code: str,
+    module_name: str,
+    fetch_fn,
+    biman_fn,
+    fallback_fetchers,
+    args,
+    task: Dict[str, Any],
+) -> Dict[str, Any]:
+    origin = task["origin"]
+    dest = task["destination"]
+    dt = task["date"]
+    cabin = task["cabin"]
+    return_date = task.get("return_date")
+    window_trip_type = normalize_trip_type(task.get("trip_type") or "OW")
+    query_start = time.perf_counter()
+    trip_context = build_trip_context(
+        origin=origin,
+        destination=dest,
+        departure_date=dt,
+        return_date=return_date,
+        cabin=cabin,
+        adt=args.adt,
+        chd=args.chd,
+        inf=args.inf,
+        trip_type=window_trip_type,
+    )
+
+    source_attempts = []
+
+    resp = None
+    if callable(fetch_fn):
+        resp = _safe_call_fetch(
+            fetch_fn,
+            origin,
+            dest,
+            dt,
+            cabin,
+            timeout_seconds=args.query_timeout_seconds,
+            airline_code=airline_code,
+            adt=args.adt,
+            chd=args.chd,
+            inf=args.inf,
+            trip_type=trip_context["search_trip_type"],
+            return_date=trip_context["requested_return_date"],
+            trip_request_id=trip_context["trip_request_id"],
+        )
+        source_attempts.append(_source_attempt_summary(module_name, resp))
+
+    if not (resp and resp.get("ok")):
+        if callable(biman_fn):
+            LOG.info(
+                "[%s] Primary fetch failed or returned no rows; trying legacy fallback for %s->%s %s (%s).",
+                airline_code,
+                origin,
+                dest,
+                dt,
+                cabin,
+            )
+            try:
+                result = _call_with_timeout(
+                    biman_fn,
+                    args.query_timeout_seconds,
+                    origin,
+                    dest,
+                    dt,
+                    cabin=cabin,
+                    adt=args.adt,
+                    chd=args.chd,
+                    inf=args.inf,
+                    trip_type=trip_context["search_trip_type"],
+                    return_date=trip_context["requested_return_date"],
+                )
+                if isinstance(result, tuple) and (len(result) in (2, 3)):
+                    ok = bool(result[0])
+                    raw = result[1] if len(result) >= 2 else {}
+                    original = raw.get("data", {}).get("bookingAirSearch", {}).get("originalResponse") if isinstance(raw, dict) else None
+                    rows = []
+                    try:
+                        from modules.parser import extract_offers_from_response
+                        if original:
+                            rows = extract_offers_from_response(original)
+                    except Exception:
+                        rows = []
+                    resp = {"ok": ok, "raw": raw, "originalResponse": original, "rows": rows}
+                elif isinstance(result, dict):
+                    resp = {
+                        "ok": bool(result.get("ok")),
+                        "raw": result.get("raw", result),
+                        "originalResponse": result.get("originalResponse"),
+                        "rows": result.get("rows") if isinstance(result.get("rows"), list) else [],
+                    }
+                else:
+                    resp = {"ok": False, "raw": {}, "originalResponse": None, "rows": []}
+            except Exception as exc:
+                LOG.warning(
+                    "[%s->%s %s %s] legacy fallback raised exception (soft-fail): %s",
+                    origin,
+                    dest,
+                    dt,
+                    cabin,
+                    exc,
+                )
+                LOG.debug("exception details", exc_info=True)
+                resp = {"ok": False, "raw": {}, "originalResponse": None, "rows": []}
+            source_attempts.append(_source_attempt_summary(f"{module_name}:legacy", resp))
+        else:
+            LOG.info(
+                "[%s] Primary fetch returned ok=false and no legacy fallback is defined for module %s; skipping %s->%s %s (%s).",
+                airline_code,
+                module_name,
+                origin,
+                dest,
+                dt,
+                cabin,
+            )
+            if isinstance(resp, dict):
+                resp = {
+                    "ok": False,
+                    "raw": resp.get("raw", resp),
+                    "originalResponse": resp.get("originalResponse"),
+                    "rows": resp.get("rows") if isinstance(resp.get("rows"), list) else [],
+                }
+            else:
+                resp = {"ok": False, "raw": {}, "originalResponse": None, "rows": []}
+
+    if not _has_usable_rows(resp):
+        for fallback_module, fallback_fetch_fn in fallback_fetchers:
+            LOG.info(
+                "[%s] Trying configured fallback module %s for %s->%s %s (%s).",
+                airline_code,
+                fallback_module,
+                origin,
+                dest,
+                dt,
+                cabin,
+            )
+            fallback_resp = _safe_call_fetch(
+                fallback_fetch_fn,
+                origin,
+                dest,
+                dt,
+                cabin,
+                timeout_seconds=args.query_timeout_seconds,
+                airline_code=airline_code,
+                adt=args.adt,
+                chd=args.chd,
+                inf=args.inf,
+                trip_type=trip_context["search_trip_type"],
+                return_date=trip_context["requested_return_date"],
+                trip_request_id=trip_context["trip_request_id"],
+            )
+            source_attempts.append(_source_attempt_summary(fallback_module, fallback_resp))
+            if _has_usable_rows(fallback_resp):
+                resp = fallback_resp
+                break
+            if not isinstance(resp, dict) or not bool(resp.get("ok")):
+                resp = fallback_resp
+
+    if isinstance(resp, dict):
+        raw = resp.setdefault("raw", {})
+        if isinstance(raw, dict):
+            raw["source_attempts"] = source_attempts
+
+    rows = [
+        apply_trip_context(row, trip_context)
+        for row in resp.get("rows", [])
+        if isinstance(row, dict)
+    ]
+    resp["rows"] = rows
+    elapsed = round(time.perf_counter() - query_start, 4)
+    return {
+        **task,
+        "resp": resp,
+        "rows": rows,
+        "trip_context": trip_context,
+        "elapsed_sec": elapsed,
     }
 
 
@@ -1996,6 +2249,7 @@ def main():
                     len(previous_by_day),
                 )
 
+                pending_query_tasks = []
                 for window in route_plan["search_windows"]:
                     dt = str(window["departure_date"])
                     return_date = window.get("return_date")
@@ -2031,6 +2285,73 @@ def main():
                         )
                         _write_run_status(run_status, latest_path=heartbeat_latest, run_path=heartbeat_run)
                         continue
+                    pending_query_tasks.append(
+                        {
+                            "origin": origin,
+                            "destination": dest,
+                            "date": dt,
+                            "return_date": return_date,
+                            "trip_type": window_trip_type,
+                            "cabin": cabin,
+                            "checkpoint_key": checkpoint_key,
+                            "previous_by_day": previous_by_day,
+                        }
+                    )
+
+                query_workers = min(_resolve_module_query_workers(cfg["module"]), len(pending_query_tasks))
+                if query_workers > 1:
+                    LOG.info(
+                        "[%s] Query parallelism enabled for module %s: workers=%d queued=%d route=%s->%s cabin=%s",
+                        code,
+                        cfg["module"],
+                        query_workers,
+                        len(pending_query_tasks),
+                        origin,
+                        dest,
+                        cabin,
+                    )
+
+                fetched_results = []
+                if query_workers > 1:
+                    with ThreadPoolExecutor(max_workers=query_workers) as ex:
+                        future_map = {
+                            ex.submit(
+                                _fetch_query_execution,
+                                airline_code=code,
+                                module_name=cfg["module"],
+                                fetch_fn=fetch_fn,
+                                biman_fn=biman_fn,
+                                fallback_fetchers=fallback_fetchers,
+                                args=args,
+                                task=task,
+                            ): task
+                            for task in pending_query_tasks
+                        }
+                        for fut in as_completed(future_map):
+                            fetched_results.append(fut.result())
+                else:
+                    for task in pending_query_tasks:
+                        fetched_results.append(
+                            _fetch_query_execution(
+                                airline_code=code,
+                                module_name=cfg["module"],
+                                fetch_fn=fetch_fn,
+                                biman_fn=biman_fn,
+                                fallback_fetchers=fallback_fetchers,
+                                args=args,
+                                task=task,
+                            )
+                        )
+
+                for fetched in fetched_results:
+                    dt = fetched["date"]
+                    return_date = fetched.get("return_date")
+                    trip_context = fetched["trip_context"]
+                    resp = fetched["resp"]
+                    rows = fetched["rows"]
+                    elapsed = fetched["elapsed_sec"]
+                    checkpoint_key = fetched["checkpoint_key"]
+                    previous_by_day = fetched["previous_by_day"]
                     airline_query_completed += 1
                     overall_query_completed += 1
                     run_status.update(
@@ -2046,169 +2367,10 @@ def main():
                             "airline_query_total": airline_query_total,
                             "overall_query_completed": overall_query_completed,
                             "overall_query_total": overall_query_total,
-                            "phase": "fetching",
+                            "phase": "post_fetch",
                             "airline_resumed_query_count": resumed_query_count,
                         }
                     )
-                    _write_run_status(run_status, latest_path=heartbeat_latest, run_path=heartbeat_run)
-                    LOG.info(
-                        "[%s] Query %d/%d (overall_completed=%d) %s -> %s on %s%s (%s)",
-                        code,
-                        airline_query_completed,
-                        airline_query_total,
-                        overall_query_completed,
-                        origin,
-                        dest,
-                        dt,
-                        f" return {return_date}" if return_date else "",
-                        cabin,
-                    )
-                    query_start = time.perf_counter()
-                    trip_context = build_trip_context(
-                        origin=origin,
-                        destination=dest,
-                        departure_date=dt,
-                        return_date=return_date,
-                        cabin=cabin,
-                        adt=args.adt,
-                        chd=args.chd,
-                        inf=args.inf,
-                        trip_type=window_trip_type,
-                    )
-
-                    source_attempts = []
-
-                    # 1) Primary attempt: fetch_flights if provided
-                    resp = None
-                    if callable(fetch_fn):
-                        resp = _safe_call_fetch(
-                            fetch_fn, origin, dest, dt, cabin,
-                            timeout_seconds=args.query_timeout_seconds,
-                            airline_code=code,
-                            adt=args.adt,
-                            chd=args.chd,
-                            inf=args.inf,
-                            trip_type=trip_context["search_trip_type"],
-                            return_date=trip_context["requested_return_date"],
-                            trip_request_id=trip_context["trip_request_id"],
-                        )
-                        source_attempts.append(_source_attempt_summary(cfg["module"], resp))
-
-                    # 2) If primary failed or not provided, try legacy biman_search fallback
-                    if not (resp and resp.get("ok")):
-                        if callable(biman_fn):
-                            LOG.info("[%s] Primary fetch failed or returned no rows; trying legacy fallback for %s->%s %s (%s).", code, origin, dest, dt, cabin)
-                            try:
-                                # legacy returns may be (ok, raw_json, status) in some setups
-                                result = _call_with_timeout(
-                                    biman_fn,
-                                    args.query_timeout_seconds,
-                                    origin,
-                                    dest,
-                                    dt,
-                                    cabin=cabin,
-                                    adt=args.adt,
-                                    chd=args.chd,
-                                    inf=args.inf,
-                                    trip_type=trip_context["search_trip_type"],
-                                    return_date=trip_context["requested_return_date"],
-                                )
-                                # If result is tuple-like, try to normalize
-                                if isinstance(result, tuple) and (len(result) in (2, 3)):
-                                    # (ok, raw_json) or (ok, raw_json, status)
-                                    ok = bool(result[0])
-                                    raw = result[1] if len(result) >= 2 else {}
-                                    original = raw.get("data", {}).get("bookingAirSearch", {}).get("originalResponse") if isinstance(raw, dict) else None
-                                    # try parser in run_all (parser available in modules.parser)
-                                    rows = []
-                                    try:
-                                        from modules.parser import extract_offers_from_response
-                                        if original:
-                                            rows = extract_offers_from_response(original)
-                                    except Exception:
-                                        rows = []
-                                    resp = {"ok": ok, "raw": raw, "originalResponse": original, "rows": rows}
-                                elif isinstance(result, dict):
-                                    # assume it's already in unified form
-                                    resp = {
-                                        "ok": bool(result.get("ok")),
-                                        "raw": result.get("raw", result),
-                                        "originalResponse": result.get("originalResponse"),
-                                        "rows": result.get("rows") if isinstance(result.get("rows"), list) else []
-                                    }
-                                else:
-                                    # unknown shape
-                                    resp = {"ok": False, "raw": {}, "originalResponse": None, "rows": []}
-                            except Exception as exc:
-                                LOG.warning("[%s->%s %s %s] legacy fallback raised exception (soft-fail): %s", origin, dest, dt, cabin, exc)
-                                LOG.debug("exception details", exc_info=True)
-                                resp = {"ok": False, "raw": {}, "originalResponse": None, "rows": []}
-                            source_attempts.append(_source_attempt_summary(f"{cfg['module']}:legacy", resp))
-                        else:
-                            # No fallback available
-                            LOG.info(
-                                "[%s] Primary fetch returned ok=false and no legacy fallback is defined for module %s; skipping %s->%s %s (%s).",
-                                code,
-                                cfg["module"],
-                                origin,
-                                dest,
-                                dt,
-                                cabin,
-                            )
-                            if isinstance(resp, dict):
-                                # Preserve raw error context from primary fetch for diagnostics.
-                                resp = {
-                                    "ok": False,
-                                    "raw": resp.get("raw", resp),
-                                    "originalResponse": resp.get("originalResponse"),
-                                    "rows": resp.get("rows") if isinstance(resp.get("rows"), list) else [],
-                                }
-                            else:
-                                resp = {"ok": False, "raw": {}, "originalResponse": None, "rows": []}
-
-                    # 3) Cross-module fallbacks: direct site first, then configured OTA modules.
-                    if not _has_usable_rows(resp):
-                        for fallback_module, fallback_fetch_fn in fallback_fetchers:
-                            LOG.info(
-                                "[%s] Trying configured fallback module %s for %s->%s %s (%s).",
-                                code,
-                                fallback_module,
-                                origin,
-                                dest,
-                                dt,
-                                cabin,
-                            )
-                            fallback_resp = _safe_call_fetch(
-                                fallback_fetch_fn, origin, dest, dt, cabin,
-                                timeout_seconds=args.query_timeout_seconds,
-                                airline_code=code,
-                                adt=args.adt,
-                                chd=args.chd,
-                                inf=args.inf,
-                                trip_type=trip_context["search_trip_type"],
-                                return_date=trip_context["requested_return_date"],
-                                trip_request_id=trip_context["trip_request_id"],
-                            )
-                            source_attempts.append(_source_attempt_summary(fallback_module, fallback_resp))
-                            if _has_usable_rows(fallback_resp):
-                                resp = fallback_resp
-                                break
-                            if not isinstance(resp, dict) or not bool(resp.get("ok")):
-                                resp = fallback_resp
-
-                    if isinstance(resp, dict):
-                        raw = resp.setdefault("raw", {})
-                        if isinstance(raw, dict):
-                            raw["source_attempts"] = source_attempts
-
-                    # At this point resp exists and follows unified contract
-                    rows = [
-                        apply_trip_context(row, trip_context)
-                        for row in resp.get("rows", [])
-                        if isinstance(row, dict)
-                    ]
-                    resp["rows"] = rows
-                    elapsed = round(time.perf_counter() - query_start, 4)
                     airline_elapsed_total += elapsed
                     runtime_records.append(
                         {
@@ -2232,6 +2394,18 @@ def main():
                         airline_avg = 0.0
                         airline_eta_sec = 0.0
                     overall_elapsed = round(time.perf_counter() - overall_started, 1)
+                    LOG.info(
+                        "[%s] Query %d/%d (overall_completed=%d) %s -> %s on %s%s (%s)",
+                        code,
+                        airline_query_completed,
+                        airline_query_total,
+                        overall_query_completed,
+                        origin,
+                        dest,
+                        dt,
+                        f" return {return_date}" if return_date else "",
+                        cabin,
+                    )
                     LOG.info(
                         "[%s] Progress: %d/%d queries done | last=%.2fs avg=%.2fs | airline_eta=%.1fs | overall_elapsed=%.1fs | rows=%d",
                         code,

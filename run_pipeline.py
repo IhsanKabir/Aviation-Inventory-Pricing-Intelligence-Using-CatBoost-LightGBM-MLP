@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +24,11 @@ logging.basicConfig(
 SCHEDULE_FILE = Path("config/schedule.json")
 RUN_ALL_DEFAULT_DATES_FILE = Path("config/dates.json")
 REPO_ROOT = Path(__file__).resolve().parent
+REPORTS_ROOT = REPO_ROOT / "output" / "reports"
+RECOVERY_STATUS_FILE = REPORTS_ROOT / "accumulation_recovery_latest.json"
+CYCLE_STATE_FILE = REPORTS_ROOT / "accumulation_cycle_latest.json"
+HEARTBEAT_STATUS_FILE = REPORTS_ROOT / "run_all_accumulation_status_latest.json"
+PARALLEL_STATUS_FILE = REPORTS_ROOT / "scrape_parallel_latest.json"
 
 
 def parse_args():
@@ -552,8 +558,8 @@ def _apply_schedule_date_defaults_pipeline(args) -> None:
     except Exception:
         schedule_concurrency = 0
     if not args.airline and int(args.parallel_airlines or 1) <= 1 and schedule_concurrency > 1:
-        # Keep conservative cap to reduce antibot/rate-limit pressure.
-        args.parallel_airlines = max(1, min(3, schedule_concurrency))
+        # Keep scheduled launches aggressive, but cap them below the unstable max fan-out.
+        args.parallel_airlines = max(1, min(schedule_concurrency, 4))
         applied.append(f"parallel_airlines={args.parallel_airlines} (from schedule.concurrency={schedule_concurrency})")
 
     if applied:
@@ -757,6 +763,178 @@ def _add_arg(cmd: list[str], flag: str, value):
     if value is None:
         return
     cmd.extend([flag, str(value)])
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _parse_cycle_state_ts(value: str | None):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _should_replace_cycle_state(existing: dict, candidate: dict) -> bool:
+    if not existing:
+        return True
+    existing_cycle = str(existing.get("cycle_id") or "").strip()
+    candidate_cycle = str(candidate.get("cycle_id") or "").strip()
+    if existing_cycle and candidate_cycle and existing_cycle == candidate_cycle:
+        return True
+
+    existing_state = str(existing.get("state") or "").strip().lower()
+    candidate_state = str(candidate.get("state") or "").strip().lower()
+    existing_ts = (
+        _parse_cycle_state_ts(existing.get("started_at_utc"))
+        or _parse_cycle_state_ts(existing.get("checked_at_utc"))
+        or _parse_cycle_state_ts(existing.get("completed_at_utc"))
+    )
+    candidate_ts = (
+        _parse_cycle_state_ts(candidate.get("started_at_utc"))
+        or _parse_cycle_state_ts(candidate.get("checked_at_utc"))
+        or _parse_cycle_state_ts(candidate.get("completed_at_utc"))
+    )
+
+    if (
+        existing_state in {"starting", "running"}
+        and candidate_state in {"starting", "running", "completed"}
+        and existing_ts is not None
+        and candidate_ts is not None
+        and existing_ts > candidate_ts
+    ):
+        return False
+    return True
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+def _db_health_check_payload(db_url: str) -> dict:
+    try:
+        engine = create_engine(db_url, pool_pre_ping=True, future=True)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {
+            "ok": True,
+            "reason": "db_reachable",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": "db_unreachable",
+            "detail": str(exc),
+        }
+
+
+def _read_cycle_heartbeat(cycle_id: str | None) -> dict:
+    payload = _read_json(HEARTBEAT_STATUS_FILE)
+    if not cycle_id:
+        return payload
+    payload_cycle = str(payload.get("cycle_id") or payload.get("scrape_id") or "").strip()
+    return payload if payload_cycle == str(cycle_id).strip() else {}
+
+
+def _read_cycle_parallel_status(cycle_id: str | None) -> dict:
+    payload = _read_json(PARALLEL_STATUS_FILE)
+    if not cycle_id:
+        return payload
+    payload_cycle = str(payload.get("cycle_id") or "").strip()
+    return payload if payload_cycle == str(cycle_id).strip() else {}
+
+
+def _sync_accumulation_artifacts(
+    *,
+    args,
+    cycle_id: str | None,
+    lifecycle_state: str,
+    action: str,
+    reason: str,
+    command: list[str],
+    started_at_utc: str | None,
+    return_code: int | None = None,
+) -> None:
+    checked_at = datetime.now(timezone.utc).isoformat()
+    heartbeat = _read_cycle_heartbeat(cycle_id)
+    parallel_status = _read_cycle_parallel_status(cycle_id)
+    db_check = _db_health_check_payload(args.db_url)
+
+    recovery_payload = {
+        "mode": "run_pipeline",
+        "root": str(REPO_ROOT),
+        "reports_dir": str(REPORTS_ROOT),
+        "status_file": str(HEARTBEAT_STATUS_FILE),
+        "state_file": str(RECOVERY_STATUS_FILE),
+        "active_pipeline_process_count": None,
+        "active_pipeline_processes": [],
+        "heartbeat_state": heartbeat.get("state") if heartbeat else None,
+        "heartbeat_accumulation_run_id": cycle_id,
+        "heartbeat_age_minutes": None,
+        "lock_file": str(REPORTS_ROOT / "accumulation_wrapper_lock.json"),
+        "lock_present": (REPORTS_ROOT / "accumulation_wrapper_lock.json").exists(),
+        "lock_age_minutes": None,
+        "lock_created_at_utc": None,
+        "db_check": db_check,
+        "action": action,
+        "wrapper_event": f"run_pipeline_{action}",
+        "reason": reason,
+        "launched": lifecycle_state in {"starting", "running"},
+        "checked_at_utc": checked_at,
+        "cycle_id": cycle_id,
+        "command": command,
+        "return_code": return_code,
+    }
+    _write_json(RECOVERY_STATUS_FILE, recovery_payload)
+
+    cycle_payload = {
+        "state": lifecycle_state,
+        "status_source": "run_pipeline",
+        "mode": "run_pipeline",
+        "action": action,
+        "wrapper_event": f"run_pipeline_{action}",
+        "reason": reason,
+        "checked_at_utc": checked_at,
+        "cycle_id": cycle_id,
+        "accumulation_run_id": cycle_id,
+        "started_at_utc": parallel_status.get("started_at_utc")
+        or heartbeat.get("started_at_utc")
+        or heartbeat.get("accumulation_started_at_utc")
+        or started_at_utc,
+        "completed_at_utc": checked_at if lifecycle_state == "completed" else None,
+        "phase": heartbeat.get("phase"),
+        "selected_dates": heartbeat.get("selected_dates"),
+        "overall_query_total": heartbeat.get("overall_query_total"),
+        "overall_query_completed": heartbeat.get("overall_query_completed"),
+        "total_rows_accumulated": heartbeat.get("total_rows_accumulated"),
+        "aggregate_airline_count": parallel_status.get("airline_count"),
+        "aggregate_failed_count": parallel_status.get("failed_count"),
+        "duration_sec": parallel_status.get("duration_sec"),
+        "worker_status_path": str(HEARTBEAT_STATUS_FILE),
+        "parallel_status_path": str(PARALLEL_STATUS_FILE),
+        "db_check": db_check,
+        "command": command,
+        "return_code": return_code,
+    }
+    if lifecycle_state == "completed" and parallel_status.get("completed_at_utc"):
+        cycle_payload["completed_at_utc"] = parallel_status.get("completed_at_utc")
+        cycle_payload["state"] = "completed"
+        cycle_payload["action"] = "completed"
+        cycle_payload["reason"] = "parallel_scrape_done"
+        cycle_payload["aggregate_airline_count"] = parallel_status.get("airline_count")
+        cycle_payload["aggregate_failed_count"] = parallel_status.get("failed_count")
+        cycle_payload["duration_sec"] = parallel_status.get("duration_sec")
+    existing_cycle_payload = _read_json(CYCLE_STATE_FILE)
+    if _should_replace_cycle_state(existing_cycle_payload, cycle_payload):
+        _write_json(CYCLE_STATE_FILE, cycle_payload)
 
 
 def _run_step(name: str, cmd: list[str]):
@@ -1175,12 +1353,35 @@ def main():
     pipeline_rc = 0
 
     if not args.skip_scrape:
+        if not args.cycle_id:
+            args.cycle_id = str(uuid.uuid4())
         resolved_scrape_dates = _resolve_scrape_dates_for_log(args)
         LOG.info("Resolved accumulation dates (%d): %s", len(resolved_scrape_dates), resolved_scrape_dates)
         LOG.info("Accumulation passenger mix: ADT=%d CHD=%d INF=%d", args.adt, args.chd, args.inf)
         if args.probe_group_id:
             LOG.info("Probe group id: %s", args.probe_group_id)
-        rc = _run_step("accumulation", build_scrape_cmd(args))
+        scrape_cmd = build_scrape_cmd(args)
+        _sync_accumulation_artifacts(
+            args=args,
+            cycle_id=args.cycle_id,
+            lifecycle_state="starting",
+            action="launch",
+            reason="run_pipeline_accumulation_starting",
+            command=scrape_cmd,
+            started_at_utc=datetime.now(timezone.utc).isoformat(),
+            return_code=None,
+        )
+        rc = _run_step("accumulation", scrape_cmd)
+        _sync_accumulation_artifacts(
+            args=args,
+            cycle_id=args.cycle_id,
+            lifecycle_state="completed" if rc == 0 else "failed",
+            action="completed" if rc == 0 else "failed",
+            reason="run_pipeline_accumulation_finished" if rc == 0 else "run_pipeline_accumulation_failed",
+            command=scrape_cmd,
+            started_at_utc=None,
+            return_code=rc,
+        )
         if rc != 0:
             pipeline_rc = rc
             if args.fail_fast:

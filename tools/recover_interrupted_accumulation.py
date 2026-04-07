@@ -784,9 +784,262 @@ def _event_timestamp(payload: dict) -> dt.datetime | None:
     return _parse_iso(payload.get("checked_at_utc")) or _parse_iso(payload.get("completed_at_utc"))
 
 
+def _should_preserve_newer_active_cycle(existing_cycle_state: dict, payload: dict) -> bool:
+    existing_cycle = str(existing_cycle_state.get("cycle_id") or "").strip()
+    payload_cycle = str(payload.get("cycle_id") or "").strip()
+    if existing_cycle and payload_cycle and existing_cycle == payload_cycle:
+        return False
+    existing_state = str(existing_cycle_state.get("state") or "").strip().lower()
+    payload_state = str(payload.get("state") or "").strip().lower()
+    if existing_state not in {"starting", "running"}:
+        return False
+    if payload_state not in {"starting", "running", "completed", "skipped"}:
+        return False
+    existing_started = (
+        _parse_iso(existing_cycle_state.get("started_at_utc"))
+        or _parse_iso(existing_cycle_state.get("checked_at_utc"))
+        or _parse_iso(existing_cycle_state.get("completed_at_utc"))
+    )
+    payload_started = (
+        _parse_iso(payload.get("started_at_utc"))
+        or _parse_iso(payload.get("checked_at_utc"))
+        or _parse_iso(payload.get("completed_at_utc"))
+    )
+    if existing_started is None or payload_started is None:
+        return False
+    return existing_started > payload_started
+
+
 def _parallel_completion_timestamp(parallel_status: dict | None) -> dt.datetime | None:
     parallel_status = parallel_status or {}
     return _parse_iso(parallel_status.get("completed_at_utc")) or _parse_iso(parallel_status.get("generated_at"))
+
+
+def _latest_worker_statuses_for_cycle(
+    reports_dir: Path,
+    cycle_id: str,
+    *,
+    prefer_terminal_when_idle: bool = False,
+) -> dict[str, dict]:
+    cycle_id = str(cycle_id or "").strip()
+    if not cycle_id:
+        return {}
+    latest_by_airline: dict[str, tuple[dt.datetime, dict]] = {}
+    latest_terminal_by_airline: dict[str, tuple[dt.datetime, dict]] = {}
+    pattern = f"run_all_status_*_{cycle_id}_*.json"
+    for path in reports_dir.glob(pattern):
+        payload = _read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        airline = str(payload.get("current_airline") or payload.get("airline") or "").strip().upper()
+        if not airline:
+            continue
+        ts = (
+            _parse_iso(payload.get("written_at_utc"))
+            or _parse_iso(payload.get("completed_at_utc"))
+            or _parse_iso(payload.get("started_at_utc"))
+            or dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc)
+        )
+        existing = latest_by_airline.get(airline)
+        if existing is None or ts > existing[0]:
+            latest_by_airline[airline] = (ts, payload)
+        if _terminal_worker_state(payload.get("state")):
+            existing_terminal = latest_terminal_by_airline.get(airline)
+            if existing_terminal is None or ts > existing_terminal[0]:
+                latest_terminal_by_airline[airline] = (ts, payload)
+
+    effective: dict[str, dict] = {}
+    for airline, (_, payload) in latest_by_airline.items():
+        if prefer_terminal_when_idle and not _terminal_worker_state(payload.get("state")):
+            terminal = latest_terminal_by_airline.get(airline)
+            if terminal is not None:
+                effective[airline] = terminal[1]
+                continue
+            reconciled = _reconcile_idle_stale_worker(payload)
+            if reconciled is not None:
+                effective[airline] = reconciled
+                continue
+        effective[airline] = payload
+    return effective
+
+
+def _enabled_airline_codes(root: Path) -> list[str]:
+    airlines_file = root / "config" / "airlines.json"
+    if not airlines_file.exists():
+        return []
+    data = _read_json(airlines_file)
+    if not isinstance(data, list):
+        return []
+    codes: list[str] = []
+    for row in data:
+        if not isinstance(row, dict) or not row.get("enabled"):
+            continue
+        code = str(row.get("code") or "").strip().upper()
+        if code:
+            codes.append(code)
+    return codes
+
+
+def _terminal_worker_state(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"completed", "failed", "error", "interrupted", "skipped"}
+
+
+def _worker_status_timestamp(payload: dict) -> dt.datetime | None:
+    return (
+        _parse_iso(payload.get("written_at_utc"))
+        or _parse_iso(payload.get("completed_at_utc"))
+        or _parse_iso(payload.get("accumulation_written_at_utc"))
+        or _parse_iso(payload.get("started_at_utc"))
+    )
+
+
+def _reconcile_idle_stale_worker(payload: dict) -> dict | None:
+    if _terminal_worker_state(payload.get("state")):
+        return payload
+    ts = _worker_status_timestamp(payload)
+    if ts is None:
+        return None
+    reconciled = dict(payload)
+    completed_at = (
+        payload.get("completed_at_utc")
+        or payload.get("written_at_utc")
+        or payload.get("accumulation_written_at_utc")
+        or _now_utc().isoformat()
+    )
+    reconciled["state"] = "interrupted"
+    reconciled["phase"] = "stale"
+    reconciled["completed_at_utc"] = completed_at
+    reconciled["written_at_utc"] = payload.get("written_at_utc") or completed_at
+    reconciled["accumulation_written_at_utc"] = payload.get("accumulation_written_at_utc") or reconciled["written_at_utc"]
+    reconciled["reason"] = "idle_stale_worker_reconciled"
+    return reconciled
+
+
+def _rebuild_parallel_status_from_workers(
+    root: Path,
+    reports_dir: Path,
+    cycle_id: str,
+    *,
+    prefer_terminal_when_idle: bool = False,
+) -> dict | None:
+    cycle_id = str(cycle_id or "").strip()
+    if not cycle_id:
+        return None
+    worker_payloads = _latest_worker_statuses_for_cycle(
+        reports_dir,
+        cycle_id,
+        prefer_terminal_when_idle=prefer_terminal_when_idle,
+    )
+    if not worker_payloads:
+        return None
+    enabled_codes = _enabled_airline_codes(root)
+    expected_codes = set(enabled_codes) if enabled_codes else set(worker_payloads)
+    available_codes = set(worker_payloads)
+    if expected_codes and not expected_codes.issubset(available_codes):
+        return None
+    if any(not _terminal_worker_state(payload.get("state")) for payload in worker_payloads.values()):
+        return None
+
+    started_candidates = [_parse_iso(payload.get("started_at_utc")) for payload in worker_payloads.values()]
+    completed_candidates = [
+        _parse_iso(payload.get("completed_at_utc"))
+        or _parse_iso(payload.get("written_at_utc"))
+        or _parse_iso(payload.get("accumulation_written_at_utc"))
+        for payload in worker_payloads.values()
+    ]
+    started_candidates = [ts for ts in started_candidates if ts is not None]
+    completed_candidates = [ts for ts in completed_candidates if ts is not None]
+    started_at = min(started_candidates) if started_candidates else None
+    completed_at = max(completed_candidates) if completed_candidates else None
+    if completed_at is None:
+        completed_at = dt.datetime.now(dt.timezone.utc)
+
+    results = []
+    failed_count = 0
+    for airline in sorted(worker_payloads):
+        payload = worker_payloads[airline]
+        state = str(payload.get("state") or "").strip().lower()
+        ok = state == "completed"
+        if not ok:
+            failed_count += 1
+        started_ts = _parse_iso(payload.get("started_at_utc"))
+        completed_ts = (
+            _parse_iso(payload.get("completed_at_utc"))
+            or _parse_iso(payload.get("written_at_utc"))
+            or _parse_iso(payload.get("accumulation_written_at_utc"))
+        )
+        duration_sec = None
+        if started_ts is not None and completed_ts is not None:
+            duration_sec = max(0.0, (completed_ts - started_ts).total_seconds())
+        results.append(
+            {
+                "airline": airline,
+                "cmd": "",
+                "rc": 0 if ok else 1,
+                "duration_sec": duration_sec,
+                "stdout_tail": "",
+                "stderr_tail": "",
+            }
+        )
+
+    duration_sec = None
+    if started_at is not None and completed_at is not None:
+        duration_sec = max(0.0, (completed_at - started_at).total_seconds())
+
+    return {
+        "generated_at": completed_at.isoformat(),
+        "started_at_utc": started_at.isoformat() if started_at is not None else None,
+        "completed_at_utc": completed_at.isoformat(),
+        "duration_sec": duration_sec,
+        "cycle_id": cycle_id,
+        "airline_count": len(expected_codes) if expected_codes else len(worker_payloads),
+        "failed_count": failed_count,
+        "results": results,
+        "rebuilt_from_worker_status": True,
+    }
+
+
+def _resolve_parallel_status(
+    root: Path,
+    reports_dir: Path,
+    heartbeat: dict | None,
+    parallel_file: Path,
+    *,
+    active_procs: list[dict] | None = None,
+) -> dict:
+    parallel_status = _read_json(parallel_file)
+    heartbeat = heartbeat or {}
+    active_procs = active_procs or []
+    prefer_terminal_when_idle = not active_procs
+    heartbeat_cycle_id = str(heartbeat.get("cycle_id") or heartbeat.get("accumulation_run_id") or heartbeat.get("scrape_id") or "").strip()
+    parallel_cycle_id = str((parallel_status or {}).get("cycle_id") or "").strip()
+    if heartbeat_cycle_id and heartbeat_cycle_id != parallel_cycle_id:
+        rebuilt = _rebuild_parallel_status_from_workers(
+            root,
+            reports_dir,
+            heartbeat_cycle_id,
+            prefer_terminal_when_idle=prefer_terminal_when_idle,
+        )
+        if rebuilt:
+            ts = dt.datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+            run_file = reports_dir / f"scrape_parallel_{ts}_{heartbeat_cycle_id}.json"
+            _write_json(parallel_file, rebuilt)
+            _write_json(run_file, rebuilt)
+            return rebuilt
+    if not parallel_status and heartbeat_cycle_id:
+        rebuilt = _rebuild_parallel_status_from_workers(
+            root,
+            reports_dir,
+            heartbeat_cycle_id,
+            prefer_terminal_when_idle=prefer_terminal_when_idle,
+        )
+        if rebuilt:
+            ts = dt.datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+            run_file = reports_dir / f"scrape_parallel_{ts}_{heartbeat_cycle_id}.json"
+            _write_json(parallel_file, rebuilt)
+            _write_json(run_file, rebuilt)
+            return rebuilt
+    return parallel_status or {}
 
 
 def _parallel_completion_is_newer(existing_cycle_state: dict, parallel_status: dict | None) -> bool:
@@ -820,6 +1073,40 @@ def _parallel_completion_matches_payload_cycle(payload: dict, parallel_status: d
     if not parallel_cycle_id or not payload_cycle_id:
         return False
     return parallel_cycle_id == payload_cycle_id
+
+
+def _reconcile_heartbeat_from_parallel_completion(
+    status_file: Path,
+    heartbeat: dict | None,
+    parallel_status: dict | None,
+    active_procs: list[dict] | None = None,
+) -> dict:
+    heartbeat = heartbeat or {}
+    parallel_status = parallel_status or {}
+    active_procs = active_procs or []
+    if active_procs:
+        return heartbeat
+    completed_at = parallel_status.get("completed_at_utc") or parallel_status.get("generated_at")
+    parallel_cycle_id = str(parallel_status.get("cycle_id") or "").strip()
+    if not completed_at or not parallel_cycle_id:
+        return heartbeat
+    heartbeat_cycle_id = str(
+        heartbeat.get("cycle_id") or heartbeat.get("accumulation_run_id") or heartbeat.get("scrape_id") or ""
+    ).strip()
+    if heartbeat_cycle_id and heartbeat_cycle_id != parallel_cycle_id:
+        return heartbeat
+    payload = dict(heartbeat)
+    payload["state"] = "completed"
+    payload["cycle_id"] = parallel_cycle_id
+    payload["scrape_id"] = parallel_cycle_id
+    payload["accumulation_run_id"] = parallel_cycle_id
+    payload["reason"] = "parallel_scrape_done"
+    payload["completed_at_utc"] = completed_at
+    payload["written_at_utc"] = completed_at
+    payload["accumulation_written_at_utc"] = completed_at
+    payload["aggregate_failed_count"] = parallel_status.get("failed_count")
+    _write_json(status_file, payload)
+    return payload
 
 
 def _preserve_existing_completed_cycle(existing_cycle_state: dict, payload: dict) -> bool:
@@ -915,6 +1202,8 @@ def _write_cycle_state(
             command=command,
             return_code=return_code,
         )
+    elif _should_preserve_newer_active_cycle(existing_cycle_state, payload):
+        payload = existing_cycle_state
     elif _preserve_existing_completed_cycle(existing_cycle_state, payload):
         payload = existing_cycle_state
 
@@ -925,7 +1214,8 @@ def _handle_preflight(args, root: Path, reports_dir: Path, status_file: Path, st
     active = _active_pipeline_processes()
     heartbeat = _read_json(status_file)
     parallel_file = reports_dir / "scrape_parallel_latest.json"
-    parallel_status = _read_json(parallel_file)
+    parallel_status = _resolve_parallel_status(root, reports_dir, heartbeat, parallel_file, active_procs=active)
+    heartbeat = _reconcile_heartbeat_from_parallel_completion(status_file, heartbeat, parallel_status, active)
     db_check = _db_health_check(root)
     db_ok = bool(db_check.get("ok"))
     if lock_file.exists():
@@ -1098,7 +1388,8 @@ def _handle_recover(args, root: Path, reports_dir: Path, status_file: Path, stat
     heartbeat = _read_json(status_file)
     state = _read_json(state_file)
     parallel_file = reports_dir / "scrape_parallel_latest.json"
-    parallel_status = _read_json(parallel_file)
+    parallel_status = _resolve_parallel_status(root, reports_dir, heartbeat, parallel_file, active_procs=active)
+    heartbeat = _reconcile_heartbeat_from_parallel_completion(status_file, heartbeat, parallel_status, active)
     db_check = _db_health_check(root)
     db_ok = bool(db_check.get("ok"))
 
@@ -1297,7 +1588,8 @@ def _handle_guarded_run(args, root: Path, reports_dir: Path, status_file: Path, 
     active = _active_pipeline_processes()
     heartbeat = _read_json(status_file)
     parallel_file = reports_dir / "scrape_parallel_latest.json"
-    parallel_status = _read_json(parallel_file)
+    parallel_status = _resolve_parallel_status(root, reports_dir, heartbeat, parallel_file, active_procs=active)
+    heartbeat = _reconcile_heartbeat_from_parallel_completion(status_file, heartbeat, parallel_status, active)
     db_check = _db_health_check(root)
     db_ok = bool(db_check.get("ok"))
     if lock_file.exists():

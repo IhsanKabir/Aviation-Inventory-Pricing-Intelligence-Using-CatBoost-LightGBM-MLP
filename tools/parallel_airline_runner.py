@@ -15,14 +15,21 @@ from pathlib import Path
 import time
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FRAGILE_MODULES = {"sharetrip", "airastra", "bs", "indigo"}
+SHARETRIP_MODULES = {"sharetrip"}
+WRAPPER_MODULES = {"airastra", "bs"}
+PROTECTED_DIRECT_MODULES = {"indigo"}
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Parallel run_all by airline")
     p.add_argument("--python-exe", default=sys.executable)
     p.add_argument("--airlines-config", default="config/airlines.json")
-    p.add_argument("--max-workers", type=int, default=2)
+    p.add_argument(
+        "--max-workers",
+        type=int,
+        default=4,
+        help="Maximum concurrent workers for direct connector families such as BG/VQ (default: 4).",
+    )
     p.add_argument(
         "--trip-plan-mode",
         choices=["operational", "training", "deep"],
@@ -60,8 +67,44 @@ def parse_args():
     p.add_argument(
         "--fragile-cooldown-sec",
         type=float,
+        default=1.0,
+        help="Sleep between fragile-airline launches to reduce upstream burst pressure (default: 1.0s).",
+    )
+    p.add_argument(
+        "--sharetrip-max-workers",
+        type=int,
+        default=2,
+        help="Maximum concurrent workers for the shared ShareTrip backend family (default: 2).",
+    )
+    p.add_argument(
+        "--sharetrip-cooldown-sec",
+        type=float,
         default=2.0,
-        help="Sleep between fragile-airline launches to reduce upstream burst pressure (default: 2.0s).",
+        help="Sleep between ShareTrip-backed airline launches to reduce burst pressure (default: 2.0s).",
+    )
+    p.add_argument(
+        "--wrapper-max-workers",
+        type=int,
+        default=1,
+        help="Maximum concurrent workers for wrapper/fallback families such as BS and 2A (default: 1).",
+    )
+    p.add_argument(
+        "--wrapper-cooldown-sec",
+        type=float,
+        default=1.5,
+        help="Sleep between wrapper-family launches to reduce upstream burst pressure (default: 1.5s).",
+    )
+    p.add_argument(
+        "--indigo-max-workers",
+        type=int,
+        default=2,
+        help="Maximum concurrent workers for Indigo direct sessions (default: 2).",
+    )
+    p.add_argument(
+        "--indigo-cooldown-sec",
+        type=float,
+        default=0.75,
+        help="Sleep between Indigo launches to reduce session churn (default: 0.75s).",
     )
     p.add_argument("--strict", action="store_true")
     return p.parse_args()
@@ -154,31 +197,65 @@ def _run_batch(airlines: list[dict], args, cycle_id: str, *, max_workers: int, c
     return results
 
 
-def _run_batches_concurrently(robust_airlines: list[dict], fragile_airlines: list[dict], args, cycle_id: str):
+def _module_family(module_name: str) -> str:
+    normalized = str(module_name or "").strip().lower()
+    if normalized in SHARETRIP_MODULES:
+        return "sharetrip"
+    if normalized in WRAPPER_MODULES:
+        return "wrapper"
+    if normalized in PROTECTED_DIRECT_MODULES:
+        return "indigo"
+    return "direct"
+
+
+def _run_batches_concurrently(grouped_airlines: dict[str, list[dict]], args, cycle_id: str):
     results = []
     batch_futures = {}
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        if robust_airlines:
+    non_empty_families = {name: items for name, items in grouped_airlines.items() if items}
+    with ThreadPoolExecutor(max_workers=max(1, len(non_empty_families))) as ex:
+        if non_empty_families.get("direct"):
             batch_futures[
                 ex.submit(
                     _run_batch,
-                    robust_airlines,
+                    non_empty_families["direct"],
                     args,
                     cycle_id,
                     max_workers=args.max_workers,
                 )
-            ] = "robust"
-        if fragile_airlines:
+            ] = "direct"
+        if non_empty_families.get("sharetrip"):
             batch_futures[
                 ex.submit(
                     _run_batch,
-                    fragile_airlines,
+                    non_empty_families["sharetrip"],
                     args,
                     cycle_id,
-                    max_workers=args.fragile_max_workers,
-                    cooldown_sec=max(0.0, float(args.fragile_cooldown_sec or 0.0)),
+                    max_workers=args.sharetrip_max_workers,
+                    cooldown_sec=max(0.0, float(args.sharetrip_cooldown_sec or 0.0)),
                 )
-            ] = "fragile"
+            ] = "sharetrip"
+        if non_empty_families.get("wrapper"):
+            batch_futures[
+                ex.submit(
+                    _run_batch,
+                    non_empty_families["wrapper"],
+                    args,
+                    cycle_id,
+                    max_workers=args.wrapper_max_workers,
+                    cooldown_sec=max(0.0, float(args.wrapper_cooldown_sec or 0.0)),
+                )
+            ] = "wrapper"
+        if non_empty_families.get("indigo"):
+            batch_futures[
+                ex.submit(
+                    _run_batch,
+                    non_empty_families["indigo"],
+                    args,
+                    cycle_id,
+                    max_workers=args.indigo_max_workers,
+                    cooldown_sec=max(0.0, float(args.indigo_cooldown_sec or 0.0)),
+                )
+            ] = "indigo"
         for fut in as_completed(batch_futures):
             results.extend(fut.result())
     return results
@@ -197,10 +274,16 @@ def main():
     ts = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     started = datetime.now(timezone.utc)
 
-    robust_airlines = [a for a in airlines if a.get("module") not in FRAGILE_MODULES]
-    fragile_airlines = [a for a in airlines if a.get("module") in FRAGILE_MODULES]
+    grouped_airlines = {
+        "direct": [],
+        "sharetrip": [],
+        "wrapper": [],
+        "indigo": [],
+    }
+    for airline in airlines:
+        grouped_airlines[_module_family(airline.get("module"))].append(airline)
 
-    results = _run_batches_concurrently(robust_airlines, fragile_airlines, args, cycle_id)
+    results = _run_batches_concurrently(grouped_airlines, args, cycle_id)
 
     results = sorted(results, key=lambda x: x["airline"])
     failed = [r for r in results if r["rc"] != 0]
@@ -213,9 +296,13 @@ def main():
         "cycle_id": cycle_id,
         "airline_count": len(airlines),
         "max_workers": args.max_workers,
-        "robust_airline_count": len(robust_airlines),
-        "fragile_max_workers": args.fragile_max_workers,
-        "fragile_airline_count": len(fragile_airlines),
+        "direct_airline_count": len(grouped_airlines["direct"]),
+        "sharetrip_airline_count": len(grouped_airlines["sharetrip"]),
+        "sharetrip_max_workers": args.sharetrip_max_workers,
+        "wrapper_airline_count": len(grouped_airlines["wrapper"]),
+        "wrapper_max_workers": args.wrapper_max_workers,
+        "indigo_airline_count": len(grouped_airlines["indigo"]),
+        "indigo_max_workers": args.indigo_max_workers,
         "failed_count": len(failed),
         "results": results,
     }
