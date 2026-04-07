@@ -167,6 +167,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
   const requestId = firstParam(params, "request_id") ?? undefined;
   const routeLimit = parseLimit(firstParam(params, "route_limit"), 5);
   const historyLimit = parseLimit(firstParam(params, "history_limit"), 6);
+  const routeSelectionReady = Boolean(origin && destination);
   const effectiveReturnDate = undefined;
   const effectiveReturnDateStart =
     tripType === "RT" ? returnDateStart ?? undefined : undefined;
@@ -266,7 +267,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
           />
         </DataPanel>
 
-        {accessGranted && requestId ? (
+        {accessGranted && requestId && routeSelectionReady ? (
           <Suspense fallback={<RouteMonitorSectionFallback />}>
             <RouteMonitorSection
               cabin={cabin ?? undefined}
@@ -286,6 +287,15 @@ export default async function RoutesPage({ searchParams }: PageProps) {
               tripType={tripType}
             />
           </Suspense>
+        ) : accessGranted && requestId ? (
+          <DataPanel
+            title="Route flight fare monitor"
+            copy="Choose an exact route above, apply the filters, and then the approved route view will load."
+          >
+            <div className="empty-state">
+              Select both origin and destination in the scope panel above. The current approved request is valid, but the route monitor works best with a specific route instead of an open market-wide view.
+            </div>
+          </DataPanel>
         ) : (
           <DataPanel
             title="Route flight fare monitor"

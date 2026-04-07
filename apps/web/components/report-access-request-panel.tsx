@@ -198,11 +198,9 @@ export function ReportAccessRequestPanel({
             <button className="button-link ghost" data-pending={isPending} onClick={refreshRequest} type="button">
               Refresh request status
             </button>
-            {request.status !== "approved" ? (
-              <button className="button-link ghost" data-pending={isPending} onClick={clearRequest} type="button">
-                Start a new request
-              </button>
-            ) : null}
+            <button className="button-link ghost" data-pending={isPending} onClick={clearRequest} type="button">
+              Start a new request
+            </button>
           </div>
         </div>
       ) : null}
