@@ -1,6 +1,8 @@
 import "server-only";
 
+import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { promisify } from "node:util";
 import path from "node:path";
 
 const CONFIG_ROOT = path.resolve(process.cwd(), "..", "..", "config");
@@ -11,6 +13,7 @@ const OUTPUT_PATH = path.join(CONFIG_ROOT, "output.json");
 const HOLIDAY_PATH = path.join(CONFIG_ROOT, "holiday_calendar.json");
 const MARKET_PRIORS_PATH = path.join(CONFIG_ROOT, "market_priors.json");
 const ROUTE_TRIP_WINDOWS_PATH = path.join(CONFIG_ROOT, "route_trip_windows.json");
+const execFileAsync = promisify(execFile);
 
 export type AdminHolidayEntry = {
   date: string;
@@ -24,8 +27,13 @@ export type AdminTripProfileEntry = {
   key: string;
   description: string;
   tripType: string;
+  archived: boolean;
   dayOffsets: string;
+  dateRangesText: string;
+  dayOffsetRangesText: string;
   returnDateOffsets: string;
+  returnDateRangesText: string;
+  returnDateOffsetRangesText: string;
 };
 
 export type AdminRouteProfileEntry = {
@@ -84,6 +92,18 @@ export type AdminSearchConfig = {
   persistenceNote: string;
 };
 
+export type SchedulerApplyResult = {
+  ok: boolean;
+  platform: string;
+  appliedAtUtc: string;
+  steps: Array<{
+    name: string;
+    command: string;
+    ok: boolean;
+    output: string;
+  }>;
+};
+
 type SearchConfigUpdate = {
   schedule: AdminSearchConfig["schedule"];
   passengers: AdminSearchConfig["passengers"];
@@ -136,6 +156,89 @@ function parseOffsetCsv(value: string) {
     .map((item) => Number(item));
 }
 
+type DateRangeEntry = {
+  start: string;
+  end: string;
+};
+
+type OffsetRangeEntry = {
+  start: number;
+  end: number;
+};
+
+function formatDateRanges(value: unknown) {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return value
+    .map((item) => {
+      const entry = item as Partial<DateRangeEntry>;
+      const start = String(entry?.start || "").trim();
+      const end = String(entry?.end || "").trim();
+      if (!start || !end) {
+        return "";
+      }
+      return `${start} to ${end}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function parseDateRangesText(value: string): DateRangeEntry[] {
+  return String(value || "")
+    .split(/\r?\n|;/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const normalized = item.replace(/\s+/g, " ");
+      const parts = normalized.split(/\s+to\s+/i);
+      if (parts.length !== 2) {
+        throw new Error(`Invalid date range "${item}". Use YYYY-MM-DD to YYYY-MM-DD.`);
+      }
+      const start = parts[0]?.trim();
+      const end = parts[1]?.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+        throw new Error(`Invalid date range "${item}". Use YYYY-MM-DD to YYYY-MM-DD.`);
+      }
+      return { start, end };
+    });
+}
+
+function formatOffsetRanges(value: unknown) {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return value
+    .map((item) => {
+      const entry = item as Partial<OffsetRangeEntry>;
+      const start = Number(entry?.start);
+      const end = Number(entry?.end);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        return "";
+      }
+      return `${Math.trunc(start)}-${Math.trunc(end)}`;
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function parseOffsetRangesText(value: string): OffsetRangeEntry[] {
+  return String(value || "")
+    .split(/[\r\n,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const match = item.match(/^(-?\d+)\s*-\s*(-?\d+)$/);
+      if (!match) {
+        throw new Error(`Invalid offset range "${item}". Use forms like 0-7 or 14-30.`);
+      }
+      return {
+        start: Number(match[1]),
+        end: Number(match[2]),
+      };
+    });
+}
+
 function normalizeHolidayEntry(entry: Partial<AdminHolidayEntry>): AdminHolidayEntry {
   return {
     date: String(entry.date || "").trim(),
@@ -181,10 +284,15 @@ function buildTripProfiles(payload: any): AdminTripProfileEntry[] {
         key,
         description: String(profile?.description || ""),
         tripType: String(profile?.trip_type || "OW"),
+        archived: Boolean(profile?.archived),
         dayOffsets: normalizeOffsetCsv(Array.isArray(profile?.day_offsets) ? profile.day_offsets.join(",") : ""),
+        dateRangesText: formatDateRanges(profile?.date_ranges),
+        dayOffsetRangesText: formatOffsetRanges(profile?.day_offset_ranges),
         returnDateOffsets: normalizeOffsetCsv(
           Array.isArray(profile?.return_date_offsets) ? profile.return_date_offsets.join(",") : "",
         ),
+        returnDateRangesText: formatDateRanges(profile?.return_date_ranges),
+        returnDateOffsetRangesText: formatOffsetRanges(profile?.return_date_offset_ranges),
       };
     })
     .sort((left, right) => left.key.localeCompare(right.key));
@@ -340,13 +448,23 @@ export async function writeAdminSearchConfig(update: SearchConfigUpdate): Promis
   marketPriors.trip_date_profiles = marketPriors.trip_date_profiles || {};
   for (const tripProfile of update.tripProfiles || []) {
     const key = String(tripProfile?.key || "").trim();
-    if (!key || !marketPriors.trip_date_profiles[key] || typeof marketPriors.trip_date_profiles[key] !== "object") {
+    if (!key) {
       continue;
+    }
+    if (!marketPriors.trip_date_profiles[key] || typeof marketPriors.trip_date_profiles[key] !== "object") {
+      marketPriors.trip_date_profiles[key] = {};
     }
     marketPriors.trip_date_profiles[key].description = String(tripProfile.description || "").trim();
     marketPriors.trip_date_profiles[key].trip_type = String(tripProfile.tripType || "OW").trim() || "OW";
+    marketPriors.trip_date_profiles[key].archived = Boolean(tripProfile.archived);
     marketPriors.trip_date_profiles[key].day_offsets = parseOffsetCsv(tripProfile.dayOffsets || "");
+    marketPriors.trip_date_profiles[key].date_ranges = parseDateRangesText(tripProfile.dateRangesText || "");
+    marketPriors.trip_date_profiles[key].day_offset_ranges = parseOffsetRangesText(tripProfile.dayOffsetRangesText || "");
     marketPriors.trip_date_profiles[key].return_date_offsets = parseOffsetCsv(tripProfile.returnDateOffsets || "");
+    marketPriors.trip_date_profiles[key].return_date_ranges = parseDateRangesText(tripProfile.returnDateRangesText || "");
+    marketPriors.trip_date_profiles[key].return_date_offset_ranges = parseOffsetRangesText(
+      tripProfile.returnDateOffsetRangesText || "",
+    );
   }
 
   routeTripWindows.airlines = routeTripWindows.airlines || {};
@@ -378,4 +496,65 @@ export async function writeAdminSearchConfig(update: SearchConfigUpdate): Promis
   ]);
 
   return readAdminSearchConfig();
+}
+
+export async function applySchedulerSettingsOnMachine(): Promise<SchedulerApplyResult> {
+  if (process.platform !== "win32") {
+    throw new Error("This action only works on the Windows machine that owns the local scheduler tasks.");
+  }
+
+  const repoRoot = path.resolve(process.cwd(), "..", "..");
+  const scripts = [
+    "scheduler\\install_ingestion_autorun.ps1",
+    "scheduler\\install_training_enrichment_autorun.ps1",
+    "scheduler\\install_training_deep_autorun.ps1",
+  ];
+
+  const steps: SchedulerApplyResult["steps"] = [];
+  for (const relativeScript of scripts) {
+    const scriptPath = path.join(repoRoot, relativeScript);
+    const command = `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`;
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        "powershell.exe",
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+        {
+          cwd: repoRoot,
+          windowsHide: true,
+          timeout: 120000,
+          maxBuffer: 1024 * 1024,
+        },
+      );
+      steps.push({
+        name: path.basename(relativeScript),
+        command,
+        ok: true,
+        output: [stdout, stderr].filter(Boolean).join("\n").trim(),
+      });
+    } catch (error) {
+      const detail =
+        error && typeof error === "object" && "stdout" in error
+          ? [String((error as { stdout?: unknown }).stdout || ""), String((error as { stderr?: unknown }).stderr || "")]
+              .filter(Boolean)
+              .join("\n")
+              .trim()
+          : error instanceof Error
+            ? error.message
+            : "Unknown scheduler apply failure";
+      steps.push({
+        name: path.basename(relativeScript),
+        command,
+        ok: false,
+        output: detail,
+      });
+      throw new Error(`Scheduler apply failed in ${path.basename(relativeScript)}: ${detail || "unknown error"}`);
+    }
+  }
+
+  return {
+    ok: true,
+    platform: process.platform,
+    appliedAtUtc: new Date().toISOString(),
+    steps,
+  };
 }

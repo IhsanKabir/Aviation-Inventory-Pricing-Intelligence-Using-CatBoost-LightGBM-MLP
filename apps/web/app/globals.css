@@ -469,7 +469,8 @@ a {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   width: 100%;
   padding: 12px 14px;
   border-radius: 14px;
@@ -477,12 +478,19 @@ a {
   background: rgba(255, 255, 255, 0.82);
   color: var(--ink);
   outline: none;
+  font: inherit;
 }
 
 .field input:focus,
-.field select:focus {
+.field select:focus,
+.field textarea:focus {
   border-color: rgba(28, 95, 134, 0.5);
   box-shadow: 0 0 0 4px rgba(28, 95, 134, 0.08);
+}
+
+.field textarea {
+  min-height: 86px;
+  resize: vertical;
 }
 
 .button-row {
@@ -1623,11 +1631,53 @@ a {
   background: rgba(255, 255, 255, 0.52);
 }
 
+.admin-bulk-apply {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(16, 35, 59, 0.08);
+  background: rgba(243, 247, 250, 0.72);
+}
+
+.admin-impact-preview {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 35, 59, 0.08);
+  background: rgba(250, 247, 239, 0.76);
+}
+
 .admin-profile-chip-grid {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+}
+
+.admin-selection-group {
+  border: 1px solid rgba(16, 35, 59, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.56);
+  overflow: hidden;
+}
+
+.admin-selection-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  background: rgba(244, 248, 251, 0.8);
+}
+
+.admin-selection-summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-selection-body {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 16px;
 }
 
 .admin-json-textarea {
