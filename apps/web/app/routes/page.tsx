@@ -8,6 +8,7 @@ import { RouteScopeControls } from "@/components/route-scope-controls";
 import { getAirlines, getRecentCycles, getReportAccessRequest } from "@/lib/api";
 import { formatDhakaDateTime } from "@/lib/format";
 import { firstParam, manyParams, parseLimit, type RawSearchParams } from "@/lib/query";
+import { getCurrentUserSession } from "@/lib/user-auth";
 
 import { RouteMonitorSection, RouteMonitorSectionFallback } from "./route-monitor-section";
 
@@ -202,6 +203,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
     loadConfiguredRouteEntries(),
     requestId ? getReportAccessRequest(requestId) : Promise.resolve({ ok: true, data: null as null, error: undefined })
   ]);
+  const { user } = await getCurrentUserSession();
   const accessGranted = accessRequest.ok && accessRequest.data?.status === "approved";
 
   const recentCycleOptions = uniqueByKey(recentCycles.data?.items ?? [], (item) => item.cycle_id ?? "");
@@ -263,6 +265,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
           copy="Submit the route and travel window you want to unlock, then refresh this page after approval."
         >
           <ReportAccessRequestPanel
+            currentUser={user}
             request={accessRequest.ok ? accessRequest.data : null}
             scope={{
               cycleId,

@@ -556,6 +556,8 @@ export type ReportAccessRequest = {
   request_id: string;
   page_key: string;
   status: "pending" | "approved" | "rejected" | "payment_required";
+  requester_user_id?: string | null;
+  requester_email?: string | null;
   requester_name?: string | null;
   requester_contact?: string | null;
   requested_start_date?: string | null;
@@ -566,6 +568,18 @@ export type ReportAccessRequest = {
   decided_at_utc?: string | null;
   created_at_utc?: string | null;
   updated_at_utc?: string | null;
+};
+
+export type AuthenticatedUser = {
+  user_id: string;
+  email: string;
+  full_name?: string | null;
+  auth_provider?: string | null;
+  status?: string | null;
+  created_at_utc?: string | null;
+  updated_at_utc?: string | null;
+  last_login_at_utc?: string | null;
+  session_expires_at_utc?: string | null;
 };
 
 type FetchResult<T> = {

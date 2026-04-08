@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { signOut as nextAuthSignOut } from "next-auth/react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Overview" },
@@ -24,9 +25,22 @@ function isActivePath(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function Topbar({ showAdminLink = false }: { showAdminLink?: boolean }) {
+export function Topbar({
+  showAdminLink = false,
+  currentUserName,
+  currentUserEmail
+}: {
+  showAdminLink?: boolean;
+  currentUserName?: string | null;
+  currentUserEmail?: string | null;
+}) {
   const pathname = usePathname() || "/";
   const navItems = showAdminLink ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS] : NAV_ITEMS;
+
+  async function signOut() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    await nextAuthSignOut({ callbackUrl: "/" });
+  }
 
   return (
     <div className="topbar">
@@ -52,6 +66,23 @@ export function Topbar({ showAdminLink = false }: { showAdminLink?: boolean }) {
             </Link>
           ))}
         </nav>
+        <div className="topbar-user">
+          {currentUserEmail ? (
+            <>
+              <div className="topbar-user-copy">
+                <strong>{currentUserName || "Signed in user"}</strong>
+                <span>{currentUserEmail}</span>
+              </div>
+              <button className="button-link ghost topbar-user-button" onClick={signOut} type="button">
+                Sign out
+              </button>
+            </>
+          ) : (
+            <Link className="button-link ghost topbar-user-button" href="/login">
+              Sign in
+            </Link>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -133,8 +133,13 @@ export function AdminAccessRequestsDashboard({
                 <div>
                   <h2 style={{ margin: 0, fontSize: "1.1rem" }}>{item.requester_name || "Unnamed requester"}</h2>
                   <div className="panel-copy" style={{ marginBottom: 0 }}>
-                    {item.requester_contact || "No contact provided"} | {item.page_key} | submitted {item.created_at_utc || "-"}
+                    {(item.requester_email || item.requester_contact || "No contact provided")} | {item.page_key} | submitted {item.created_at_utc || "-"}
                   </div>
+                  {item.requester_user_id ? (
+                    <div className="mono" style={{ marginTop: "0.35rem" }}>
+                      user_id: {item.requester_user_id}
+                    </div>
+                  ) : null}
                 </div>
                 <span className={`pill ${item.status === "approved" ? "good" : "warn"}`}>{formatStatusLabel(item.status)}</span>
               </div>

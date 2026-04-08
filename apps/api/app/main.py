@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import engine, get_optional_db
-from .repositories import access_requests, exporting, reporting
+from .repositories import access_requests, exporting, reporting, user_accounts
 
 LOG = logging.getLogger("api.http")
 
@@ -58,9 +58,28 @@ class AccessRequestUpdateBody(BaseModel):
     decision_note: str | None = None
 
 
+class UserRegisterBody(BaseModel):
+    email: str
+    password: str
+    full_name: str | None = None
+
+
+class UserLoginBody(BaseModel):
+    email: str
+    password: str
+
+
+class UserOAuthLoginBody(BaseModel):
+    email: str
+    full_name: str | None = None
+    auth_provider: str
+    provider_subject: str | None = None
+
+
 @app.on_event("startup")
 def startup() -> None:
     access_requests.ensure_tables(engine)
+    user_accounts.ensure_tables(engine)
 
 
 @app.middleware("http")
@@ -112,6 +131,14 @@ def _require_admin_token(x_admin_token: str | None) -> None:
         raise HTTPException(status_code=403, detail="Invalid admin approval token.")
 
 
+def _require_user_session(db: Session | None, x_user_session: str | None) -> dict:
+    required_db = _require_access_request_db(db)
+    payload = user_accounts.get_session_user(required_db, x_user_session, touch=True)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Sign in is required.")
+    return payload
+
+
 @app.get("/", include_in_schema=False)
 def root() -> RedirectResponse:
     return RedirectResponse(url="/docs", status_code=307)
@@ -139,18 +166,114 @@ def health(db: Session | None = Depends(get_optional_db)) -> dict:
     return reporting.get_health(db)
 
 
-@app.post("/api/v1/access-requests")
-def create_access_request(
-    body: AccessRequestCreateBody,
+@app.post("/api/v1/user-auth/register")
+def register_user(
+    body: UserRegisterBody,
+    request: Request,
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
     required_db = _require_access_request_db(db)
     try:
+        user = user_accounts.register_user(
+            required_db,
+            email=body.email,
+            password=body.password,
+            full_name=body.full_name,
+        )
+        session_token, session_payload = user_accounts.create_session(
+            required_db,
+            user_id=user["user_id"],
+            user_agent=request.headers.get("user-agent"),
+            ip_address=request.client.host if request.client else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"user": user, "session_token": session_token, "session": session_payload}
+
+
+@app.post("/api/v1/user-auth/login")
+def login_user(
+    body: UserLoginBody,
+    request: Request,
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    required_db = _require_access_request_db(db)
+    try:
+        user = user_accounts.authenticate_user(required_db, email=body.email, password=body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+    session_token, session_payload = user_accounts.create_session(
+        required_db,
+        user_id=user["user_id"],
+        user_agent=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"user": user, "session_token": session_token, "session": session_payload}
+
+
+@app.post("/api/v1/user-auth/oauth-login")
+def oauth_login_user(
+    body: UserOAuthLoginBody,
+    request: Request,
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    required_db = _require_access_request_db(db)
+    try:
+        user = user_accounts.upsert_oauth_user(
+            required_db,
+            email=body.email,
+            full_name=body.full_name,
+            auth_provider=body.auth_provider,
+            provider_subject=body.provider_subject,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    session_token, session_payload = user_accounts.create_session(
+        required_db,
+        user_id=user["user_id"],
+        user_agent=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"user": user, "session_token": session_token, "session": session_payload}
+
+
+@app.get("/api/v1/user-auth/me")
+def current_user(
+    x_user_session: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    user = _require_user_session(db, x_user_session)
+    return {"user": user}
+
+
+@app.post("/api/v1/user-auth/logout")
+def logout_user(
+    x_user_session: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    required_db = _require_access_request_db(db)
+    revoked = user_accounts.revoke_session(required_db, x_user_session)
+    return {"ok": revoked}
+
+
+@app.post("/api/v1/access-requests")
+def create_access_request(
+    body: AccessRequestCreateBody,
+    x_user_session: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    required_db = _require_access_request_db(db)
+    user = _require_user_session(required_db, x_user_session)
+    try:
         payload = access_requests.create_request(
             required_db,
             page_key=body.page_key,
-            requester_name=body.requester_name,
-            requester_contact=body.requester_contact,
+            requester_name=user.get("full_name") or body.requester_name,
+            requester_contact=user.get("email") or body.requester_contact,
+            requester_user_id=user.get("user_id"),
+            requester_email=user.get("email"),
             requested_start_date=body.requested_start_date,
             requested_end_date=body.requested_end_date,
             notes=body.notes,

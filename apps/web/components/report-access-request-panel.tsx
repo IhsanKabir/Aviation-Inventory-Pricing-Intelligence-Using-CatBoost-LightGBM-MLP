@@ -3,7 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
-import { getApiBaseUrl, type ReportAccessRequest } from "@/lib/api";
+import type { AuthenticatedUser, ReportAccessRequest } from "@/lib/api";
 
 type RouteAccessScope = {
   cycleId?: string;
@@ -66,17 +66,17 @@ function statusCopy(request: ReportAccessRequest) {
 
 export function ReportAccessRequestPanel({
   scope,
-  request
+  request,
+  currentUser
 }: {
   scope: RouteAccessScope;
   request: ReportAccessRequest | null;
+  currentUser: AuthenticatedUser | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
-  const [requesterName, setRequesterName] = useState("");
-  const [requesterContact, setRequesterContact] = useState("");
   const [notes, setNotes] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const requestedStartDate = scope.startDate || undefined;
@@ -118,15 +118,13 @@ export function ReportAccessRequestPanel({
   async function submitRequest() {
     setSubmitError(null);
     try {
-      const response = await fetch(`${getApiBaseUrl()}/api/v1/access-requests`, {
+      const response = await fetch("/api/user/access-requests", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
           page_key: "routes",
-          requester_name: requesterName || undefined,
-          requester_contact: requesterContact || undefined,
           requested_start_date: requestedStartDate,
           requested_end_date: requestedEndDate,
           notes: notes || undefined,
@@ -213,16 +211,21 @@ export function ReportAccessRequestPanel({
 
       {!request ? (
         <>
-          <div className="field-grid">
-            <label className="field">
-              <span>Requester name</span>
-              <input onChange={(event) => setRequesterName(event.target.value)} placeholder="Optional" type="text" value={requesterName} />
-            </label>
-            <label className="field">
-              <span>Contact</span>
-              <input onChange={(event) => setRequesterContact(event.target.value)} placeholder="Email or phone" type="text" value={requesterContact} />
-            </label>
-          </div>
+          {currentUser ? (
+            <div className="status-banner">
+              Signed in as <strong>{currentUser.full_name || currentUser.email}</strong>
+              <div className="mono" style={{ marginTop: "0.35rem" }}>{currentUser.email}</div>
+            </div>
+          ) : (
+            <div className="status-banner warn">
+              Sign in first so this route-data request can be tracked to a user account.
+              <div className="button-row" style={{ marginTop: "0.7rem" }}>
+                <a className="button-link ghost" href={`/login?next=${encodeURIComponent(`${pathname}?${searchParams.toString()}`)}`}>
+                  Sign in or create account
+                </a>
+              </div>
+            </div>
+          )}
 
           <label className="field">
             <span>Request note</span>
@@ -237,7 +240,7 @@ export function ReportAccessRequestPanel({
           {submitError ? <div className="status-banner warn">{submitError}</div> : null}
 
           <div className="button-row">
-            <button className="button-link" data-pending={isPending} onClick={submitRequest} type="button">
+            <button className="button-link" data-pending={isPending} disabled={!currentUser} onClick={submitRequest} type="button">
               Submit route data request
             </button>
           </div>

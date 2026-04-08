@@ -29,6 +29,8 @@ def ensure_tables(engine: Engine | None) -> None:
                     request_id TEXT PRIMARY KEY,
                     page_key TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    requester_user_id TEXT NULL,
+                    requester_email TEXT NULL,
                     requester_name TEXT NULL,
                     requester_contact TEXT NULL,
                     requested_start_date DATE NULL,
@@ -59,6 +61,8 @@ def ensure_tables(engine: Engine | None) -> None:
                 """
             )
         )
+        conn.execute(text("ALTER TABLE report_access_requests ADD COLUMN IF NOT EXISTS requester_user_id TEXT NULL"))
+        conn.execute(text("ALTER TABLE report_access_requests ADD COLUMN IF NOT EXISTS requester_email TEXT NULL"))
 
 
 def _normalize_text(value: Any) -> str | None:
@@ -158,6 +162,8 @@ def _row_to_payload(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "request_id": row.get("request_id"),
         "page_key": row.get("page_key"),
         "status": row.get("status"),
+        "requester_user_id": row.get("requester_user_id"),
+        "requester_email": row.get("requester_email"),
         "requester_name": row.get("requester_name"),
         "requester_contact": row.get("requester_contact"),
         "requested_start_date": row.get("requested_start_date").isoformat() if row.get("requested_start_date") else None,
@@ -177,6 +183,8 @@ def create_request(
     page_key: str,
     requester_name: str | None,
     requester_contact: str | None,
+    requester_user_id: str | None = None,
+    requester_email: str | None = None,
     requested_start_date: date | None,
     requested_end_date: date | None,
     notes: str | None,
@@ -195,6 +203,8 @@ def create_request(
                 request_id,
                 page_key,
                 status,
+                requester_user_id,
+                requester_email,
                 requester_name,
                 requester_contact,
                 requested_start_date,
@@ -210,6 +220,8 @@ def create_request(
                 :request_id,
                 :page_key,
                 'pending',
+                :requester_user_id,
+                :requester_email,
                 :requester_name,
                 :requester_contact,
                 :requested_start_date,
@@ -226,6 +238,8 @@ def create_request(
         {
             "request_id": request_id,
             "page_key": normalized_page_key,
+            "requester_user_id": _normalize_text(requester_user_id),
+            "requester_email": _normalize_text(requester_email),
             "requester_name": _normalize_text(requester_name),
             "requester_contact": _normalize_text(requester_contact),
             "requested_start_date": requested_start_date,
@@ -252,6 +266,8 @@ def get_request(db: Session, request_id: str) -> dict[str, Any] | None:
                     request_id,
                     page_key,
                     status,
+                    requester_user_id,
+                    requester_email,
                     requester_name,
                     requester_contact,
                     requested_start_date,
@@ -308,6 +324,8 @@ def list_requests(
                 request_id,
                 page_key,
                 status,
+                requester_user_id,
+                requester_email,
                 requester_name,
                 requester_contact,
                 requested_start_date,
