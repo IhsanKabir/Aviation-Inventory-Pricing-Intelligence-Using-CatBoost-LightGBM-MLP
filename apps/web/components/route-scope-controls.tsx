@@ -847,6 +847,26 @@ export function RouteScopeControls({
         )}
       </div>
 
+      {filteredRouteOptions.length ? (
+        <div className="filter-group">
+          <div className="filter-label">Exact routes to choose</div>
+          <div className="chip-row">
+            {filteredRouteOptions.map((item) => (
+              <button
+                key={`exact-route-${item.routeKey}`}
+                className="route-hint-chip"
+                data-active={normalizedSelectedRoutePairs.includes(item.routeKey)}
+                data-pending={isPending}
+                onClick={() => selectRoute(item)}
+                type="button"
+              >
+                {item.routeKey}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="scope-section-card">
         <div className="scope-section-header">
           <div>
@@ -1094,22 +1114,6 @@ export function RouteScopeControls({
         </div>
       ) : null}
 
-      {filteredRouteOptions.length ? (
-        <div className="route-hint-row">
-          {filteredRouteOptions.map((item) => (
-            <button
-              key={item.routeKey}
-              className="route-hint-chip"
-              data-active={normalizedSelectedRoutePairs.includes(item.routeKey)}
-              data-pending={isPending}
-              onClick={() => selectRoute(item)}
-              type="button"
-            >
-              {item.routeKey}
-            </button>
-          ))}
-        </div>
-      ) : null}
       {!airportCodesAreValid ? (
         <div className="status-banner warn">
           Enter complete 3-letter airport codes before applying the route filters.
