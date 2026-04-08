@@ -1023,7 +1023,12 @@ def _resolve_parallel_status(
         if rebuilt:
             ts = dt.datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
             run_file = reports_dir / f"scrape_parallel_{ts}_{heartbeat_cycle_id}.json"
-            _write_json(parallel_file, rebuilt)
+            existing_parallel = _read_json(parallel_file)
+            existing_cycle = str((existing_parallel or {}).get("cycle_id") or "").strip()
+            rebuilt_airline_count = int(rebuilt.get("airline_count") or 0)
+            existing_airline_count = int((existing_parallel or {}).get("airline_count") or 0)
+            if rebuilt_airline_count >= 5 or not existing_parallel or existing_cycle == heartbeat_cycle_id or existing_airline_count < 5:
+                _write_json(parallel_file, rebuilt)
             _write_json(run_file, rebuilt)
             return rebuilt
     if not parallel_status and heartbeat_cycle_id:
@@ -1036,7 +1041,12 @@ def _resolve_parallel_status(
         if rebuilt:
             ts = dt.datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
             run_file = reports_dir / f"scrape_parallel_{ts}_{heartbeat_cycle_id}.json"
-            _write_json(parallel_file, rebuilt)
+            existing_parallel = _read_json(parallel_file)
+            existing_cycle = str((existing_parallel or {}).get("cycle_id") or "").strip()
+            rebuilt_airline_count = int(rebuilt.get("airline_count") or 0)
+            existing_airline_count = int((existing_parallel or {}).get("airline_count") or 0)
+            if rebuilt_airline_count >= 5 or not existing_parallel or existing_cycle == heartbeat_cycle_id or existing_airline_count < 5:
+                _write_json(parallel_file, rebuilt)
             _write_json(run_file, rebuilt)
             return rebuilt
     return parallel_status or {}

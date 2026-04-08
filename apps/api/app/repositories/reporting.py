@@ -611,8 +611,7 @@ def _get_recent_cycles_from_sql(
 
 
 def get_recent_cycles(session: Session | None, limit: int = 10, comparable_only: bool = True) -> list[dict[str, Any]]:
-    prefer_sql = session is not None
-    if not prefer_sql and _bigquery_ready():
+    if _bigquery_ready():
         try:
             comparable_filter = ""
             if comparable_only:
@@ -763,8 +762,7 @@ def get_route_date_availability(
     started_at = time.perf_counter()
     normalized_trip_types = [value for value in _normalize_codes(trip_types) if value in {"OW", "RT"}]
     normalized_route_pairs = _normalize_route_pair_keys(route_pairs)
-    prefer_sql = session is not None
-    if not prefer_sql and _bigquery_ready():
+    if _bigquery_ready():
         try:
             resolved_cycle_id = _resolve_cycle_id_bigquery(cycle_id)
             cache_key = _cache_key(
@@ -1889,8 +1887,7 @@ def list_routes(
         )
         return _set_cached_response(cache_key, configured_payload)
 
-    prefer_sql = session is not None
-    if not prefer_sql and _bigquery_ready():
+    if _bigquery_ready():
         try:
             resolved_cycle_id = _resolve_cycle_id_bigquery(cycle_id) if use_filtered_scope else None
             cache_key = _cache_key(
@@ -2125,9 +2122,7 @@ def list_routes(
 def _resolve_cycle_id(session: Session | None, cycle_id: str | None) -> str | None:
     if cycle_id:
         return cycle_id.strip()
-    if session is None:
-        return None
-    latest_cycle = _get_latest_cycle_from_sql(session, comparable_only=True)
+    latest_cycle = get_latest_cycle(session, comparable_only=True)
     return str(latest_cycle["cycle_id"]) if latest_cycle else None
 
 
@@ -2922,8 +2917,7 @@ def get_route_monitor_matrix(
     normalized_trip_types = [value for value in _normalize_codes(trip_types) if value in {"OW", "RT"}]
     normalized_route_pairs = _normalize_route_pair_keys(route_pairs)
     effective_route_limit = max(route_limit, len(normalized_route_pairs)) if normalized_route_pairs else route_limit
-    prefer_sql = session is not None
-    if not prefer_sql and _bigquery_ready():
+    if _bigquery_ready():
         try:
             resolved_cycle_id = _resolve_cycle_id_bigquery(cycle_id)
             cache_key = _cache_key(

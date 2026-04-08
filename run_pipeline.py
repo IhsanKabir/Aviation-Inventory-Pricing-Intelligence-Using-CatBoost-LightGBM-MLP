@@ -779,6 +779,27 @@ def _parse_cycle_state_ts(value: str | None):
         return None
 
 
+def _cycle_scope_score(payload: dict) -> tuple[int, int, int]:
+    try:
+        airline_count = int(payload.get("aggregate_airline_count") or 0)
+    except (TypeError, ValueError):
+        airline_count = 0
+    try:
+        query_total = int(payload.get("overall_query_total") or 0)
+    except (TypeError, ValueError):
+        query_total = 0
+    try:
+        total_rows = int(payload.get("total_rows_accumulated") or 0)
+    except (TypeError, ValueError):
+        total_rows = 0
+    return (airline_count, query_total, total_rows)
+
+
+def _is_global_cycle_candidate(payload: dict) -> bool:
+    airline_count, query_total, _ = _cycle_scope_score(payload)
+    return airline_count >= 5 and query_total >= 20
+
+
 def _should_replace_cycle_state(existing: dict, candidate: dict) -> bool:
     if not existing:
         return True
@@ -806,6 +827,14 @@ def _should_replace_cycle_state(existing: dict, candidate: dict) -> bool:
         and existing_ts is not None
         and candidate_ts is not None
         and existing_ts > candidate_ts
+    ):
+        return False
+    if (
+        existing_state == "completed"
+        and candidate_state == "completed"
+        and existing_cycle != candidate_cycle
+        and _is_global_cycle_candidate(existing)
+        and not _is_global_cycle_candidate(candidate)
     ):
         return False
     return True

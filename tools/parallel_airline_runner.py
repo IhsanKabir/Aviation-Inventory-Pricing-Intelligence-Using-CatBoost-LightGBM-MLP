@@ -261,6 +261,36 @@ def _run_batches_concurrently(grouped_airlines: dict[str, list[dict]], args, cyc
     return results
 
 
+def _read_json(path: Path) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _is_global_parallel_latest_candidate(args, payload: dict) -> bool:
+    try:
+        airline_count = int(payload.get("airline_count") or 0)
+    except (TypeError, ValueError):
+        airline_count = 0
+    return (
+        airline_count >= 5
+        and not bool(args.quick)
+        and not bool(args.origin)
+        and not bool(args.destination)
+        and not bool(args.date)
+        and not bool(args.date_start)
+        and not bool(args.date_end)
+        and not bool(args.dates)
+        and not bool(args.date_offsets)
+        and not bool(args.dates_file)
+        and not bool(args.probe_group_id)
+        and str(args.trip_plan_mode or "operational").strip().lower() == "operational"
+        and str(args.route_scope or "all").strip().lower() == "all"
+    )
+
+
 def main():
     args = parse_args()
     cycle_id = str(args.cycle_id).strip() if args.cycle_id else str(uuid.uuid4())
@@ -309,7 +339,14 @@ def main():
 
     latest = out_dir / "scrape_parallel_latest.json"
     run = out_dir / f"scrape_parallel_{ts}_{cycle_id}.json"
-    latest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    existing_latest = _read_json(latest)
+    existing_cycle = str(existing_latest.get("cycle_id") or "").strip()
+    if (
+        _is_global_parallel_latest_candidate(args, payload)
+        or not existing_latest
+        or existing_cycle == cycle_id
+    ):
+        latest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     run.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     print(f"parallel_scrape_done airlines={len(airlines)} failed={len(failed)} cycle_id={cycle_id}")
