@@ -49,13 +49,20 @@ jobs:
 
       - name: Deploy Cloud Run service
         run: |
+          ENV_VARS="API_CORS_ORIGINS=${{ secrets.API_CORS_ORIGINS }},API_FORECASTING_SOURCE=bigquery,BIGQUERY_PROJECT_ID=${GCP_PROJECT_ID},BIGQUERY_DATASET=${BIGQUERY_DATASET}"
+          if [ -n "${{ secrets.AIRLINE_DB_URL }}" ]; then
+            ENV_VARS="${ENV_VARS},AIRLINE_DB_URL=${{ secrets.AIRLINE_DB_URL }}"
+          fi
+          if [ -n "${{ secrets.REPORT_ACCESS_ADMIN_TOKEN }}" ]; then
+            ENV_VARS="${ENV_VARS},REPORT_ACCESS_ADMIN_TOKEN=${{ secrets.REPORT_ACCESS_ADMIN_TOKEN }}"
+          fi
           gcloud run deploy "${CLOUD_RUN_SERVICE}" \
             --project "${GCP_PROJECT_ID}" \
             --region "${GCP_REGION}" \
             --image "${IMAGE_URI}" \
             --service-account "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}" \
             --allow-unauthenticated \
-            --set-env-vars "API_CORS_ORIGINS=${{ secrets.API_CORS_ORIGINS }},API_FORECASTING_SOURCE=bigquery,BIGQUERY_PROJECT_ID=${GCP_PROJECT_ID},BIGQUERY_DATASET=${BIGQUERY_DATASET}"
+            --set-env-vars "${ENV_VARS}"
 
       - name: Output service URL
         run: |
