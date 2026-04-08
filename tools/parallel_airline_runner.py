@@ -73,14 +73,14 @@ def parse_args():
     p.add_argument(
         "--sharetrip-max-workers",
         type=int,
-        default=2,
-        help="Maximum concurrent workers for the shared ShareTrip backend family (default: 2).",
+        default=1,
+        help="Maximum concurrent workers for the shared ShareTrip backend family (default: 1).",
     )
     p.add_argument(
         "--sharetrip-cooldown-sec",
         type=float,
-        default=2.0,
-        help="Sleep between ShareTrip-backed airline launches to reduce burst pressure (default: 2.0s).",
+        default=3.0,
+        help="Sleep between ShareTrip-backed airline launches to reduce burst pressure (default: 3.0s).",
     )
     p.add_argument(
         "--wrapper-max-workers",

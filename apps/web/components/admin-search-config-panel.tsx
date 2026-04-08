@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useMemo, useState, useTransition } from "react";
 
 import type {
@@ -79,6 +80,32 @@ function validateOffsetRangesText(value: string, label: string) {
       throw new Error(`${label} has an invalid range: "${entry}". Use forms like 0-7 or 14-21.`);
     }
   }
+}
+
+function AdminAccordionSection({
+  title,
+  summary,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  summary: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className="card panel admin-config-card admin-accordion" open={defaultOpen}>
+      <summary className="admin-accordion-summary">
+        <div>
+          <h3 style={{ marginBottom: "0.35rem" }}>{title}</h3>
+          <div className="panel-copy" style={{ marginBottom: 0 }}>
+            {summary}
+          </div>
+        </div>
+      </summary>
+      <div className="admin-accordion-body">{children}</div>
+    </details>
+  );
 }
 
 export function AdminSearchConfigPanel({
@@ -542,16 +569,15 @@ export function AdminSearchConfigPanel({
         </div>
       )}
 
-      <div className="admin-config-grid">
-        <section className="card panel admin-config-card">
-          <div className="button-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ marginBottom: 0 }}>Run schedule</h3>
+      <div className="stack">
+        <AdminAccordionSection
+          title="Run schedule"
+          summary="Set the global run cadence and task start times used when local scheduler tasks are installed or reapplied."
+        >
+          <div className="button-row" style={{ justifyContent: "flex-end" }}>
             <button className="button-link ghost" type="button" onClick={() => revertSection("schedule")}>
               Revert this section
             </button>
-          </div>
-          <div className="panel-copy">
-            These settings control the local scheduler plan. The start times below are the anchor times used when autorun tasks are installed or reinstalled.
           </div>
 
           <div className="field-grid three-up">
@@ -711,17 +737,16 @@ export function AdminSearchConfigPanel({
               />
             </label>
           </div>
-        </section>
+        </AdminAccordionSection>
 
-        <section className="card panel admin-config-card">
-          <div className="button-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ marginBottom: 0 }}>Passenger defaults</h3>
+        <AdminAccordionSection
+          title="Passenger defaults"
+          summary="Set the global passenger mix used when a run does not provide custom ADT, CHD, and INF values."
+        >
+          <div className="button-row" style={{ justifyContent: "flex-end" }}>
             <button className="button-link ghost" type="button" onClick={() => revertSection("passengers")}>
               Revert this section
             </button>
-          </div>
-          <div className="panel-copy">
-            These values are used when no custom passenger mix is supplied for a run.
           </div>
 
           <div className="field-grid three-up">
@@ -770,18 +795,17 @@ export function AdminSearchConfigPanel({
               />
             </label>
           </div>
-        </section>
+        </AdminAccordionSection>
       </div>
 
-      <section className="card panel admin-config-card">
-        <div className="button-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <h3 style={{ marginBottom: 0 }}>Output options</h3>
+      <AdminAccordionSection
+        title="Output options"
+        summary="Choose which file formats the scraper writes after a run completes."
+      >
+        <div className="button-row" style={{ justifyContent: "flex-end" }}>
           <button className="button-link ghost" type="button" onClick={() => revertSection("output")}>
             Revert this section
           </button>
-        </div>
-        <div className="panel-copy">
-          Choose which report files are written after a run completes.
         </div>
 
         <div className="field-grid three-up">
@@ -857,16 +881,14 @@ export function AdminSearchConfigPanel({
             />
           </label>
         </div>
-      </section>
+      </AdminAccordionSection>
 
-      <section className="card panel admin-config-card">
+      <AdminAccordionSection
+        title="Holiday calendar"
+        summary="Maintain the high-demand holiday dates that influence holiday-focused search windows."
+      >
         <div className="button-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <h3 style={{ marginBottom: "0.35rem" }}>Holiday calendar</h3>
-            <div className="panel-copy" style={{ marginBottom: 0 }}>
-              Keep high-demand national and religious travel dates current so holiday-focused search windows make sense.
-            </div>
-          </div>
+          <div />
           <div className="button-row">
             <button className="button-link ghost" type="button" onClick={() => revertSection("holidays")}>
               Revert this section
@@ -903,17 +925,16 @@ export function AdminSearchConfigPanel({
             </div>
           ))}
         </div>
-      </section>
+      </AdminAccordionSection>
 
-      <section className="card panel admin-config-card">
-        <div className="button-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <h3 style={{ marginBottom: 0 }}>Round-trip and trip profile setup</h3>
+      <AdminAccordionSection
+        title="Trip profile setup"
+        summary="Define one-way and round-trip search windows here using date ranges, day offsets, and return windows."
+      >
+        <div className="button-row" style={{ justifyContent: "flex-end" }}>
           <button className="button-link ghost" type="button" onClick={() => revertSection("tripProfiles")}>
             Revert this section
           </button>
-        </div>
-        <div className="panel-copy">
-          Choose a profile to adjust one-way or round-trip search windows. You can mix exact date ranges, date offsets, and return windows here, then turn each profile on per airline route below.
         </div>
 
         <div className="field-grid three-up">
@@ -1175,17 +1196,16 @@ export function AdminSearchConfigPanel({
             </div>
           </div>
         ) : null}
-      </section>
+      </AdminAccordionSection>
 
-      <section className="card panel admin-config-card">
-        <div className="button-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <h3 style={{ marginBottom: 0 }}>Route-wise setup</h3>
+      <AdminAccordionSection
+        title="Airline and route-wise scheduling"
+        summary="This is where scheduling is controlled per airline and per route by assigning which trip profiles are available, operational, training-only, or deep-only."
+      >
+        <div className="button-row" style={{ justifyContent: "flex-end" }}>
           <button className="button-link ghost" type="button" onClick={() => revertSection("routeProfiles")}>
             Revert this section
           </button>
-        </div>
-        <div className="panel-copy">
-          Yes, airline-wise and route-wise scheduling is supported here. Pick a specific airline route and decide which profiles are available, which run in live collection, and which are training-only or deep-only.
         </div>
 
         <div className="field-grid three-up">
@@ -1373,17 +1393,16 @@ export function AdminSearchConfigPanel({
             </div>
           </div>
         ) : null}
-      </section>
+      </AdminAccordionSection>
 
-      <section className="card panel admin-config-card">
-        <div className="button-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <h3 style={{ marginBottom: 0 }}>Search behavior summary</h3>
+      <AdminAccordionSection
+        title="Search behavior summary"
+        summary="Review the plain-language market behavior groups here, and open the raw JSON only when deeper control is needed."
+      >
+        <div className="button-row" style={{ justifyContent: "flex-end" }}>
           <button className="button-link ghost" type="button" onClick={() => revertSection("advanced")}>
             Revert advanced JSON
           </button>
-        </div>
-        <div className="panel-copy">
-          This translates the heavy market profile file into plain-language groups. Advanced users can still edit the raw JSON below.
         </div>
 
         <div className="admin-config-summary-grid">
@@ -1446,7 +1465,7 @@ export function AdminSearchConfigPanel({
             }
           />
         </label>
-      </section>
+      </AdminAccordionSection>
 
       <div className="button-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
         <div>

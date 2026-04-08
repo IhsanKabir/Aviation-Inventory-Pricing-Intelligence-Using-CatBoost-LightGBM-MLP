@@ -6,7 +6,7 @@ if not exist "%ROOT%\output\reports" mkdir "%ROOT%\output\reports"
 
 set "PYEXE=%ROOT%\.venv\Scripts\python.exe"
 set "LOGFILE=%ROOT%\logs\ingestion_4h.log"
-set "SHARETRIP_SOURCE_POLICY=sharetrip_then_bdfare"
+set "SHARETRIP_SOURCE_POLICY=bdfare_first_then_sharetrip"
 set "SHARETRIP_BDFARE_AIRLINES=all"
 set "SHARETRIP_SOURCE_OVERRIDES="
 set "BS_AUTO_SOURCE_CHAIN=sharetrip,bdfare"

@@ -1467,7 +1467,70 @@ def _source_attempt_summary(source: str, resp: Any) -> Dict[str, Any]:
         "rows": len(rows) if isinstance(rows, list) else None,
         "error": (raw or {}).get("error") if isinstance(raw, dict) else None,
         "message": (raw or {}).get("message") if isinstance(raw, dict) else None,
+        "initialize_status": (raw or {}).get("initialize_status") if isinstance(raw, dict) else None,
+        "initialize_response_preview": (raw or {}).get("initialize_response_preview") if isinstance(raw, dict) else None,
     }
+
+
+def _no_rows_reason_bits(resp: Any) -> list[str]:
+    reason_bits: list[str] = []
+    try:
+        raw = resp.get("raw") if isinstance(resp, dict) else {}
+        if isinstance(raw, dict):
+            err = raw.get("error")
+            if err:
+                reason_bits.append(f"error={err}")
+            msg = raw.get("message")
+            if msg:
+                reason_bits.append(f"message={msg}")
+            search_body = raw.get("search_response")
+            if isinstance(search_body, dict):
+                s_msg = search_body.get("message")
+                if s_msg:
+                    reason_bits.append(f"search_message={s_msg}")
+                s_err = search_body.get("error")
+                if isinstance(s_err, dict) and s_err.get("message"):
+                    reason_bits.append(f"search_error={s_err.get('message')}")
+            hint = raw.get("hint")
+            if hint:
+                reason_bits.append(f"hint={str(hint)[:120]}")
+
+            source_attempts = raw.get("source_attempts")
+            if isinstance(source_attempts, list) and source_attempts:
+                compact_attempts = []
+                sharetrip_init_failed = False
+                sharetrip_rate_limited = False
+                bdfare_empty_ok = False
+                for attempt in source_attempts:
+                    if not isinstance(attempt, dict):
+                        continue
+                    source = str(attempt.get("source") or "?")
+                    ok = bool(attempt.get("ok"))
+                    rows = attempt.get("rows")
+                    error = attempt.get("error")
+                    message = attempt.get("message")
+                    initialize_status = attempt.get("initialize_status")
+                    initialize_preview = str(attempt.get("initialize_response_preview") or "")
+                    if "sharetrip" in source.lower() and error == "initialize_failed":
+                        sharetrip_init_failed = True
+                        if initialize_status == 429 or "E_RATE_LIMIT_EXCEEDED" in initialize_preview:
+                            sharetrip_rate_limited = True
+                    if "bdfare" in source.lower() and ok and rows == 0:
+                        bdfare_empty_ok = True
+                    compact_attempts.append(
+                        f"{source}(ok={str(ok).lower()},rows={rows},error={error or '-'},status={initialize_status or '-'})"
+                    )
+                    if message:
+                        compact_attempts[-1] += f",message={str(message)[:80]}"
+                if compact_attempts:
+                    reason_bits.append("sources=" + "; ".join(compact_attempts))
+                if sharetrip_rate_limited and bdfare_empty_ok:
+                    reason_bits.append("source_diagnosis=sharetrip_rate_limited_then_bdfare_empty")
+                elif sharetrip_init_failed and bdfare_empty_ok:
+                    reason_bits.append("source_diagnosis=sharetrip_initialize_failed_then_bdfare_empty")
+    except Exception:
+        pass
+    return reason_bits
 
 
 MODULE_QUERY_WORKER_DEFAULTS = {
@@ -2728,30 +2791,8 @@ def main():
 
                     else:
                         # Friendly message — we don't error out here.
-                        # If fetch returned ok=false, include compact reason/hint.
-                        reason_bits = []
-                        try:
-                            raw = resp.get("raw") if isinstance(resp, dict) else {}
-                            if isinstance(raw, dict):
-                                err = raw.get("error")
-                                if err:
-                                    reason_bits.append(f"error={err}")
-                                msg = raw.get("message")
-                                if msg:
-                                    reason_bits.append(f"message={msg}")
-                                search_body = raw.get("search_response")
-                                if isinstance(search_body, dict):
-                                    s_msg = search_body.get("message")
-                                    if s_msg:
-                                        reason_bits.append(f"search_message={s_msg}")
-                                    s_err = search_body.get("error")
-                                    if isinstance(s_err, dict) and s_err.get("message"):
-                                        reason_bits.append(f"search_error={s_err.get('message')}")
-                                hint = raw.get("hint")
-                                if hint:
-                                    reason_bits.append(f"hint={str(hint)[:120]}")
-                        except Exception:
-                            pass
+                        # Distinguish genuinely empty markets from source-family failures.
+                        reason_bits = _no_rows_reason_bits(resp)
 
                         if reason_bits:
                             LOG.info(

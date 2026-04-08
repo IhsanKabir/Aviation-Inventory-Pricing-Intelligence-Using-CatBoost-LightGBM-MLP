@@ -1560,6 +1560,29 @@ a {
   gap: 16px;
 }
 
+.admin-accordion {
+  padding: 0;
+  overflow: hidden;
+}
+
+.admin-accordion-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 20px 24px;
+  background: rgba(249, 246, 239, 0.92);
+}
+
+.admin-accordion-summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-accordion-body {
+  display: grid;
+  gap: 16px;
+  padding: 20px 24px 24px;
+  border-top: 1px solid rgba(16, 35, 59, 0.08);
+}
+
 .checkbox-field {
   display: flex;
   align-items: center;

@@ -726,32 +726,56 @@ def fetch_flights_for_airline(
         return result
 
     def _run_bdfare() -> Dict[str, Any]:
-        result = _fetch_bdfare_for_airline(
-            airline_code=airline,
-            origin=origin,
-            destination=destination,
-            date=date,
-            cabin=cabin,
-            adt=adt,
-            chd=chd,
-            inf=inf,
-        )
+        try:
+            result = _fetch_bdfare_for_airline(
+                airline_code=airline,
+                origin=origin,
+                destination=destination,
+                date=date,
+                cabin=cabin,
+                adt=adt,
+                chd=chd,
+                inf=inf,
+            )
+        except Exception as exc:
+            result = {
+                "raw": {
+                    "source": "bdfare",
+                    "error": "bdfare_exception",
+                    "message": _clip_text(exc, 320),
+                },
+                "originalResponse": None,
+                "rows": [],
+                "ok": False,
+            }
         attempts.append(_source_attempt_summary("bdfare", result))
         return result
 
     def _run_sharetrip() -> Dict[str, Any]:
-        result = _fetch_sharetrip_core(
-            airline_code=airline,
-            origin=origin,
-            destination=destination,
-            date=date,
-            cabin=cabin,
-            adt=adt,
-            chd=chd,
-            inf=inf,
-            cookies_path=cookies_path,
-            proxy_url=proxy_url,
-        )
+        try:
+            result = _fetch_sharetrip_core(
+                airline_code=airline,
+                origin=origin,
+                destination=destination,
+                date=date,
+                cabin=cabin,
+                adt=adt,
+                chd=chd,
+                inf=inf,
+                cookies_path=cookies_path,
+                proxy_url=proxy_url,
+            )
+        except Exception as exc:
+            result = {
+                "raw": {
+                    "source": "sharetrip",
+                    "error": "sharetrip_exception",
+                    "message": _clip_text(exc, 320),
+                },
+                "originalResponse": None,
+                "rows": [],
+                "ok": False,
+            }
         attempts.append(_source_attempt_summary("sharetrip", result))
         return result
 
