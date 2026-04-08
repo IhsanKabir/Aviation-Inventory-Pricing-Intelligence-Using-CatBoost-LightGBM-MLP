@@ -1,5 +1,6 @@
 "use client";
 
+import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
@@ -46,9 +47,9 @@ export function UserAuthForm({ googleEnabled = false }: { googleEnabled?: boolea
     }
   }
 
-  function continueWithGoogle() {
+  async function continueWithGoogle() {
     const next = searchParams.get("next") || "/routes";
-    window.location.href = `/api/auth/signin/google?callbackUrl=${encodeURIComponent(next)}`;
+    await signIn("google", { callbackUrl: next });
   }
 
   return (
