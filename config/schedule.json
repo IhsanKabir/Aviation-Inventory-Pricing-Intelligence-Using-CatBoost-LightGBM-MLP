@@ -2,6 +2,23 @@
   "mode": "manual",
   "concurrency": 6,
   "auto_run_interval_hours": 6,
+  "task_windows": {
+    "ingestion": {
+      "start_time": "00:05",
+      "repeat_minutes": 360
+    },
+    "training_enrichment": {
+      "start_time": "01:30"
+    },
+    "training_deep": {
+      "start_time": "02:00",
+      "day_of_week": "Sunday"
+    },
+    "bigquery_sync": {
+      "start_time": "03:30",
+      "repeat_minutes": 180
+    }
+  },
   "auto_run_date_ranges": {
     "default": {
       "combine": true,

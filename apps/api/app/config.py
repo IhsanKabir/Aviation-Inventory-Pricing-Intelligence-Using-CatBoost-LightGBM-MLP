@@ -2,6 +2,49 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+ENV_PATH_CANDIDATES = (
+    REPO_ROOT / ".env",
+    REPO_ROOT / "apps" / "api" / ".env",
+    REPO_ROOT / "apps" / "api" / ".env.local",
+)
+
+
+def _strip_env_value(raw: str) -> str:
+    value = raw.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists() or not path.is_file():
+        return
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = _strip_env_value(value)
+
+
+for env_path in ENV_PATH_CANDIDATES:
+    _load_env_file(env_path)
 
 
 def _split_csv(raw: str | None) -> tuple[str, ...]:
@@ -67,7 +110,7 @@ def load_settings() -> Settings:
         bigquery_query_timeout_sec=bigquery_query_timeout_sec,
         bigquery_project_id=(os.getenv("BIGQUERY_PROJECT_ID", "").strip() or None),
         bigquery_dataset=(os.getenv("BIGQUERY_DATASET", "").strip() or None),
-        forecasting_source=os.getenv("API_FORECASTING_SOURCE", "bigquery").strip().lower() or "bigquery",
+        forecasting_source=os.getenv("API_FORECASTING_SOURCE", "filesystem").strip().lower() or "filesystem",
         report_access_admin_token=(os.getenv("REPORT_ACCESS_ADMIN_TOKEN", "").strip() or None),
     )
 

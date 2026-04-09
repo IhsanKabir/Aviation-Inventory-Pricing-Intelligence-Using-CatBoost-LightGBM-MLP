@@ -34,8 +34,15 @@ REPORTS_ROOT = REPO_ROOT / "output" / "reports"
 PREDICTION_EVAL_RE = re.compile(r"^prediction_eval_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
 PREDICTION_NEXT_RE = re.compile(r"^prediction_next_day_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
 PREDICTION_ROUTE_EVAL_RE = re.compile(r"^prediction_eval_by_route_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
+PREDICTION_ROUTE_WINNERS_RE = re.compile(r"^prediction_route_winners_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
 PREDICTION_BACKTEST_META_RE = re.compile(r"^prediction_backtest_meta_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.json$")
 PREDICTION_BACKTEST_EVAL_RE = re.compile(r"^prediction_backtest_eval_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
+PREDICTION_BACKTEST_ROUTE_EVAL_RE = re.compile(
+    r"^prediction_backtest_eval_by_route_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$"
+)
+PREDICTION_BACKTEST_ROUTE_WINNERS_RE = re.compile(
+    r"^prediction_backtest_route_winners_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$"
+)
 ROUTE_TYPE_DOM = "DOM"
 ROUTE_TYPE_INT = "INT"
 ROUTE_TYPE_UNK = "UNK"
@@ -1282,6 +1289,24 @@ def _read_prediction_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _classify_prediction_bundle_file(file_name: str) -> tuple[str, str, str] | None:
+    patterns: tuple[tuple[str, re.Pattern[str]], ...] = (
+        ("route_eval_path", PREDICTION_ROUTE_EVAL_RE),
+        ("eval_path", PREDICTION_EVAL_RE),
+        ("next_day_path", PREDICTION_NEXT_RE),
+        ("route_winners_path", PREDICTION_ROUTE_WINNERS_RE),
+        ("backtest_route_eval_path", PREDICTION_BACKTEST_ROUTE_EVAL_RE),
+        ("backtest_eval_path", PREDICTION_BACKTEST_EVAL_RE),
+        ("backtest_route_winners_path", PREDICTION_BACKTEST_ROUTE_WINNERS_RE),
+        ("backtest_meta_path", PREDICTION_BACKTEST_META_RE),
+    )
+    for field_name, pattern in patterns:
+        match = pattern.match(file_name)
+        if match:
+            return field_name, match.group("target"), match.group("stamp")
+    return None
+
+
 def _find_prediction_bundles() -> list[dict[str, Any]]:
     bundles: dict[tuple[str, str, str], dict[str, Any]] = {}
     for path in REPORTS_ROOT.rglob("prediction_*"):
@@ -1289,18 +1314,11 @@ def _find_prediction_bundles() -> list[dict[str, Any]]:
             continue
 
         file_name = path.name
-        match = (
-            PREDICTION_EVAL_RE.match(file_name)
-            or PREDICTION_NEXT_RE.match(file_name)
-            or PREDICTION_ROUTE_EVAL_RE.match(file_name)
-            or PREDICTION_BACKTEST_META_RE.match(file_name)
-            or PREDICTION_BACKTEST_EVAL_RE.match(file_name)
-        )
-        if not match:
+        file_info = _classify_prediction_bundle_file(file_name)
+        if not file_info:
             continue
 
-        target = match.group("target")
-        stamp = match.group("stamp")
+        field_name, target, stamp = file_info
         key = (str(path.parent), target, stamp)
         bundle = bundles.setdefault(
             key,
@@ -1313,7 +1331,10 @@ def _find_prediction_bundles() -> list[dict[str, Any]]:
                 "eval_path": None,
                 "route_eval_path": None,
                 "next_day_path": None,
+                "route_winners_path": None,
                 "backtest_eval_path": None,
+                "backtest_route_eval_path": None,
+                "backtest_route_winners_path": None,
                 "backtest_meta_path": None,
             },
         )
@@ -1321,16 +1342,7 @@ def _find_prediction_bundles() -> list[dict[str, Any]]:
             max(path.stat().st_mtime, Path(bundle["bundle_dir"]).stat().st_mtime),
             tz=timezone.utc,
         ).isoformat()
-        if file_name.startswith("prediction_eval_by_route_"):
-            bundle["route_eval_path"] = str(path)
-        elif file_name.startswith("prediction_eval_"):
-            bundle["eval_path"] = str(path)
-        elif file_name.startswith("prediction_next_day_"):
-            bundle["next_day_path"] = str(path)
-        elif file_name.startswith("prediction_backtest_eval_"):
-            bundle["backtest_eval_path"] = str(path)
-        elif file_name.startswith("prediction_backtest_meta_"):
-            bundle["backtest_meta_path"] = str(path)
+        bundle[field_name] = str(path)
 
     return sorted(
         bundles.values(),
@@ -1716,7 +1728,12 @@ def _get_forecasting_payload_from_files(limit_routes: int = 25, limit_next_day: 
         eval_rows = _read_prediction_csv(Path(bundle["eval_path"]), limit=50) if bundle.get("eval_path") else []
         route_eval_rows = _read_prediction_csv(Path(bundle["route_eval_path"]), limit=limit_routes) if bundle.get("route_eval_path") else []
         next_day_rows = _read_prediction_csv(Path(bundle["next_day_path"]), limit=limit_next_day) if bundle.get("next_day_path") else []
+        route_winner_rows = _read_prediction_csv(Path(bundle["route_winners_path"]), limit=limit_routes) if bundle.get("route_winners_path") else []
         backtest_eval_rows = _read_prediction_csv(Path(bundle["backtest_eval_path"]), limit=40) if bundle.get("backtest_eval_path") else []
+        backtest_route_winner_rows = _read_prediction_csv(
+            Path(bundle["backtest_route_winners_path"]),
+            limit=limit_routes,
+        ) if bundle.get("backtest_route_winners_path") else []
         backtest_meta = _read_prediction_json(Path(bundle["backtest_meta_path"])) if bundle.get("backtest_meta_path") else None
         return {
             "bundle_dir": bundle["bundle_dir"],
@@ -1726,10 +1743,10 @@ def _get_forecasting_payload_from_files(limit_routes: int = 25, limit_next_day: 
             "modified_at_utc": bundle["modified_at_utc"],
             "overall_eval": eval_rows,
             "route_eval": route_eval_rows,
-            "route_winners": [],
+            "route_winners": route_winner_rows,
             "next_day": next_day_rows,
             "backtest_eval": backtest_eval_rows,
-            "backtest_route_winners": [],
+            "backtest_route_winners": backtest_route_winner_rows,
             "backtest_meta": backtest_meta,
         }
 
