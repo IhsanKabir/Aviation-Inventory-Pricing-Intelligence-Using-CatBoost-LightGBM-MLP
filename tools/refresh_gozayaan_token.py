@@ -386,7 +386,8 @@ def main():
 
         if not holder.get("token"):
             context.close()
-            browser.close()
+            if browser is not None:
+                browser.close()
             raise SystemExit(
                 "Failed to capture x-kong-segment-id from browser traffic. "
                 "Try running without --headless and complete one manual search."

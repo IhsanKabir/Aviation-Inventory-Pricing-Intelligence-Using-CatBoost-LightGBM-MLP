@@ -21,14 +21,31 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
+from urllib.request import Request, urlopen
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from modules.penalties import parse_gozayaan_policies
-from modules.requester import Requester
+try:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+except Exception:  # pragma: no cover - optional dependency fallback
+    hashes = None
+    serialization = None
+    padding = None
+
+try:
+    from modules.penalties import parse_gozayaan_policies
+    from modules.requester import Requester
+except ModuleNotFoundError:
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    from modules.penalties import parse_gozayaan_policies
+    from modules.requester import Requester
 
 
 LOG = logging.getLogger(__name__)
@@ -63,11 +80,23 @@ ENV_TOKEN_REFRESH_TIMEOUT_SEC = "GOZAYAAN_TOKEN_REFRESH_TIMEOUT_SEC"
 ENV_HEADERS_FILE = "GOZAYAAN_HEADERS_FILE"
 ENV_RATE_LIMIT_STATE_FILE = "GOZAYAAN_RATE_LIMIT_STATE_FILE"
 ENV_RATE_LIMIT_COOLDOWN_SEC = "GOZAYAAN_RATE_LIMIT_COOLDOWN_SEC"
+ENV_SOURCE_MODE = "GOZAYAAN_SOURCE_MODE"
+ENV_SIGNING_KEY_FILE = "GOZAYAAN_SIGNING_KEY_FILE"
+ENV_HOMEPAGE_URL = "GOZAYAAN_HOMEPAGE_URL"
+ENV_GENERATED_TOKEN_TTL_SEC = "GOZAYAAN_GENERATED_TOKEN_TTL_SEC"
+ENV_BROWSER_CAPTURE_AUTO = "GOZAYAAN_BROWSER_CAPTURE_AUTO"
+ENV_BROWSER_CAPTURE_CMD = "GOZAYAAN_BROWSER_CAPTURE_CMD"
+ENV_BROWSER_CAPTURE_TIMEOUT_SEC = "GOZAYAAN_BROWSER_CAPTURE_TIMEOUT_SEC"
 
 DEFAULT_TOKEN_CACHE_FILE = "output/manual_sessions/gozayaan_token_latest.json"
 DEFAULT_COOKIES_CACHE_FILE = "output/manual_sessions/gozayaan_cookies.json"
 DEFAULT_HEADERS_CACHE_FILE = "output/manual_sessions/gozayaan_headers_latest.json"
 DEFAULT_RATE_LIMIT_STATE_FILE = "output/manual_sessions/gozayaan_rate_limit_state.json"
+DEFAULT_SIGNING_KEY_CACHE_FILE = "output/manual_sessions/gozayaan_signing_key.pem"
+DEFAULT_HOMEPAGE_URL = "https://gozayaan.com/"
+DEFAULT_GENERATED_TOKEN_TTL_SEC = 120
+RUNS_DIR = Path(__file__).resolve().parents[1] / "output" / "manual_sessions" / "runs"
+HEADER_GENERATOR_RE = re.compile(r'headerGenerator:"([^"]+)"')
 
 
 def _safe_float(v: Any) -> Optional[float]:
@@ -86,6 +115,31 @@ def _safe_int(v: Any) -> Optional[int]:
         return int(v)
     except Exception:
         return None
+
+
+def _safe_json_loads(text: Any) -> Any:
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
+
+
+def _load_json_object(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _load_json_array(path: Path) -> Optional[List[Any]]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return None
+    return raw if isinstance(raw, list) else None
 
 
 def _bool_or_none(v: Any) -> Optional[bool]:
@@ -112,12 +166,20 @@ def _parse_hash_str(hash_str: str) -> Dict[str, Optional[str]]:
         out["airline"] = (parts[0] or "").strip().upper() or None
     if len(parts) >= 2:
         block = parts[1].strip().upper()
-        seg = block.split("-")
-        if len(seg) >= 3:
-            out["origin"] = seg[0]
-            out["destination"] = seg[1]
-            out["departure_date"] = seg[2]
-    if len(parts) >= 3:
+        match = re.match(
+            r"^(?P<origin>[A-Z0-9]{3})-(?P<destination>[A-Z0-9]{3})-"
+            r"(?P<date>\d{4}-\d{2}-\d{2})(?:-(?P<carrier>[A-Z0-9]{2,3}))?"
+            r"(?:-(?P<flight>[A-Z0-9]+))?",
+            block,
+        )
+        if match:
+            out["origin"] = match.group("origin")
+            out["destination"] = match.group("destination")
+            out["departure_date"] = match.group("date")
+            flight_hint = str(match.group("flight") or "").strip().upper()
+            if flight_hint:
+                out["flight_number_hint"] = flight_hint
+    if len(parts) >= 3 and not out.get("flight_number_hint"):
         out["flight_number_hint"] = (parts[2] or "").strip().upper() or None
     return out
 
@@ -325,9 +387,135 @@ def _rate_limit_state_file() -> str:
     return str(os.getenv(ENV_RATE_LIMIT_STATE_FILE, "").strip() or DEFAULT_RATE_LIMIT_STATE_FILE)
 
 
+def _signing_key_cache_file() -> str:
+    return str(os.getenv(ENV_SIGNING_KEY_FILE, "").strip() or DEFAULT_SIGNING_KEY_CACHE_FILE)
+
+
+def _homepage_url() -> str:
+    return str(os.getenv(ENV_HOMEPAGE_URL, "").strip() or DEFAULT_HOMEPAGE_URL)
+
+
+def _generated_token_ttl_sec() -> int:
+    raw = _safe_int(os.getenv(ENV_GENERATED_TOKEN_TTL_SEC))
+    return int(raw if raw is not None else DEFAULT_GENERATED_TOKEN_TTL_SEC)
+
+
 def _rate_limit_cooldown_sec() -> int:
     raw = _safe_int(os.getenv(ENV_RATE_LIMIT_COOLDOWN_SEC))
     return int(raw if raw is not None else 900)
+
+
+def _source_mode() -> str:
+    raw = str(os.getenv(ENV_SOURCE_MODE, "live_then_capture") or "live_then_capture").strip().lower()
+    return raw or "live_then_capture"
+
+
+def _preferred_refresh_python() -> str:
+    repo_root = Path(__file__).resolve().parents[1]
+    venv_py = repo_root / ".venv" / "Scripts" / "python.exe"
+    if venv_py.exists():
+        return str(venv_py)
+    return sys.executable or "python"
+
+
+def _extract_signing_key_pem(html_text: str) -> Optional[str]:
+    if not html_text:
+        return None
+    match = HEADER_GENERATOR_RE.search(html_text)
+    if not match:
+        return None
+    try:
+        pem_bytes = base64.b64decode(match.group(1))
+        pem_text = pem_bytes.decode("utf-8")
+    except Exception:
+        return None
+    if "BEGIN PRIVATE KEY" not in pem_text:
+        return None
+    return pem_text
+
+
+def _load_cached_signing_key_pem() -> Optional[str]:
+    path = Path(_signing_key_cache_file())
+    if not path.exists():
+        return None
+    try:
+        pem_text = path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    return pem_text if "BEGIN PRIVATE KEY" in pem_text else None
+
+
+def _fetch_signing_key_pem() -> Optional[str]:
+    req = Request(
+        _homepage_url(),
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+    )
+    try:
+        with urlopen(req, timeout=20) as resp:
+            html_text = resp.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        LOG.warning("Gozayaan signing key fetch failed: %s", exc)
+        return None
+    pem_text = _extract_signing_key_pem(html_text)
+    if not pem_text:
+        return None
+    cache_path = Path(_signing_key_cache_file())
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(pem_text, encoding="utf-8")
+    except Exception:
+        pass
+    return pem_text
+
+
+def _resolve_signing_key_pem() -> Optional[str]:
+    return _load_cached_signing_key_pem() or _fetch_signing_key_pem()
+
+
+def _b64url_json(payload: Dict[str, Any]) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_bytes(payload: bytes) -> str:
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _build_generated_kong_token_context(search_payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(search_payload, dict) or not search_payload:
+        return None
+    if hashes is None or serialization is None or padding is None:
+        return None
+    pem_text = _resolve_signing_key_pem()
+    if not pem_text:
+        return None
+    ttl_sec = max(15, _generated_token_ttl_sec())
+    now = int(time.time())
+    payload = dict(search_payload)
+    payload["iat"] = now
+    payload["exp"] = now + ttl_sec
+    try:
+        private_key = serialization.load_pem_private_key(pem_text.encode("utf-8"), password=None)
+        header_b64 = _b64url_json({"alg": "RS256", "typ": "JWT"})
+        payload_b64 = _b64url_json(payload)
+        message = f"{header_b64}.{payload_b64}".encode("ascii")
+        signature = private_key.sign(message, padding.PKCS1v15(), hashes.SHA256())
+    except Exception as exc:
+        LOG.warning("Gozayaan token generation failed: %s", exc)
+        return None
+    expires_at = datetime.datetime.fromtimestamp(now + ttl_sec, tz=datetime.timezone.utc)
+    return {
+        "token": f"{header_b64}.{payload_b64}.{_b64url_bytes(signature)}",
+        "source": "generated",
+        "cache_file": _signing_key_cache_file(),
+        "expires_at_utc": expires_at.isoformat(),
+        "ttl_sec": ttl_sec,
+        "below_min_ttl": False,
+        "signing_key_source": "homepage_config",
+    }
 
 
 def _resolve_initial_cookies_path(explicit: Optional[str]) -> Optional[str]:
@@ -368,7 +556,10 @@ def _load_cached_kong_token(min_ttl_sec: int = 0) -> Optional[Dict[str, Any]]:
     }
 
 
-def _resolve_active_kong_token(min_ttl_sec: int = 0) -> Optional[Dict[str, Any]]:
+def _resolve_active_kong_token(
+    min_ttl_sec: int = 0,
+    search_payload: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
     env_token = str(os.getenv(ENV_X_KONG_SEGMENT_ID, "")).strip()
     env_ctx: Optional[Dict[str, Any]] = None
     if env_token:
@@ -383,6 +574,9 @@ def _resolve_active_kong_token(min_ttl_sec: int = 0) -> Optional[Dict[str, Any]]
         }
         if ttl_sec is None or ttl_sec > min_ttl_sec:
             return env_ctx
+    generated_ctx = _build_generated_kong_token_context(search_payload)
+    if generated_ctx:
+        return generated_ctx
     cache_ctx = _load_cached_kong_token(min_ttl_sec=min_ttl_sec)
     if cache_ctx:
         return cache_ctx
@@ -448,6 +642,8 @@ def _active_rate_limit_state() -> Optional[Dict[str, Any]]:
 def _token_needs_refresh(token_ctx: Optional[Dict[str, Any]], min_ttl_sec: int) -> bool:
     if not isinstance(token_ctx, dict):
         return True
+    if str(token_ctx.get("source") or "").strip().lower() == "generated":
+        return False
     token = str(token_ctx.get("token") or "").strip()
     if not token:
         return True
@@ -481,16 +677,34 @@ def _default_refresh_command(
     cookies_file: str,
     headers_file: str,
 ) -> str:
-    py = sys.executable or "python"
+    py = _preferred_refresh_python()
     ctx = _refresh_command_context(search_payload)
     return (
         f'"{py}" tools/refresh_gozayaan_token.py '
         f'--out "{cache_file}" --non-interactive '
         f'--cookies-out "{cookies_file}" '
         f'--headers-out "{headers_file}" '
+        f'--browser-channel chrome '
+        f'--user-data-dir "output/manual_sessions/gozayaan_profile" '
         f'--origin "{ctx["origin"]}" --destination "{ctx["destination"]}" '
         f'--date "{ctx["date"]}" --cabin "{ctx["cabin"]}" '
         f'--adt {ctx["adt"]} --chd {ctx["chd"]} --inf {ctx["inf"]}'
+    )
+
+
+def _browser_capture_enabled(default: bool = True) -> bool:
+    return _env_truthy(ENV_BROWSER_CAPTURE_AUTO, default=default)
+
+
+def _default_browser_capture_command(search_payload: Optional[Dict[str, Any]]) -> str:
+    py = _preferred_refresh_python()
+    ctx = _refresh_command_context(search_payload)
+    return (
+        f'"{py}" tools/capture_gozayaan_live.py '
+        f'--origin "{ctx["origin"]}" --destination "{ctx["destination"]}" '
+        f'--date "{ctx["date"]}" --cabin "{ctx["cabin"]}" '
+        f'--adt {ctx["adt"]} --chd {ctx["chd"]} --inf {ctx["inf"]} '
+        f'--headless'
     )
 
 
@@ -555,6 +769,54 @@ def _run_refresh_command(
         }
 
 
+def _run_browser_capture_command(
+    search_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    command_template = str(os.getenv(ENV_BROWSER_CAPTURE_CMD, "")).strip()
+    fmt_ctx = {
+        "python": _preferred_refresh_python(),
+    }
+    fmt_ctx.update(_refresh_command_context(search_payload))
+    if command_template:
+        try:
+            command = command_template.format(**fmt_ctx)
+        except Exception:
+            command = command_template
+    else:
+        command = _default_browser_capture_command(search_payload)
+
+    timeout_sec = _safe_float(os.getenv(ENV_BROWSER_CAPTURE_TIMEOUT_SEC))
+    timeout_sec = float(timeout_sec if timeout_sec is not None else 180.0)
+    timeout_sec = max(30.0, timeout_sec)
+    LOG.info("Running Gozayaan browser capture command")
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            check=False,
+        )
+        return {
+            "ok": proc.returncode == 0,
+            "command": command,
+            "returncode": proc.returncode,
+            "context": fmt_ctx,
+            "stdout_tail": "\n".join((proc.stdout or "").splitlines()[-20:]),
+            "stderr_tail": "\n".join((proc.stderr or "").splitlines()[-20:]),
+            "timeout_sec": timeout_sec,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "command": command,
+            "context": fmt_ctx,
+            "error": str(exc),
+            "timeout_sec": timeout_sec,
+        }
+
+
 def _attempt_runtime_refresh(
     *,
     search_payload: Optional[Dict[str, Any]],
@@ -562,6 +824,22 @@ def _attempt_runtime_refresh(
     headers_cache_file: str,
     min_ttl_sec: int,
 ) -> Dict[str, Any]:
+    generated_ctx = _build_generated_kong_token_context(search_payload)
+    if generated_ctx:
+        generated_token = str(generated_ctx.get("token") or "").strip()
+        return {
+            "refresh_meta": {
+                "ok": True,
+                "mode": "generated",
+                "source": generated_ctx.get("signing_key_source"),
+                "cache_file": generated_ctx.get("cache_file"),
+                "expires_at_utc": generated_ctx.get("expires_at_utc"),
+            },
+            "token_ctx": generated_ctx,
+            "token": generated_token,
+            "cookies_path": cookie_cache_file if Path(cookie_cache_file).exists() else None,
+            "headers": _build_headers(token=generated_token or None),
+        }
     refresh_meta = _run_refresh_command(
         _token_cache_file(),
         search_payload=search_payload,
@@ -577,6 +855,61 @@ def _attempt_runtime_refresh(
         "cookies_path": cookie_cache_file if Path(cookie_cache_file).exists() else None,
         "headers": _build_headers(token=refreshed_token or None),
     }
+
+
+def _attempt_browser_capture(
+    *,
+    airline_code: str,
+    origin: str,
+    destination: str,
+    date: str,
+    search_payload: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    capture_meta = _run_browser_capture_command(search_payload=search_payload)
+    saved_capture = _find_matching_saved_capture(
+        airline_code=airline_code,
+        origin=origin,
+        destination=destination,
+        date=date,
+    )
+    return {
+        "capture_meta": capture_meta,
+        "saved_capture": saved_capture,
+    }
+
+
+def _try_browser_capture_fallback(
+    *,
+    source_mode: str,
+    airline_code: str,
+    origin: str,
+    destination: str,
+    date: str,
+    search_payload: Optional[Dict[str, Any]],
+    live_error: str,
+    extra_raw: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if source_mode not in {"live_then_capture", "capture_fallback", "auto"}:
+        return {"capture_out": None, "capture_meta": None}
+    if not _browser_capture_enabled(default=True):
+        return {"capture_out": None, "capture_meta": None}
+    attempt = _attempt_browser_capture(
+        airline_code=airline_code,
+        origin=origin,
+        destination=destination,
+        date=date,
+        search_payload=search_payload,
+    )
+    capture_meta = attempt.get("capture_meta")
+    saved_capture = attempt.get("saved_capture")
+    if not saved_capture:
+        return {"capture_out": None, "capture_meta": capture_meta}
+    capture_out = _capture_result(saved_capture, airline_code=airline_code)
+    capture_out["raw"]["live_error"] = live_error
+    capture_out["raw"]["browser_capture"] = capture_meta
+    if isinstance(extra_raw, dict):
+        capture_out["raw"].update(extra_raw)
+    return {"capture_out": capture_out, "capture_meta": capture_meta}
 
 
 def _post_json(req: Requester, url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> tuple[int, Any]:
@@ -900,6 +1233,268 @@ def _dedupe_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def _extract_rows_from_leg_fares_response(
+    *,
+    airline_code: str,
+    response_body: Any,
+    requested_cabin: str,
+    adt: int,
+    chd: int,
+    inf: int,
+    search_id_hint: Optional[str] = None,
+    leg_hash_hint: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    if not isinstance(response_body, dict) or not bool(response_body.get("status")):
+        return []
+    result = response_body.get("result") or {}
+    if not isinstance(result, dict):
+        return []
+
+    fares = result.get("fares") or []
+    policies = result.get("policies") or []
+    legs = result.get("legs") or []
+    segments = result.get("segments") or []
+
+    if not isinstance(fares, list):
+        return []
+
+    legs_by_hash: Dict[str, Dict[str, Any]] = {}
+    segments_by_hash: Dict[str, Dict[str, Any]] = {}
+    if isinstance(legs, list):
+        for leg in legs:
+            if isinstance(leg, dict):
+                h = str(leg.get("hash") or "").strip()
+                if h:
+                    legs_by_hash[h] = leg
+    if isinstance(segments, list):
+        for seg in segments:
+            if isinstance(seg, dict):
+                h = str(seg.get("hash") or "").strip()
+                if h:
+                    segments_by_hash[h] = seg
+
+    search_id = str(
+        result.get("search_id")
+        or response_body.get("search_id")
+        or search_id_hint
+        or ""
+    ).strip()
+
+    rows: List[Dict[str, Any]] = []
+    for fare in fares:
+        if not isinstance(fare, dict):
+            continue
+        meta = _parse_hash_str(str(fare.get("hash_str") or ""))
+        if meta.get("airline") != str(airline_code).upper():
+            continue
+
+        primary_leg_hash = str(leg_hash_hint or "").strip()
+        fare_leg_hashes = fare.get("leg_hashes")
+        if isinstance(fare_leg_hashes, list) and fare_leg_hashes:
+            hs = str(fare_leg_hashes[0] or "").strip()
+            if hs:
+                primary_leg_hash = hs
+        if not primary_leg_hash:
+            primary_leg_hash = str(fare.get("hash") or "").strip()
+
+        leg_obj = legs_by_hash.get(primary_leg_hash)
+        seg_objs: List[Dict[str, Any]] = []
+        if isinstance(leg_obj, dict):
+            segment_hashes = leg_obj.get("segment_hashes")
+            if isinstance(segment_hashes, list):
+                for sh in segment_hashes:
+                    seg = segments_by_hash.get(str(sh or ""))
+                    if isinstance(seg, dict):
+                        seg_objs.append(seg)
+
+        row = _normalize_fare_row(
+            airline_code=str(airline_code).upper(),
+            search_id=search_id,
+            leg_hash=primary_leg_hash,
+            fare=fare,
+            leg=leg_obj,
+            segments=seg_objs,
+            policies=policies if isinstance(policies, list) else [],
+            requested_cabin=requested_cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+        rows.append(row)
+
+    return _dedupe_rows(rows)
+
+
+def extract_capture_groups_from_payload_items(
+    payload_items: Iterable[Dict[str, Any]],
+    *,
+    requested_cabin: str = "Economy",
+    adt: int = 1,
+    chd: int = 0,
+    inf: int = 0,
+) -> Dict[Tuple[str, str, str, str], Dict[str, Any]]:
+    groups: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+
+    for item in payload_items:
+        if not isinstance(item, dict):
+            continue
+        response_body = item.get("response_body")
+        if not isinstance(response_body, dict) or not bool(response_body.get("status")):
+            continue
+        result = response_body.get("result") or {}
+        fares = result.get("fares") or []
+        if not isinstance(fares, list):
+            continue
+
+        airlines = sorted(
+            {
+                str((_parse_hash_str(str(fare.get("hash_str") or "")).get("airline") or "")).upper()
+                for fare in fares
+                if isinstance(fare, dict)
+            }
+        )
+        airlines = [a for a in airlines if a]
+        if not airlines:
+            continue
+
+        for airline in airlines:
+            rows = _extract_rows_from_leg_fares_response(
+                airline_code=airline,
+                response_body=response_body,
+                requested_cabin=requested_cabin,
+                adt=adt,
+                chd=chd,
+                inf=inf,
+                search_id_hint=str(item.get("search_id") or "").strip() or None,
+                leg_hash_hint=str(item.get("leg_hash") or "").strip() or None,
+            )
+            for row in rows:
+                key = (
+                    str(row.get("airline") or "").upper(),
+                    str(row.get("origin") or "").upper(),
+                    str(row.get("destination") or "").upper(),
+                    str(row.get("departure") or "")[:10],
+                )
+                group = groups.setdefault(
+                    key,
+                    {
+                        "airline": key[0],
+                        "origin": key[1],
+                        "destination": key[2],
+                        "date": key[3],
+                        "rows": [],
+                        "payload_items": [],
+                    },
+                )
+                group["rows"] = _dedupe_rows(list(group["rows"]) + [row])
+                slim_item = {
+                    "source_path": item.get("source_path"),
+                    "source_type": item.get("source_type"),
+                    "entry_index": item.get("entry_index"),
+                    "request_url": item.get("request_url"),
+                    "request_body": item.get("request_body"),
+                    "search_id": item.get("search_id"),
+                    "leg_hash": item.get("leg_hash"),
+                    "response_body": response_body,
+                }
+                existing_sig = {
+                    (
+                        str(x.get("source_path") or ""),
+                        str(x.get("entry_index") or ""),
+                        str(x.get("leg_hash") or ""),
+                    )
+                    for x in group["payload_items"]
+                    if isinstance(x, dict)
+                }
+                sig = (
+                    str(slim_item.get("source_path") or ""),
+                    str(slim_item.get("entry_index") or ""),
+                    str(slim_item.get("leg_hash") or ""),
+                )
+                if sig not in existing_sig:
+                    group["payload_items"].append(slim_item)
+
+    return groups
+
+
+def _find_matching_saved_capture(
+    *,
+    airline_code: str,
+    origin: str,
+    destination: str,
+    date: str,
+) -> Optional[Dict[str, Any]]:
+    if not RUNS_DIR.exists():
+        return None
+
+    wanted = (
+        str(airline_code or "").upper().strip(),
+        str(origin or "").upper().strip(),
+        str(destination or "").upper().strip(),
+        str(date or "")[:10],
+    )
+
+    summary_paths = sorted(
+        (p for p in RUNS_DIR.glob("gozayaan_*/*gozayaan_capture_summary.json") if p.is_file()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for summary_path in summary_paths:
+        summary = _load_json_object(summary_path)
+        if not summary:
+            continue
+        key = (
+            str(summary.get("airline") or "").upper().strip(),
+            str(summary.get("origin") or "").upper().strip(),
+            str(summary.get("destination") or "").upper().strip(),
+            str(summary.get("date") or "")[:10],
+        )
+        if key != wanted:
+            continue
+        rows_path_raw = summary.get("rows_path")
+        rows_path = Path(rows_path_raw) if isinstance(rows_path_raw, str) and rows_path_raw.strip() else (summary_path.parent / "gozayaan_rows.json")
+        if not rows_path.is_absolute():
+            rows_path = (summary_path.parent / rows_path).resolve()
+        rows = _load_json_array(rows_path)
+        if not rows:
+            continue
+        payloads_path_raw = summary.get("payloads_path")
+        payloads_path = Path(payloads_path_raw) if isinstance(payloads_path_raw, str) and payloads_path_raw.strip() else (summary_path.parent / "gozayaan_leg_fares_payloads.json")
+        if not payloads_path.is_absolute():
+            payloads_path = (summary_path.parent / payloads_path).resolve()
+        payloads = _load_json_array(payloads_path) if payloads_path.exists() else None
+        return {
+            "summary_path": str(summary_path.resolve()),
+            "rows_path": str(rows_path.resolve()),
+            "payloads_path": str(payloads_path.resolve()) if payloads_path.exists() else None,
+            "summary": summary,
+            "rows": rows,
+            "payload_items": payloads if isinstance(payloads, list) else None,
+        }
+
+    return None
+
+
+def _capture_result(saved_capture: Dict[str, Any], *, airline_code: str) -> Dict[str, Any]:
+    rows = list(saved_capture.get("rows") or [])
+    payload_items = saved_capture.get("payload_items")
+    summary = saved_capture.get("summary") or {}
+    return {
+        "raw": {
+            "source": "gozayaan_capture",
+            "airline": str(airline_code).upper(),
+            "capture_summary_path": saved_capture.get("summary_path"),
+            "capture_rows_path": saved_capture.get("rows_path"),
+            "capture_payloads_path": saved_capture.get("payloads_path"),
+            "capture_generated_at": summary.get("generated_at_utc"),
+            "capture_rows_count": len(rows),
+        },
+        "originalResponse": payload_items if isinstance(payload_items, list) else None,
+        "rows": rows,
+        "ok": bool(rows),
+    }
+
+
 def fetch_flights_for_airline(
     *,
     airline_code: str,
@@ -933,14 +1528,22 @@ def fetch_flights_for_airline(
     min_ttl_sec = _safe_int(os.getenv(ENV_TOKEN_MIN_TTL_SEC))
     min_ttl_sec = int(min_ttl_sec if min_ttl_sec is not None else 300)
     auto_refresh_token = _env_truthy(ENV_TOKEN_AUTO_REFRESH, default=True)
-    token_ctx = _resolve_active_kong_token(min_ttl_sec=min_ttl_sec)
+    source_mode = _source_mode()
+    token_ctx = _resolve_active_kong_token(min_ttl_sec=min_ttl_sec, search_payload=search_payload)
     token_value = str((token_ctx or {}).get("token") or "").strip()
     headers = _build_headers(token=token_value or None)
+    saved_capture = _find_matching_saved_capture(
+        airline_code=airline_code,
+        origin=origin,
+        destination=destination,
+        date=date,
+    )
 
     out: Dict[str, Any] = {
         "raw": {
             "source": "gozayaan",
             "airline": str(airline_code).upper(),
+            "source_mode": source_mode,
             "search_payload": search_payload,
             "headers_hint": {
                 "has_x_kong_segment_id": bool(headers.get("x-kong-segment-id")),
@@ -963,8 +1566,45 @@ def fetch_flights_for_airline(
         "ok": False,
     }
 
+    if saved_capture:
+        out["raw"]["capture_available"] = {
+            "summary_path": saved_capture.get("summary_path"),
+            "rows_path": saved_capture.get("rows_path"),
+            "rows_count": len(saved_capture.get("rows") or []),
+            "generated_at_utc": ((saved_capture.get("summary") or {}).get("generated_at_utc")),
+        }
+
+    if source_mode in {"capture", "capture_only", "capture_first"}:
+        if saved_capture:
+            return _capture_result(saved_capture, airline_code=airline_code)
+        out["raw"]["error"] = "capture_not_found"
+        out["raw"]["hint"] = (
+            "No saved Gozayaan capture matches this airline/route/date. "
+            "Import a HAR/raw capture first, or switch GOZAYAAN_SOURCE_MODE to live_then_capture."
+        )
+        return out
+
     active_cooldown = _active_rate_limit_state()
     if active_cooldown:
+        if source_mode in {"live_then_capture", "capture_fallback", "auto"} and saved_capture:
+            capture_out = _capture_result(saved_capture, airline_code=airline_code)
+            capture_out["raw"]["live_error"] = "rate_limit_cooldown_active"
+            capture_out["raw"]["rate_limit_state"] = active_cooldown
+            return capture_out
+        browser_capture = _try_browser_capture_fallback(
+            source_mode=source_mode,
+            airline_code=airline_code,
+            origin=origin,
+            destination=destination,
+            date=date,
+            search_payload=search_payload,
+            live_error="rate_limit_cooldown_active",
+            extra_raw={"rate_limit_state": active_cooldown},
+        )
+        if browser_capture.get("capture_meta"):
+            out["raw"]["browser_capture"] = browser_capture["capture_meta"]
+        if browser_capture.get("capture_out"):
+            return browser_capture["capture_out"]
         out["raw"]["error"] = "rate_limit_cooldown_active"
         out["raw"]["rate_limit_state"] = active_cooldown
         out["raw"]["hint"] = (
@@ -989,7 +1629,31 @@ def fetch_flights_for_airline(
             cookies = str(pre_refresh.get("cookies_path") or cookies or cookie_cache_file)
     req = Requester(cookies_path=cookies, user_agent=USER_AGENT, proxy_url=proxy)
 
-    status, search_body = _post_json(req, SEARCH_URL, search_payload, headers)
+    try:
+        status, search_body = _post_json(req, SEARCH_URL, search_payload, headers)
+    except Exception as exc:
+        if source_mode in {"live_then_capture", "capture_fallback", "auto"} and saved_capture:
+            capture_out = _capture_result(saved_capture, airline_code=airline_code)
+            capture_out["raw"]["live_error"] = "search_exception"
+            capture_out["raw"]["live_exception"] = str(exc)
+            return capture_out
+        browser_capture = _try_browser_capture_fallback(
+            source_mode=source_mode,
+            airline_code=airline_code,
+            origin=origin,
+            destination=destination,
+            date=date,
+            search_payload=search_payload,
+            live_error="search_exception",
+            extra_raw={"live_exception": str(exc)},
+        )
+        if browser_capture.get("capture_meta"):
+            out["raw"]["browser_capture"] = browser_capture["capture_meta"]
+        if browser_capture.get("capture_out"):
+            return browser_capture["capture_out"]
+        out["raw"]["error"] = "search_exception"
+        out["raw"]["detail"] = str(exc)
+        return out
     out["raw"]["search_status"] = status
     out["raw"]["search_response"] = search_body
 
@@ -1019,7 +1683,17 @@ def fetch_flights_for_airline(
             if refresh_cookies_path and Path(refresh_cookies_path).exists():
                 cookies = refresh_cookies_path
                 req = Requester(cookies_path=cookies, user_agent=USER_AGENT, proxy_url=proxy)
-            retry_status, retry_body = _post_json(req, SEARCH_URL, search_payload, retry_headers)
+            try:
+                retry_status, retry_body = _post_json(req, SEARCH_URL, search_payload, retry_headers)
+            except Exception as exc:
+                if source_mode in {"live_then_capture", "capture_fallback", "auto"} and saved_capture:
+                    capture_out = _capture_result(saved_capture, airline_code=airline_code)
+                    capture_out["raw"]["live_error"] = "search_retry_exception"
+                    capture_out["raw"]["live_exception"] = str(exc)
+                    return capture_out
+                out["raw"]["error"] = "search_retry_exception"
+                out["raw"]["detail"] = str(exc)
+                return out
             out["raw"]["search_retry_attempted"] = True
             out["raw"]["search_retry_status"] = retry_status
             out["raw"]["search_retry_response"] = retry_body
@@ -1038,15 +1712,72 @@ def fetch_flights_for_airline(
             out["raw"]["search_retry_error"] = "token_refresh_did_not_produce_token"
 
     if status != 200 or not isinstance(search_body, dict):
+        rate_limit_state = None
         if _is_rate_limited(search_body, status_code=status):
-            out["raw"]["rate_limit_state"] = _record_rate_limit_hit(status_code=status, body=search_body)
+            rate_limit_state = _record_rate_limit_hit(status_code=status, body=search_body)
+            out["raw"]["rate_limit_state"] = rate_limit_state
+        if source_mode in {"live_then_capture", "capture_fallback", "auto"} and saved_capture:
+            capture_out = _capture_result(saved_capture, airline_code=airline_code)
+            capture_out["raw"]["live_error"] = "search_failed"
+            capture_out["raw"]["live_status"] = status
+            capture_out["raw"]["live_response_preview"] = search_body if isinstance(search_body, dict) else str(search_body)[:300]
+            if rate_limit_state:
+                capture_out["raw"]["rate_limit_state"] = rate_limit_state
+            return capture_out
+        browser_capture = _try_browser_capture_fallback(
+            source_mode=source_mode,
+            airline_code=airline_code,
+            origin=origin,
+            destination=destination,
+            date=date,
+            search_payload=search_payload,
+            live_error="search_failed",
+            extra_raw={
+                "live_status": status,
+                "live_response_preview": search_body if isinstance(search_body, dict) else str(search_body)[:300],
+                "rate_limit_state": rate_limit_state,
+            },
+        )
+        if browser_capture.get("capture_meta"):
+            out["raw"]["browser_capture"] = browser_capture["capture_meta"]
+        if browser_capture.get("capture_out"):
+            return browser_capture["capture_out"]
         out["raw"]["error"] = "search_failed"
         return out
 
     if not bool(search_body.get("status")):
-        out["raw"]["error"] = "search_not_ok"
+        rate_limit_state = None
         if _is_rate_limited(search_body, status_code=status):
-            out["raw"]["rate_limit_state"] = _record_rate_limit_hit(status_code=status, body=search_body)
+            rate_limit_state = _record_rate_limit_hit(status_code=status, body=search_body)
+        if source_mode in {"live_then_capture", "capture_fallback", "auto"} and saved_capture:
+            capture_out = _capture_result(saved_capture, airline_code=airline_code)
+            capture_out["raw"]["live_error"] = "search_not_ok"
+            capture_out["raw"]["live_status"] = status
+            capture_out["raw"]["live_response_preview"] = search_body
+            if rate_limit_state:
+                capture_out["raw"]["rate_limit_state"] = rate_limit_state
+            return capture_out
+        browser_capture = _try_browser_capture_fallback(
+            source_mode=source_mode,
+            airline_code=airline_code,
+            origin=origin,
+            destination=destination,
+            date=date,
+            search_payload=search_payload,
+            live_error="search_not_ok",
+            extra_raw={
+                "live_status": status,
+                "live_response_preview": search_body,
+                "rate_limit_state": rate_limit_state,
+            },
+        )
+        if browser_capture.get("capture_meta"):
+            out["raw"]["browser_capture"] = browser_capture["capture_meta"]
+        if browser_capture.get("capture_out"):
+            return browser_capture["capture_out"]
+        out["raw"]["error"] = "search_not_ok"
+        if rate_limit_state:
+            out["raw"]["rate_limit_state"] = rate_limit_state
             out["raw"]["hint"] = (
                 "OTA rejected request as rate-limited/blocked. "
                 "Use GOZAYAAN_TOKEN_AUTO_REFRESH=1 with a valid "
@@ -1058,6 +1789,11 @@ def fetch_flights_for_airline(
 
     result = search_body.get("result") or {}
     if not isinstance(result, dict):
+        if source_mode in {"live_then_capture", "capture_fallback", "auto"} and saved_capture:
+            capture_out = _capture_result(saved_capture, airline_code=airline_code)
+            capture_out["raw"]["live_error"] = "search_result_missing"
+            capture_out["raw"]["live_status"] = status
+            return capture_out
         out["raw"]["error"] = "search_result_missing"
         return out
 
@@ -1065,6 +1801,11 @@ def fetch_flights_for_airline(
     out["raw"]["search_id"] = search_id
     out["originalResponse"] = result
     if not search_id:
+        if source_mode in {"live_then_capture", "capture_fallback", "auto"} and saved_capture:
+            capture_out = _capture_result(saved_capture, airline_code=airline_code)
+            capture_out["raw"]["live_error"] = "search_id_missing"
+            capture_out["raw"]["live_status"] = status
+            return capture_out
         out["raw"]["error"] = "search_id_missing"
         return out
 
@@ -1073,13 +1814,25 @@ def fetch_flights_for_airline(
     if poll_sleep is None:
         poll_sleep = 0.8
 
-    legs_state = _poll_legs(
-        req=req,
-        search_id=search_id,
-        headers=headers,
-        max_polls=max_polls,
-        poll_sleep_sec=float(max(0.0, poll_sleep)),
-    )
+    try:
+        legs_state = _poll_legs(
+            req=req,
+            search_id=search_id,
+            headers=headers,
+            max_polls=max_polls,
+            poll_sleep_sec=float(max(0.0, poll_sleep)),
+        )
+    except Exception as exc:
+        if source_mode in {"live_then_capture", "capture_fallback", "auto"} and saved_capture:
+            capture_out = _capture_result(saved_capture, airline_code=airline_code)
+            capture_out["raw"]["live_error"] = "legs_poll_exception"
+            capture_out["raw"]["live_exception"] = str(exc)
+            capture_out["raw"]["search_id"] = search_id
+            return capture_out
+        out["raw"]["error"] = "legs_poll_exception"
+        out["raw"]["detail"] = str(exc)
+        out["raw"]["search_id"] = search_id
+        return out
     out["raw"]["legs_polls"] = legs_state.get("polls")
     out["raw"]["legs_last_response"] = legs_state.get("last_response")
 
@@ -1098,12 +1851,18 @@ def fetch_flights_for_airline(
     rows: List[Dict[str, Any]] = []
     leg_fares_calls: List[Dict[str, Any]] = []
     for leg_hash in target_leg_hashes:
-        status_leg_fares, leg_fares_body = _post_json(
-            req,
-            LEG_FARES_URL,
-            {"search_id": search_id, "leg_type": "L1", "leg_hash": leg_hash},
-            headers,
-        )
+        try:
+            status_leg_fares, leg_fares_body = _post_json(
+                req,
+                LEG_FARES_URL,
+                {"search_id": search_id, "leg_type": "L1", "leg_hash": leg_hash},
+                headers,
+            )
+        except Exception as exc:
+            leg_fares_calls.append(
+                {"leg_hash": leg_hash, "http_status": None, "status_ok": False, "exception": str(exc)}
+            )
+            continue
         leg_fares_calls.append(
             {"leg_hash": leg_hash, "http_status": status_leg_fares, "status_ok": bool(isinstance(leg_fares_body, dict) and leg_fares_body.get("status"))}
         )
@@ -1175,6 +1934,32 @@ def fetch_flights_for_airline(
 
     out["raw"]["leg_fares_calls"] = leg_fares_calls
     out["rows"] = _dedupe_rows(rows)
+    if not out["rows"] and source_mode in {"live_then_capture", "capture_fallback", "auto"} and saved_capture:
+        capture_out = _capture_result(saved_capture, airline_code=airline_code)
+        capture_out["raw"]["live_error"] = "no_rows_after_leg_fares"
+        capture_out["raw"]["search_id"] = search_id
+        capture_out["raw"]["target_leg_hashes"] = target_leg_hashes
+        capture_out["raw"]["leg_fares_calls"] = leg_fares_calls
+        return capture_out
+    if not out["rows"]:
+        browser_capture = _try_browser_capture_fallback(
+            source_mode=source_mode,
+            airline_code=airline_code,
+            origin=origin,
+            destination=destination,
+            date=date,
+            search_payload=search_payload,
+            live_error="no_rows_after_leg_fares",
+            extra_raw={
+                "search_id": search_id,
+                "target_leg_hashes": target_leg_hashes,
+                "leg_fares_calls": leg_fares_calls,
+            },
+        )
+        if browser_capture.get("capture_meta"):
+            out["raw"]["browser_capture"] = browser_capture["capture_meta"]
+        if browser_capture.get("capture_out"):
+            return browser_capture["capture_out"]
     out["ok"] = True
     _clear_rate_limit_state()
     return out
@@ -1192,7 +1977,11 @@ def cli_main():
     parser.add_argument("--inf", type=int, default=0)
     parser.add_argument("--cookies-path", default=None)
     parser.add_argument("--proxy-url", default=None)
+    parser.add_argument("--source-mode", choices=["live", "capture", "live_then_capture", "capture_fallback", "auto"], default=None)
     args = parser.parse_args()
+
+    if args.source_mode:
+        os.environ[ENV_SOURCE_MODE] = str(args.source_mode)
 
     output = fetch_flights_for_airline(
         airline_code=args.airline,

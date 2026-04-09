@@ -10,6 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 AIRLINES_FILE = REPO_ROOT / "config" / "airlines.json"
 
 DIRECT_MODULES = {
+    "airasia": "Direct airline website",
     "biman": "Direct airline website",
     "novoair": "Direct airline website",
     "indigo": "Direct airline website",

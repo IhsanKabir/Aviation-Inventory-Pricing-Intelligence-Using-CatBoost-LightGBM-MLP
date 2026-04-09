@@ -14,13 +14,16 @@ Useful today:
 from __future__ import annotations
 
 import argparse
+import base64
 from datetime import datetime
 import json
 import logging
 import os
+from pathlib import Path
 import re
 import sys
 from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import parse_qs, urlparse
 
 try:
     from modules.requester import Requester
@@ -81,6 +84,7 @@ ENV_COOKIES_PATH = "MALDIVIAN_COOKIES_PATH"
 ENV_PROXY_URL = "MALDIVIAN_PROXY_URL"
 FARE_UID = "FARE"
 FARE_SOURCE_ENDPOINT = "AjaxCall.action?UID=FARE&UI_ACTION=ajax"
+RUNS_DIR = Path(__file__).resolve().parents[1] / "output" / "manual_sessions" / "runs"
 
 
 def _safe_json_loads(text: str) -> Any:
@@ -88,6 +92,14 @@ def _safe_json_loads(text: str) -> Any:
         return json.loads(text)
     except Exception:
         return None
+
+
+def _load_json_object(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return None
+    return raw if isinstance(raw, dict) else None
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -138,6 +150,47 @@ def _parse_plnext_request_date(value: Any) -> Optional[str]:
     if len(s) >= 8 and s[:8].isdigit():
         return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
     return None
+
+
+def _is_q2_fare_ajax_url(url: str) -> bool:
+    if not url or "book.maldivian.aero" not in url or "AjaxCall.action" not in url:
+        return False
+    parsed = urlparse(url)
+    q = parse_qs(parsed.query)
+    return (q.get("UID", [""])[0].upper() == FARE_UID) and (q.get("UI_ACTION", [""])[0].lower() == "ajax")
+
+
+def _har_response_text(entry: Dict[str, Any]) -> str:
+    response = entry.get("response") or {}
+    content = response.get("content") or {}
+    text = content.get("text")
+    if isinstance(text, str):
+        if str(content.get("encoding") or "").lower() == "base64":
+            try:
+                return base64.b64decode(text).decode("utf-8", errors="replace")
+            except Exception:
+                return ""
+        return text
+    return ""
+
+
+def _derive_capture_route_date(payload: Dict[str, Any], rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    data = payload.get("data") or {}
+    basefacts = data.get("basefacts") or {}
+    origin = str(basefacts.get("request.B_LOCATION_1") or basefacts.get("originAirportCode") or "").upper().strip()
+    destination = str(basefacts.get("request.E_LOCATION_1") or basefacts.get("destinationAirportCode") or "").upper().strip()
+    date = _parse_plnext_request_date(basefacts.get("request.B_DATE_1")) or _parse_plnext_request_date(basefacts.get("departureDate"))
+    if not origin and rows:
+        origin = str(rows[0].get("origin") or "").upper().strip()
+    if not destination and rows:
+        destination = str(rows[0].get("destination") or "").upper().strip()
+    if not date and rows:
+        date = str(rows[0].get("search_date") or rows[0].get("departure") or "")[:10] or None
+    return {
+        "origin": origin or None,
+        "destination": destination or None,
+        "date": date or None,
+    }
 
 
 def _looks_captcha_or_bot_block(status_code: int, headers: Dict[str, str], body: str) -> bool:
@@ -486,6 +539,180 @@ def _extract_rows_from_fare_ajax(
     return rows
 
 
+def extract_fare_capture_from_har(
+    har_payload: Any,
+    *,
+    requested_cabin: str = "Economy",
+    adt: Optional[int] = None,
+    chd: Optional[int] = None,
+    inf: Optional[int] = None,
+    source_har_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    if not isinstance(har_payload, dict):
+        return {
+            "ok": False,
+            "error": "invalid_har_payload",
+            "rows": [],
+            "rows_count": 0,
+            "source_har_path": source_har_path,
+        }
+
+    entries = ((har_payload.get("log") or {}).get("entries") or [])
+    if not isinstance(entries, list):
+        entries = []
+
+    seen_fare_calls: List[Dict[str, Any]] = []
+    last_candidate: Optional[Dict[str, Any]] = None
+
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        req = entry.get("request") or {}
+        url = str(req.get("url") or "")
+        if not _is_q2_fare_ajax_url(url):
+            continue
+
+        resp = entry.get("response") or {}
+        status = _safe_int(resp.get("status")) or 0
+        seen_fare_calls.append({"url": url, "status": status})
+
+        payload = _safe_json_loads(_har_response_text(entry))
+        if not isinstance(payload, dict):
+            last_candidate = {
+                "ok": False,
+                "error": "invalid_fare_response_json",
+                "rows": [],
+                "rows_count": 0,
+                "status": status,
+                "fare_uid_url": url,
+                "fare_entry_index": idx,
+                "fare_uid_request_body": ((req.get("postData") or {}).get("text") or ""),
+                "source_har_path": source_har_path,
+                "seen_fare_calls": seen_fare_calls,
+            }
+            continue
+
+        eff_adt = int(adt if adt is not None else ((_extract_pax_counts(payload, 1, 0, 0))[0]))
+        eff_chd = int(chd if chd is not None else ((_extract_pax_counts(payload, 1, 0, 0))[1]))
+        eff_inf = int(inf if inf is not None else ((_extract_pax_counts(payload, 1, 0, 0))[2]))
+        rows = _extract_rows_from_fare_ajax(
+            payload,
+            requested_cabin=requested_cabin,
+            adt=eff_adt,
+            chd=eff_chd,
+            inf=eff_inf,
+        )
+        route_date = _derive_capture_route_date(payload, rows)
+        cabin = requested_cabin
+        if rows:
+            cabins = [str(r.get("cabin") or "").strip() for r in rows if str(r.get("cabin") or "").strip()]
+            if cabins and len(set(cabins)) == 1:
+                cabin = cabins[0]
+
+        last_candidate = {
+            "ok": bool(rows),
+            "error": None if rows else "fare_payload_has_no_rows",
+            "rows": rows,
+            "rows_count": len(rows),
+            "status": status,
+            "fare_uid_url": url,
+            "fare_entry_index": idx,
+            "fare_uid_request_body": ((req.get("postData") or {}).get("text") or ""),
+            "fare_payload": payload,
+            "origin": route_date.get("origin"),
+            "destination": route_date.get("destination"),
+            "date": route_date.get("date"),
+            "cabin": cabin,
+            "adt": eff_adt,
+            "chd": eff_chd,
+            "inf": eff_inf,
+            "source_har_path": source_har_path,
+            "seen_fare_calls": seen_fare_calls,
+        }
+        if rows:
+            return last_candidate
+
+    if last_candidate is not None:
+        return last_candidate
+
+    return {
+        "ok": False,
+        "error": "fare_uid_not_found_in_har",
+        "rows": [],
+        "rows_count": 0,
+        "source_har_path": source_har_path,
+        "seen_fare_calls": seen_fare_calls,
+    }
+
+
+def _find_matching_saved_capture(
+    origin: str,
+    dest: str,
+    date: str,
+    *,
+    requested_cabin: str,
+    adt: int,
+    chd: int,
+    inf: int,
+) -> Optional[Dict[str, Any]]:
+    if not RUNS_DIR.exists():
+        return None
+
+    origin_u = str(origin or "").upper().strip()
+    dest_u = str(dest or "").upper().strip()
+    date_s = str(date or "")[:10]
+
+    candidates = sorted(
+        (p for p in RUNS_DIR.glob("q2_*/*q2_probe_response.json") if p.is_file()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    for summary_path in candidates:
+        summary = _load_json_object(summary_path)
+        if not summary:
+            continue
+        if str(summary.get("carrier") or "").upper() not in {"Q2", ""}:
+            continue
+        if origin_u and str(summary.get("origin") or "").upper() != origin_u:
+            continue
+        if dest_u and str(summary.get("destination") or "").upper() != dest_u:
+            continue
+        if date_s and str(summary.get("date") or "")[:10] != date_s:
+            continue
+
+        fare_path_raw = summary.get("fare_uid_response_path")
+        fare_path = Path(fare_path_raw) if isinstance(fare_path_raw, str) and fare_path_raw.strip() else (summary_path.parent / "q2_fare_uid_response.json")
+        if not fare_path.is_absolute():
+            fare_path = (summary_path.parent / fare_path).resolve()
+        if not fare_path.exists():
+            continue
+
+        payload = _load_json_object(fare_path)
+        if not payload:
+            continue
+
+        rows = _extract_rows_from_fare_ajax(
+            payload,
+            requested_cabin=requested_cabin,
+            adt=adt,
+            chd=chd,
+            inf=inf,
+        )
+        if not rows:
+            continue
+
+        return {
+            "summary_path": str(summary_path.resolve()),
+            "fare_json_path": str(fare_path.resolve()),
+            "summary": summary,
+            "fare_payload": payload,
+            "rows": rows,
+        }
+
+    return None
+
+
 def _seed_route_entries(allowed_origins: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
     allowed = {str(x).upper().strip() for x in (allowed_origins or []) if str(x).strip()}
     entries: List[Dict[str, Any]] = []
@@ -633,6 +860,30 @@ def maldivian_search(
             "proxy_url": proxy_url,
         }
 
+    saved_capture = _find_matching_saved_capture(
+        origin=origin,
+        dest=dest,
+        date=date,
+        requested_cabin=cabin,
+        adt=int(adt or 0),
+        chd=int(chd or 0),
+        inf=int(inf or 0),
+    )
+    if saved_capture:
+        output["raw"]["source"] = "maldivian_capture"
+        output["raw"]["capture_summary_path"] = saved_capture["summary_path"]
+        output["raw"]["capture_fare_json_path"] = saved_capture["fare_json_path"]
+        output["raw"]["capture_summary"] = {
+            "origin": (saved_capture.get("summary") or {}).get("origin"),
+            "destination": (saved_capture.get("summary") or {}).get("destination"),
+            "date": (saved_capture.get("summary") or {}).get("date"),
+            "parsed_selected_days_rows_count": (saved_capture.get("summary") or {}).get("parsed_selected_days_rows_count"),
+        }
+        output["rows"] = saved_capture["rows"]
+        output["originalResponse"] = saved_capture["fare_payload"]
+        output["ok"] = bool(saved_capture["rows"])
+        return output
+
     try:
         probe = probe_bootstrap(cookies_path=cookies_path, proxy_url=proxy_url)
     except Exception as exc:
@@ -707,6 +958,7 @@ def cli_main() -> None:
     parser.add_argument("--proxy-url", help=f"Proxy URL (e.g. http://host:port) or use {ENV_PROXY_URL}")
     parser.add_argument("--probe-airport-list", action="store_true", help="Print airport-list probe diagnostics and exit")
     parser.add_argument("--parse-fare-json", help="Parse a saved Maldivian UID=FARE Ajax JSON response file and print normalized rows")
+    parser.add_argument("--parse-har", help="Parse a Maldivian HAR file, extract the latest UID=FARE Ajax response, and print normalized rows")
     args = parser.parse_args()
 
     cookies_path = args.cookies_path or os.getenv(ENV_COOKIES_PATH) or None
@@ -727,6 +979,21 @@ def cli_main() -> None:
             inf=args.inf,
         )
         print(json.dumps({"ok": bool(rows), "rows_count": len(rows), "rows": rows}, indent=2, ensure_ascii=False, default=str))
+        return
+
+    if args.parse_har:
+        har_payload = json.loads(open(args.parse_har, "r", encoding="utf-8-sig").read())
+        extracted = extract_fare_capture_from_har(
+            har_payload,
+            requested_cabin=args.cabin,
+            adt=args.adt,
+            chd=args.chd,
+            inf=args.inf,
+            source_har_path=args.parse_har,
+        )
+        out = dict(extracted)
+        out.pop("fare_payload", None)
+        print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
         return
 
     if args.discover_routes:
