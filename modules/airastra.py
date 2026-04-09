@@ -91,6 +91,17 @@ def _source_attempt_summary(source: str, result: Any) -> Dict[str, Any]:
     }
 
 
+def _should_try_gozayaan_after_attempts(attempts: List[Dict[str, Any]]) -> bool:
+    if _env_true(ENV_FALLBACK_ON_EMPTY, default=False):
+        return True
+    for attempt in attempts:
+        if not bool(attempt.get("ok")):
+            return True
+        if str(attempt.get("error") or "").strip():
+            return True
+    return False
+
+
 def _fetch_from_source(
     source: str,
     *,
@@ -174,7 +185,7 @@ def _auto_source_chain() -> List[str]:
                 deduped.append(part)
         if deduped:
             return deduped
-    return ["bdfare", "sharetrip"]
+    return ["bdfare", "sharetrip", "gozayaan"]
 
 
 def _run_auto_source_chain(
@@ -192,6 +203,17 @@ def _run_auto_source_chain(
     first_ok_result: Optional[Dict[str, Any]] = None
     last_result: Optional[Dict[str, Any]] = None
     for source in chain:
+        if source == "gozayaan" and attempts and not _should_try_gozayaan_after_attempts(attempts):
+            return first_ok_result or last_result or {
+                "raw": {
+                    "error": "auto_chain_stopped_clean_empty",
+                    "auto_source_chain": chain,
+                    "auto_source_attempts": attempts,
+                },
+                "originalResponse": None,
+                "rows": [],
+                "ok": False,
+            }
         try:
             result = _fetch_from_source(
                 source,
@@ -278,6 +300,26 @@ def _sharetrip_fetch_with_bdfare_fallback(
     if bd_ok and isinstance(bd_rows, list) and bd_rows:
         return bdfare_out
 
+    attempts = [
+        _source_attempt_summary("sharetrip", sharetrip_out),
+        _source_attempt_summary("bdfare", bdfare_out),
+    ]
+    if not _should_try_gozayaan_after_attempts(attempts):
+        return sharetrip_out if isinstance(sharetrip_out, dict) else bdfare_out
+
+    LOG.warning("[2A] ShareTrip/BDFare returned no usable rows; attempting Gozayaan fallback")
+    gozayaan_out = fetch_from_gozayaan(
+        airline_code="2A",
+        origin=origin,
+        destination=destination,
+        date=date,
+        cabin=cabin,
+        adt=adt,
+        chd=chd,
+        inf=inf,
+    )
+    if _has_usable_rows(gozayaan_out):
+        return gozayaan_out
     return sharetrip_out if isinstance(sharetrip_out, dict) else bdfare_out
 
 
@@ -320,6 +362,25 @@ def _bdfare_fetch_with_sharetrip_fallback(
     st_ok = bool(sharetrip_out.get("ok")) if isinstance(sharetrip_out, dict) else False
     if st_ok and isinstance(st_rows, list) and st_rows:
         return sharetrip_out
+    attempts = [
+        _source_attempt_summary("bdfare", bdfare_out),
+        _source_attempt_summary("sharetrip", sharetrip_out),
+    ]
+    if not _should_try_gozayaan_after_attempts(attempts):
+        return bdfare_out if isinstance(bdfare_out, dict) else sharetrip_out
+    LOG.warning("[2A] BDFare/ShareTrip returned no usable rows; attempting Gozayaan fallback")
+    gozayaan_out = fetch_from_gozayaan(
+        airline_code="2A",
+        origin=origin,
+        destination=destination,
+        date=date,
+        cabin=cabin,
+        adt=adt,
+        chd=chd,
+        inf=inf,
+    )
+    if _has_usable_rows(gozayaan_out):
+        return gozayaan_out
     return bdfare_out if isinstance(bdfare_out, dict) else sharetrip_out
 
 
