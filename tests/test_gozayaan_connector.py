@@ -308,7 +308,7 @@ class GozayaanConnectorTests(unittest.TestCase):
 
         state = {"n": 0}
 
-        def _resolve_side_effect(min_ttl_sec=0):  # noqa: ARG001
+        def _resolve_side_effect(min_ttl_sec=0, search_payload=None):  # noqa: ARG001
             state["n"] += 1
             if state["n"] == 1:
                 return None
