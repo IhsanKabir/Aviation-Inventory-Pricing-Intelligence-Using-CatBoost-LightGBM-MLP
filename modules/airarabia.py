@@ -42,6 +42,33 @@ def _safe_float(value: Any) -> Optional[float]:
             return None
 
 
+_FX_TO_BDT: dict[str, float] = {
+    "AED": 32.5,   # UAE Dirham
+    "SAR": 30.5,   # Saudi Riyal
+    "OMR": 300.0,  # Omani Rial
+    "KWD": 375.0,  # Kuwaiti Dinar
+    "QAR": 31.5,   # Qatari Riyal
+    "BHD": 305.0,  # Bahraini Dinar
+    "JOD": 162.0,  # Jordanian Dinar
+    "USD": 110.0,
+    "EUR": 120.0,
+    "SGD": 90.0,
+    "MYR": 26.0,
+    "THB": 3.3,
+    "INR": 1.38,
+    "MVR": 7.5,
+}
+
+
+def _to_bdt(amount: Optional[float], currency: Optional[str]) -> Optional[float]:
+    if amount is None:
+        return None
+    if not currency or currency.upper() == "BDT":
+        return round(float(amount), 2)
+    rate = _FX_TO_BDT.get(currency.upper())
+    return round(amount * rate, 2) if rate is not None else None
+
+
 def _safe_int(value: Any) -> Optional[int]:
     try:
         if value in (None, ""):
@@ -205,7 +232,7 @@ def parse_fare_response(payload: Any, *, requested_cabin: str = "Economy", adt: 
                     "cabin": requested_cabin,
                     "fare_basis": str(fare_class.get("fareClassCode") or "").strip() or None,
                     "brand": str(fare_class.get("description") or "AIRARABIA").strip() or "AIRARABIA",
-                    "price_total_bdt": price_total,
+                    "price_total_bdt": _to_bdt(price_total, currency),
                     "fare_amount": price_total,
                     "tax_amount": tax_amount,
                     "currency": currency,

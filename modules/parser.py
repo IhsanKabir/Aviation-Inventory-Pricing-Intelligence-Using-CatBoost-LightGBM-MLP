@@ -448,10 +448,21 @@ def extract_offers_from_response(resp: Any, keep_soldout: bool = False) -> List[
             return None
         if currency == "BDT" or currency is None:
             return float(amount)
-        # placeholder for future FX
         FX = {
             "USD": 110.0,
             "EUR": 120.0,
+            "AED": 32.5,   # UAE Dirham
+            "SAR": 30.5,   # Saudi Riyal
+            "OMR": 300.0,  # Omani Rial
+            "KWD": 375.0,  # Kuwaiti Dinar
+            "QAR": 31.5,   # Qatari Riyal
+            "BHD": 305.0,  # Bahraini Dinar
+            "JOD": 162.0,  # Jordanian Dinar
+            "SGD": 90.0,
+            "MYR": 26.0,
+            "THB": 3.3,
+            "INR": 1.38,
+            "MVR": 7.5,
         }
         rate = FX.get(currency)
         return round(amount * rate, 2) if rate else None
