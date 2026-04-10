@@ -1019,3 +1019,114 @@ Until that validation is completed, treat resume-after-shutdown as:
 
 - improved and likely usable
 - but not yet formally verified end-to-end
+
+## New Connector Architecture Decisions (2026-04-09)
+
+### G9 (Air Arabia) — Upgrade to Direct Connector
+
+**Decision**: Replace `sharetrip` module with new `airarabia.py` direct connector for G9.
+
+**Rationale**: ShareTrip OTA proxying for G9 produces limited fare granularity (no booking class,
+penalties, or inventory confidence). The direct Air Arabia API returns richer structured data.
+
+**Implementation**:
+- `modules/airarabia.py` — HAR import + ShareTrip fallback for routes not capturable via HAR
+- `config/airlines.json` — G9 module set to `airarabia`; `enabled=true`
+- Source mode controlled by `AIRARABIA_SOURCE_MODE` env var
+- Capture artifacts stored in `output/manual_sessions/runs/g9_{origin}_{destination}_{date}_{ts}/`
+
+**Constraint**: Air Arabia protected endpoint — no live HTTP requests possible. Data entry
+via HAR import (`tools/import_airarabia_har.py`) or manual browser capture.
+
+**Status**: Code complete; untracked; needs commit and controlled test run.
+
+---
+
+### OV (SalamAir) — New Connector
+
+**Decision**: Add SalamAir (OV) as a new direct connector targeting DAC–Middle East routes.
+
+**Rationale**: SalamAir is a significant low-cost carrier on DAC–MCT, DAC–DXB, DAC–SHJ, and
+DAC–JED — routes with major labor-market demand. No OTA currently covers SalamAir reliably.
+
+**Implementation**:
+- `modules/salamair.py` — HAR import + Playwright live capture + manual browser intercept
+- `tools/capture_salamair_live.py` — Playwright automated capture (may be blocked by WAF)
+- `tools/capture_salamair_manual.py` — manual browser intercept (reliable fallback)
+- `config/airlines.json` — OV entry added; `enabled=false` pending route validation
+- `config/routes.json` — DAC→JED added; full route set (MCT, DXB, SHJ, RUH, KWI, BAH, AMM) pending
+- Source mode: `SALAMAIR_SOURCE_MODE` — "auto" | "capture_then_browser" | "browser_fallback"
+
+**Constraint**: SalamAir website WAF blocks Playwright in most environments. Manual intercept
+(`capture_salamair_manual.py`) is the reliable path until a WAF bypass is established.
+
+**Status**: Code complete; untracked; disabled in config. Enable after: (1) commit,
+(2) route expansion, (3) successful test capture for at least one route.
+
+---
+
+### Capture-Decoupled Pipeline Pattern (for anti-bot airlines)
+
+**Decision**: For airlines requiring browser capture (OV, G9), decouple capture from the
+main pipeline ingestion loop.
+
+**Rationale**: Browser automation (30–60 min per airline) cannot run inline with a 4h+
+accumulation cycle — too slow, too brittle under pipeline timing pressure. The module
+reads from cached captures; the pipeline does not care when the capture happened.
+
+**Implementation pattern**:
+1. Pre-ingestion capture window (30 min before `run_all.py`): `scheduler/run_capture_sessions.py` (to build)
+2. `run_all.py` reads most recent capture file per route; rejects if older than `MAX_CAPTURE_AGE_HOURS` (default 8h)
+3. Env vars already in place: `SALAMAIR_CAPTURE_ROOT`, `AIRARABIA_CAPTURE_ROOT`
+
+---
+
+### Parallel Execution Architecture Decision (2026-04-09)
+
+**Decision**: Move from 2-thread airline parallelism to 4-family-thread parallelism with
+per-family route-worker scaling to reduce accumulation runtime from ~4h31m to ~1h15m.
+
+**Rationale**: Current bottleneck is ~1,320 queries running mostly sequentially. Family-aware
+parallelism isolates rate-limit domains, making it safe to run direct and OTA families
+simultaneously without cross-contamination.
+
+**Target architecture**:
+
+```
+parallel_airline_runner.py (4 family threads)
+├─ THREAD 1 (direct): BG, VQ, Q2, G9 — --route-workers 3
+├─ THREAD 2 (sharetrip): AK, 6E, EK, QR, SQ... — --route-workers 1 + 3s cooldown
+├─ THREAD 3 (wrapper/OTA): BS, 2A — --route-workers 1
+└─ THREAD 4 (gozayaan): GoZayaan — --route-workers 1 + 3s inter-query sleep
+```
+
+**Safety rules**:
+- Direct family (BG/VQ/G9/Q2): `--route-workers 3` is safe — no shared rate limit
+- ShareTrip / wrapper / GoZayaan families: `--route-workers 1` always — anti-bot
+- GoZayaan: add `--gozayaan-inter-query-sleep 3.0` to prevent 429 cascade
+- Never mix families in the same thread pool
+
+**Files to implement**:
+- `tools/parallel_airline_runner.py` — expand `FAMILY_CONFIG`, pass `--route-workers` per family
+- `run_all.py` — add `--route-workers`, `--gozayaan-inter-query-sleep` flags
+- `run_pipeline.py` — add pre-flight session check hook (`tools/pre_flight_session_check.py`)
+- `scheduler/run_capture_sessions.py` — NEW pre-ingestion capture scheduler
+- `tools/pre_flight_session_check.py` — NEW session health check for AMYBD/GoZayaan/ShareTrip
+
+**Expected runtime reduction**: ~4h31m → ~1h15m (operational mode), ~1h45m (training mode).
+
+---
+
+### Pre-Flight Session Validation Decision (2026-04-09)
+
+**Decision**: Add mandatory session pre-validation step before pipeline ingestion starts.
+
+**Rationale**: Session-dependent OTA sources (AMYBD authid/chauth, GoZayaan JWT/RSA,
+ShareTrip token) expire silently between 6h cycles. Mid-run expiry produces zero rows with
+no alert, making data gaps impossible to diagnose post-hoc.
+
+**Implementation**:
+- `tools/pre_flight_session_check.py` — calls `check_session()` on each source
+- Modules to expose: `modules/amybd.py::check_session()`, `modules/gozayaan.py::check_session()`
+- Gate logic: block pipeline only if critical source fails AND no fallback available
+- `run_pipeline.py` hook: `--skip-preflight` flag to bypass for manual/debugging runs

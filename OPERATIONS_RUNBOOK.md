@@ -671,3 +671,150 @@ $env:AIRASTRA_SOURCE_MODE="ttinteractive"
 - Jobs do not run when laptop is fully powered off.
 - Current-user tasks require user session context.
 - Wake-from-sleep works only if OS wake timers are enabled and device is sleeping (not shut down).
+
+---
+
+## New Connector Onboarding Checklist (G9 / OV pattern)
+
+Use this checklist when adding a new airline that requires browser capture (anti-bot/WAF protected).
+
+### Step 1 — Validate capture parsing
+
+For Air Arabia (G9):
+
+```powershell
+# Export a HAR file from browser DevTools while browsing airarabia.com
+.\.venv\Scripts\python.exe tools\import_airarabia_har.py path\to\www.airarabia.com.har
+# Check output in output\manual_sessions\runs\g9_*\
+```
+
+For SalamAir (OV):
+
+```powershell
+# Option A — Playwright live capture (may be blocked by WAF)
+.\.venv\Scripts\python.exe tools\capture_salamair_live.py --origin DAC --destination JED --date 2026-04-20
+
+# Option B — Manual browser intercept (reliable)
+.\.venv\Scripts\python.exe tools\capture_salamair_manual.py --origin DAC --destination JED
+# Follow prompts: open browser, search flights, wait for intercept
+
+# Option C — HAR file import
+.\.venv\Scripts\python.exe tools\import_salamair_har.py path\to\www.salam.aero.har
+```
+
+### Step 2 — Inspect capture output
+
+```powershell
+# Confirm rows extracted
+Get-Content output\manual_sessions\runs\*\*_capture_summary.json | ConvertFrom-Json
+Get-Content output\manual_sessions\runs\*\*_rows.json | ConvertFrom-Json | Measure-Object
+```
+
+### Step 3 — Set source mode and enable airline
+
+```powershell
+# For G9
+$env:AIRARABIA_SOURCE_MODE="capture"   # or "sharetrip" for OTA fallback
+$env:AIRARABIA_CAPTURE_ROOT="output/manual_sessions"
+
+# For OV
+$env:SALAMAIR_SOURCE_MODE="capture_then_browser"
+$env:SALAMAIR_CAPTURE_ROOT="output/manual_sessions"
+```
+
+In `config/airlines.json`, set `"enabled": true` for the airline.
+
+### Step 4 — Add routes
+
+In `config/routes.json`, add route entries. SalamAir full DAC network:
+
+```
+DAC→JED, DAC→MCT, DAC→DXB, DAC→SHJ, DAC→RUH, DAC→KWI, DAC→BAH, DAC→AMM
+```
+
+### Step 5 — Test run
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py --airline G9 --dry-run
+.\.venv\Scripts\python.exe run_all.py --airline OV --dry-run
+```
+
+### Step 6 — Smoke check
+
+```powershell
+.\.venv\Scripts\python.exe tools\smoke_check.py --airline G9
+.\.venv\Scripts\python.exe tools\smoke_check.py --airline OV
+```
+
+---
+
+## OV (SalamAir) Operational Notes
+
+SalamAir has two capture modes — choose based on environment:
+
+| Mode | Command | When to use |
+|------|---------|------------|
+| Playwright live | `capture_salamair_live.py` | When WAF allows automated browser |
+| Manual intercept | `capture_salamair_manual.py` | When Playwright is blocked (default/reliable) |
+| HAR import | `import_salamair_har.py` | One-off / debugging from saved HAR file |
+
+**Capture staleness**: The module rejects captures older than `SALAMAIR_MAX_CAPTURE_AGE_HOURS`
+(default: 8h). If pipeline picks up a stale capture, it will log a warning and skip the route.
+
+**Recommended workflow** until `scheduler/run_capture_sessions.py` is built:
+
+1. Run manual capture 30 min before the main pipeline: `capture_salamair_manual.py --origin DAC --destination MCT`
+2. Launch pipeline: `python run_pipeline.py`
+3. OV module reads the cached capture — no live search attempted during pipeline run
+
+---
+
+## Pre-Flight Session Check (AMYBD / GoZayaan)
+
+Before a pipeline run, validate that session-dependent OTA sources are live:
+
+```powershell
+# When tools/pre_flight_session_check.py is built:
+.\.venv\Scripts\python.exe tools\pre_flight_session_check.py
+
+# Manual validation in the meantime:
+# AMYBD session check
+.\.venv\Scripts\python.exe -m modules.amybd --airline BS --origin DAC --destination CGP --date 2026-04-20 --cabin Economy
+
+# GoZayaan token check
+Get-Content output\manual_sessions\gozayaan_token_latest.json
+# If token is stale, refresh:
+.\.venv\Scripts\python.exe tools\refresh_gozayaan_token.py --out output/manual_sessions/gozayaan_token_latest.json
+```
+
+---
+
+## Parallel Execution — Tuning Guide
+
+Current baseline: ~4h31m accumulation. Target: ~1h15m via family-aware parallelism.
+
+### Current safe settings (validated)
+
+```powershell
+.\.venv\Scripts\python.exe tools\parallel_airline_runner.py --max-workers 2
+```
+
+### Target settings (pending implementation of route-workers flag)
+
+```powershell
+# Direct-API family (BG, VQ, Q2, G9) — safe to run 3 routes in parallel
+.\.venv\Scripts\python.exe run_all.py --airline BG --route-workers 3
+
+# ShareTrip / OTA families — keep at 1
+.\.venv\Scripts\python.exe run_all.py --airline BS --route-workers 1
+
+# GoZayaan — 1 route at a time + inter-query sleep
+.\.venv\Scripts\python.exe run_all.py --airline BS --route-workers 1 --gozayaan-inter-query-sleep 3.0
+```
+
+### Profiling a run to find bottlenecks
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py --profile-runtime
+# Output: output\reports\runtime_profile_*.json
+```

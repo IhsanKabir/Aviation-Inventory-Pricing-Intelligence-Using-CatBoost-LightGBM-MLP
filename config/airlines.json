@@ -95,7 +95,7 @@
   },
   {
     "code": "G9",
-    "module": "sharetrip",
+    "module": "airarabia",
     "enabled": true,
     "throttle_per_minute": 10,
     "cabin_classes": [
@@ -116,6 +116,15 @@
     "module": "sharetrip",
     "enabled": true,
     "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "OV",
+    "module": "salamair",
+    "enabled": false,
+    "throttle_per_minute": 5,
     "cabin_classes": [
       "Economy"
     ]

@@ -856,5 +856,157 @@ This roadmap provides a clear path to make the Aviation Intelligence Platform **
 4. Track progress using PROJECT_DECISIONS.md Section 11 checklist format
 
 **Document Owner**: Aviation Intelligence Platform Team
-**Last Reviewed**: 2026-03-18
-**Next Review**: 2026-04-18
+**Last Reviewed**: 2026-04-09
+**Next Review**: 2026-05-09
+
+---
+
+## Section 7: Collection Reliability — Hard Sources (Added 2026-04-09)
+
+### 7.1 Session-Dependent OTA Sources (AMYBD, GoZayaan, ShareTrip)
+
+**Current state**: Sessions expire silently between runs. Mid-run expiry produces zero rows with
+no alert. Root cause is discovered only during post-run data quality checks.
+
+**Priority 1 — Pre-flight session validation**
+
+Implement `tools/pre_flight_session_check.py`:
+- Calls `check_session()` on AMYBD, GoZayaan, ShareTrip before pipeline starts
+- Reports: fresh / stale / unreachable per source
+- Gate logic: block pipeline only if critical source fails AND no fallback exists
+- `--skip-preflight` flag for manual/debugging bypasses
+
+Required module changes:
+- `modules/amybd.py`: expose `check_session() -> bool`
+- `modules/gozayaan.py`: expose `check_session() -> bool` and `rate_limited_until() -> datetime | None`
+
+**Priority 2 — GoZayaan rate-limit-aware queuing**
+
+Problem: rapid multi-route queries trigger 429 (15-min cooldown) — all remaining routes lost.
+
+Fix in `run_all.py`:
+- Add `--gozayaan-inter-query-sleep 3.0` flag (default 3 seconds between GoZayaan queries)
+- On 429 detection: immediately switch remaining GoZayaan routes to BDFare fallback
+- Resume GoZayaan after cooldown window (already tracked in `gozayaan_rate_limit_state.json`)
+- Add `modules/gozayaan.py::rate_limited_until()` so caller can check before queuing more work
+
+### 7.2 Browser-Capture Airlines (G9, OV)
+
+**Current state**: Air Arabia (G9) and SalamAir (OV) require browser-based capture. Running
+this inline with the main pipeline loop is too slow and too brittle.
+
+**Priority 1 — Decouple capture from ingestion**
+
+Create `scheduler/run_capture_sessions.py`:
+- Runs 30 min before main ingestion window
+- For OV: attempts `capture_salamair_live.py` per route; falls back to manual prompt
+- For G9: checks for fresh HAR in `AIRARABIA_CAPTURE_ROOT`; logs if stale
+- Writes captures to `output/manual_sessions/runs/` with timestamp
+- Staleness gate: pipeline rejects captures older than `MAX_CAPTURE_AGE_HOURS` (default 8h)
+
+Add to `config/schedule.json`: `"capture_window"` task running 30 min before `ingestion`.
+
+**Priority 2 — OV route expansion**
+
+Current: DAC→JED only. SalamAir full DAC network:
+
+```
+DAC→MCT (Muscat), DAC→DXB (Dubai), DAC→SHJ (Sharjah),
+DAC→RUH (Riyadh), DAC→JED (Jeddah), DAC→KWI (Kuwait),
+DAC→BAH (Bahrain), DAC→AMM (Amman)
+```
+
+Add all to `config/routes.json`, then set OV `enabled=true` in `config/airlines.json`.
+
+### 7.3 Expected Impact
+
+| Improvement | Impact |
+|------------|--------|
+| Pre-flight session check | Zero silent zero-row data gaps from stale sessions |
+| GoZayaan inter-query sleep | Recover 100% of GoZayaan routes instead of losing them after first 429 |
+| Decoupled capture scheduler | OV/G9 data available in every pipeline run reliably |
+| OV route expansion | +8 Middle East routes; significant labor-market coverage |
+
+---
+
+## Section 8: Parallel Execution — Runtime Reduction (Added 2026-04-09)
+
+### 8.1 Current Bottleneck Analysis
+
+**Baseline**: ~4h31m accumulation (March 2026). Bottleneck: ~22 airlines × avg 12 routes
+× 5 departure dates ≈ 1,320 queries running mostly sequentially.
+
+**Current parallelism**:
+- `parallel_airline_runner.py`: max 2 airline subprocesses
+- `run_all.py`: 1–3 date-query workers per route, per airline
+
+**Key constraint**: Each connector family has an independent rate-limit domain. Mixing
+families in the same thread pool risks cross-contamination (e.g., ShareTrip rate-limit
+behavior affecting direct-API airlines).
+
+### 8.2 Proposed 4-Family Architecture
+
+```
+parallel_airline_runner.py
+├─ THREAD 1 — direct (BG, VQ, Q2, G9)      → --route-workers 3
+├─ THREAD 2 — sharetrip (AK, 6E, EK, QR…)  → --route-workers 1 + 3s cooldown
+├─ THREAD 3 — wrapper/OTA (BS, 2A)          → --route-workers 1
+└─ THREAD 4 — gozayaan                      → --route-workers 1 + 3s inter-query sleep
+```
+
+**Safety rules (non-negotiable)**:
+- Direct family only: `--route-workers 3` — safe, no shared rate limit
+- All other families: `--route-workers 1` always — anti-bot/rate-limit risk
+- Never exceed 1 worker per family for ShareTrip, wrapper, GoZayaan
+
+### 8.3 Implementation Steps
+
+**Step 1** — Expand `FAMILY_CONFIG` in `tools/parallel_airline_runner.py`:
+
+```python
+FAMILY_CONFIG = {
+    "direct":    {"modules": ["biman","novoair","maldivian","airarabia"], "max_workers": 3, "cooldown_sec": 0},
+    "sharetrip": {"modules": ["airasia","indigo","sharetrip"], "max_workers": 1, "cooldown_sec": 3.0},
+    "wrapper":   {"modules": ["bs","airastra"], "max_workers": 1, "cooldown_sec": 1.5},
+    "gozayaan":  {"modules": ["gozayaan"], "max_workers": 1, "cooldown_sec": 3.0},
+    "capture":   {"modules": ["salamair"], "max_workers": 1, "cooldown_sec": 0},
+}
+```
+
+Pass family-appropriate `--route-workers` when spawning each airline subprocess.
+
+**Step 2** — Add `--route-workers N` flag to `run_all.py`:
+- Wraps the per-airline route loop in a `ThreadPoolExecutor(max_workers=N)`
+- Checkpointing already supports parallel routes (key is per-route/date, not sequential index)
+- DB writes use bulk insert with conflict-ignore — safe for concurrent route workers
+
+**Step 3** — Add `--gozayaan-inter-query-sleep` to `run_all.py`:
+- Inserts sleep between GoZayaan route queries even within a single airline process
+- Default 3.0s; configurable via flag and `config/schedule.json`
+
+**Step 4** — Update `config/schedule.json`:
+- Increase `concurrency` from 6 to 8 (4 families × 2 headroom)
+- Add `capture_window` task (30 min before ingestion)
+
+### 8.4 Expected Runtime
+
+| Configuration | Estimated Runtime |
+|--------------|-----------------|
+| Current (2 threads, sequential routes) | ~4h 31m |
+| + 4-family parallelism | ~1h 45m |
+| + direct route-workers 3 | ~1h 10m |
+| **Target — operational mode** | **~1h 15m** |
+| **Target — training mode (wider dates)** | **~1h 45m** |
+
+### 8.5 Profiling Guidance
+
+Before and after implementing parallelism changes, always profile:
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py --profile-runtime
+# Output: output\reports\runtime_profile_*.json
+# Review: per-airline elapsed, per-route elapsed, slow query outliers
+```
+
+Use profiling to confirm the actual bottleneck before increasing workers. If a single
+airline (e.g., ShareTrip with 8 routes) dominates, focus on that family's optimization first.

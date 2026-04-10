@@ -1,13 +1,30 @@
 # Daily Progress Tracking (Operational)
 
-Last updated: 2026-02-27
+Last updated: 2026-04-09
 
 ## Current System State
 
-- Automated accumulation in production: `BG`, `VQ`
-- Manual-assisted accumulation stack available: `BS`, `2A`, `Q2`
-- Main blocker for full automation on `BS`/`2A`: anti-bot / challenge behavior on TTInteractive
-- Main blocker for full automation on `Q2`: session/UI-state sensitivity in PLNext flow
+| Airline | Code | Status | Notes |
+|---------|------|--------|-------|
+| Biman | BG | Automated | Stable |
+| Novoair | VQ | Automated | Stable |
+| US Bangla | BS | Manual-assisted | DataDome blocks TTInteractive; OTA fallback chain active |
+| Air Astra | 2A | Manual-assisted | Same as BS |
+| Maldivian | Q2 | Manual-assisted | Session/UI-state sensitivity in PLNext flow |
+| Air Arabia | G9 | Direct (new) | Module upgraded to `airarabia.py`; HAR import workflow; enabled |
+| SalamAir | OV | Pending validation | Module `salamair.py` added; **disabled**; routes need expansion |
+
+**Current blockers:**
+- BS/2A: TTInteractive protected by DataDome — OTA fallback (BDFare → ShareTrip → GoZayaan) working but fragile
+- OV: Playwright blocked by WAF; requires manual HAR import or browser intercept capture
+- AMYBD/GoZayaan sessions: expire silently between runs — pre-flight session check needed
+
+**New since 2026-02-27:**
+- `modules/airarabia.py` — G9 direct connector (HAR + ShareTrip fallback) — untracked, needs commit
+- `modules/salamair.py` — OV direct connector (HAR + Playwright live/manual) — untracked, needs commit
+- Capture tools: `capture_salamair_live.py`, `capture_salamair_manual.py` — untracked
+- HAR importers: `import_airarabia_har.py`, `import_salamair_har.py` — untracked
+- Resume/checkpoint recovery implemented (2026-04-07) — shutdown-test validation pending
 
 ## Daily Snapshot Template
 
@@ -74,13 +91,16 @@ Get-Content output\reports\smoke_check_latest.json
 
 ## Next-Phase Note
 
-- After the current system is stable, semi-automated/manual-fragment sources should move to an AI-agent-assisted operator lane.
-- Candidate orchestration tools:
-  - Power Automate
-  - n8n
-  - similar workflow/desktop automation tools
-- Intended pattern:
-  - operator or AI agent completes the manual/challenge-sensitive action
-  - workflow captures normalized structured output
-  - output re-enters the same downstream ingestion/reporting path
-- "Google AntiGravity" or similar agentic/browser-assist tooling may be evaluated in that phase as an exploratory accelerator, not as a current operating dependency.
+- After the current system is stable, semi-automated/manual-fragment sources (BS, 2A, Q2) should move to an AI-agent-assisted operator lane.
+- Candidate orchestration tools: Power Automate, n8n, similar workflow/desktop automation tools
+- Intended pattern: operator or AI agent completes the challenge-sensitive action → captures normalized structured output → re-enters same downstream ingestion/reporting path
+- For anti-bot protected captures (OV, G9): decouple browser capture into `scheduler/run_capture_sessions.py` running 30 min before main ingestion window
+
+## Immediate Next Actions (2026-04-09)
+
+1. Commit all untracked files: `modules/airarabia.py`, `modules/salamair.py`, capture tools, HAR importers, config changes
+2. Test G9 direct capture: `python tools/import_airarabia_har.py <har_file>`; then `python run_all.py --airline G9 --dry-run`
+3. Expand OV routes in `config/routes.json`: add DAC→MCT, DAC→DXB, DAC→SHJ, DAC→RUH, DAC→KWI, DAC→BAH, DAC→AMM
+4. Enable OV in `config/airlines.json` after route validation
+5. Validate resume-recovery: run pipeline, kill mid-run, restart, confirm checkpoint resume works
+6. Build `tools/pre_flight_session_check.py` for AMYBD + GoZayaan session pre-validation

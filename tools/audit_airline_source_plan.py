@@ -11,10 +11,12 @@ AIRLINES_FILE = REPO_ROOT / "config" / "airlines.json"
 
 DIRECT_MODULES = {
     "airasia": "Direct airline website",
+    "airarabia": "Direct airline website",
     "biman": "Direct airline website",
     "novoair": "Direct airline website",
     "indigo": "Direct airline website",
     "maldivian": "Direct airline website",
+    "salamair": "Direct airline website",
 }
 
 HYBRID_MODULES = {
