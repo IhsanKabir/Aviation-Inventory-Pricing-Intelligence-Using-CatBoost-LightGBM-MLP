@@ -13,6 +13,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Ensure we run from the project root regardless of Task Scheduler's working directory
+$projectRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $projectRoot
+
 if (-not (Test-Path -LiteralPath $CredentialsJson)) {
     throw "Credentials file not found: $CredentialsJson"
 }

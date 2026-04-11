@@ -2360,6 +2360,37 @@
         "tourism_mle_bkk_kul_one_way_plus7"
       ]
     },
+    "OV": {
+      "routes": {
+        "DAC-JED": {
+          "active_market_trip_profiles": [
+            "default_one_way_monitoring"
+          ],
+          "training_market_trip_profiles": [
+            "worker_visa_outbound_to_middle_east_one_way"
+          ],
+          "market_trip_profiles": [
+            "default_one_way_monitoring",
+            "worker_visa_outbound_to_middle_east_one_way"
+          ]
+        },
+        "JED-DAC": {
+          "active_market_trip_profiles": [
+            "default_one_way_monitoring"
+          ],
+          "training_market_trip_profiles": [
+            "worker_return_from_middle_east_long_window"
+          ],
+          "market_trip_profiles": [
+            "default_one_way_monitoring",
+            "worker_return_from_middle_east_long_window"
+          ]
+        }
+      },
+      "training_market_trip_profiles": [
+        "inventory_anchor_departure_tracking_default"
+      ]
+    },
     "Q2": {
       "market_trip_profiles": [
         "default_one_way_monitoring",
