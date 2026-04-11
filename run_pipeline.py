@@ -68,8 +68,44 @@ def parse_args():
     parser.add_argument(
         "--query-timeout-seconds",
         type=float,
-        default=120.0,
-        help="Soft timeout per search query passed to run_all (default: 120s).",
+        default=float(os.getenv("PARALLEL_QUERY_TIMEOUT_SECONDS", "90")),
+        help="Soft timeout per search query passed to run_all (default: 90s, override via PARALLEL_QUERY_TIMEOUT_SECONDS env).",
+    )
+    parser.add_argument(
+        "--sharetrip-max-workers",
+        type=int,
+        default=int(os.getenv("PARALLEL_SHARETRIP_MAX_WORKERS", "3")),
+        help="Max concurrent workers for ShareTrip-backed airlines (default: 3, override via PARALLEL_SHARETRIP_MAX_WORKERS env).",
+    )
+    parser.add_argument(
+        "--sharetrip-cooldown-sec",
+        type=float,
+        default=float(os.getenv("PARALLEL_SHARETRIP_COOLDOWN_SEC", "5.0")),
+        help="Sleep between ShareTrip airline launches (default: 5s, override via PARALLEL_SHARETRIP_COOLDOWN_SEC env).",
+    )
+    parser.add_argument(
+        "--wrapper-max-workers",
+        type=int,
+        default=int(os.getenv("PARALLEL_WRAPPER_MAX_WORKERS", "1")),
+        help="Max concurrent workers for wrapper-family airlines (BS, 2A) (default: 1, override via PARALLEL_WRAPPER_MAX_WORKERS env).",
+    )
+    parser.add_argument(
+        "--wrapper-cooldown-sec",
+        type=float,
+        default=float(os.getenv("PARALLEL_WRAPPER_COOLDOWN_SEC", "1.5")),
+        help="Sleep between wrapper airline launches (default: 1.5s, override via PARALLEL_WRAPPER_COOLDOWN_SEC env).",
+    )
+    parser.add_argument(
+        "--gozayaan-max-workers",
+        type=int,
+        default=int(os.getenv("PARALLEL_GOZAYAAN_MAX_WORKERS", "1")),
+        help="Max concurrent workers for GoZayaan-backed airlines (default: 1, override via PARALLEL_GOZAYAAN_MAX_WORKERS env).",
+    )
+    parser.add_argument(
+        "--gozayaan-cooldown-sec",
+        type=float,
+        default=float(os.getenv("PARALLEL_GOZAYAAN_COOLDOWN_SEC", "3.0")),
+        help="Sleep between GoZayaan airline launches (default: 3s, override via PARALLEL_GOZAYAAN_COOLDOWN_SEC env).",
     )
     parser.add_argument(
         "--cycle-id",
@@ -1189,6 +1225,12 @@ def build_scrape_cmd(args):
         _add_arg(cmd, "--limit-routes", args.limit_routes)
         _add_arg(cmd, "--limit-dates", args.limit_dates)
         _add_arg(cmd, "--query-timeout-seconds", args.query_timeout_seconds)
+        _add_arg(cmd, "--sharetrip-max-workers", getattr(args, "sharetrip_max_workers", None))
+        _add_arg(cmd, "--sharetrip-cooldown-sec", getattr(args, "sharetrip_cooldown_sec", None))
+        _add_arg(cmd, "--wrapper-max-workers", getattr(args, "wrapper_max_workers", None))
+        _add_arg(cmd, "--wrapper-cooldown-sec", getattr(args, "wrapper_cooldown_sec", None))
+        _add_arg(cmd, "--gozayaan-max-workers", getattr(args, "gozayaan_max_workers", None))
+        _add_arg(cmd, "--gozayaan-cooldown-sec", getattr(args, "gozayaan_cooldown_sec", None))
         return cmd
 
     cmd = [args.python_exe, str(REPO_ROOT / "run_all.py")]

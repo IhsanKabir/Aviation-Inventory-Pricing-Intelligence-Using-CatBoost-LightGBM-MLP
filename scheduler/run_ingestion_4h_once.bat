@@ -13,6 +13,13 @@ set "BS_AUTO_SOURCE_CHAIN=sharetrip,bdfare,gozayaan"
 set "AIRASTRA_AUTO_SOURCE_CHAIN=sharetrip,bdfare,gozayaan"
 set "AMYBD_SESSION_AUTO_REFRESH=0"
 set "GOZAYAAN_TOKEN_AUTO_REFRESH=0"
+set "PARALLEL_QUERY_TIMEOUT_SECONDS=90"
+set "PARALLEL_SHARETRIP_MAX_WORKERS=3"
+set "PARALLEL_SHARETRIP_COOLDOWN_SEC=5"
+set "PARALLEL_WRAPPER_MAX_WORKERS=1"
+set "PARALLEL_WRAPPER_COOLDOWN_SEC=1.5"
+set "PARALLEL_GOZAYAAN_MAX_WORKERS=1"
+set "PARALLEL_GOZAYAAN_COOLDOWN_SEC=3"
 set "RECOVERY_HELPER=%ROOT%\tools\recover_interrupted_accumulation.py"
 set "RECOVERY_STATUS=%ROOT%\output\reports\accumulation_recovery_latest.json"
 set "CYCLE_STATE=%ROOT%\output\reports\accumulation_cycle_latest.json"
@@ -34,6 +41,13 @@ if exist "%ENVFILE%" (
     if /I "%%~A"=="OPERATIONAL_COMPLETION_BUFFER_MINUTES" set "OPERATIONAL_COMPLETION_BUFFER_MINUTES=%%~B"
     if /I "%%~A"=="ACCUMULATION_COMPLETION_BUFFER_MINUTES" set "ACCUMULATION_COMPLETION_BUFFER_MINUTES=%%~B"
     if /I "%%~A"=="OPERATIONAL_SKIP_BIGQUERY_SYNC" set "OPERATIONAL_SKIP_BIGQUERY_SYNC=%%~B"
+    if /I "%%~A"=="PARALLEL_QUERY_TIMEOUT_SECONDS" set "PARALLEL_QUERY_TIMEOUT_SECONDS=%%~B"
+    if /I "%%~A"=="PARALLEL_SHARETRIP_MAX_WORKERS" set "PARALLEL_SHARETRIP_MAX_WORKERS=%%~B"
+    if /I "%%~A"=="PARALLEL_SHARETRIP_COOLDOWN_SEC" set "PARALLEL_SHARETRIP_COOLDOWN_SEC=%%~B"
+    if /I "%%~A"=="PARALLEL_WRAPPER_MAX_WORKERS" set "PARALLEL_WRAPPER_MAX_WORKERS=%%~B"
+    if /I "%%~A"=="PARALLEL_WRAPPER_COOLDOWN_SEC" set "PARALLEL_WRAPPER_COOLDOWN_SEC=%%~B"
+    if /I "%%~A"=="PARALLEL_GOZAYAAN_MAX_WORKERS" set "PARALLEL_GOZAYAAN_MAX_WORKERS=%%~B"
+    if /I "%%~A"=="PARALLEL_GOZAYAAN_COOLDOWN_SEC" set "PARALLEL_GOZAYAAN_COOLDOWN_SEC=%%~B"
   )
 )
 
@@ -54,9 +68,9 @@ if defined BIGQUERY_PROJECT_ID if defined BIGQUERY_DATASET if not defined GOOGLE
 if exist "%RECOVERY_HELPER%" (
   echo [%date% %time%] ingestion cycle launch check>> "%LOGFILE%"
   if /I "%OPERATIONAL_SKIP_BIGQUERY_SYNC%"=="1" (
-    "%PYEXE%" "%RECOVERY_HELPER%" --mode guarded-run --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%OPERATIONAL_COMPLETION_BUFFER_MINUTES%" -- "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --skip-bigquery-sync >> "%LOGFILE%" 2>&1
+    "%PYEXE%" "%RECOVERY_HELPER%" --mode guarded-run --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%OPERATIONAL_COMPLETION_BUFFER_MINUTES%" -- "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --skip-bigquery-sync --query-timeout-seconds %PARALLEL_QUERY_TIMEOUT_SECONDS% --sharetrip-max-workers %PARALLEL_SHARETRIP_MAX_WORKERS% --sharetrip-cooldown-sec %PARALLEL_SHARETRIP_COOLDOWN_SEC% --wrapper-max-workers %PARALLEL_WRAPPER_MAX_WORKERS% --wrapper-cooldown-sec %PARALLEL_WRAPPER_COOLDOWN_SEC% --gozayaan-max-workers %PARALLEL_GOZAYAAN_MAX_WORKERS% --gozayaan-cooldown-sec %PARALLEL_GOZAYAAN_COOLDOWN_SEC% >> "%LOGFILE%" 2>&1
   ) else (
-    "%PYEXE%" "%RECOVERY_HELPER%" --mode guarded-run --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%OPERATIONAL_COMPLETION_BUFFER_MINUTES%" -- "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local >> "%LOGFILE%" 2>&1
+    "%PYEXE%" "%RECOVERY_HELPER%" --mode guarded-run --python-exe "%PYEXE%" --root "%ROOT%" --reports-dir "%ROOT%\output\reports" --min-completed-gap-minutes "%OPERATIONAL_COMPLETION_BUFFER_MINUTES%" -- "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --query-timeout-seconds %PARALLEL_QUERY_TIMEOUT_SECONDS% --sharetrip-max-workers %PARALLEL_SHARETRIP_MAX_WORKERS% --sharetrip-cooldown-sec %PARALLEL_SHARETRIP_COOLDOWN_SEC% --wrapper-max-workers %PARALLEL_WRAPPER_MAX_WORKERS% --wrapper-cooldown-sec %PARALLEL_WRAPPER_COOLDOWN_SEC% --gozayaan-max-workers %PARALLEL_GOZAYAAN_MAX_WORKERS% --gozayaan-cooldown-sec %PARALLEL_GOZAYAAN_COOLDOWN_SEC% >> "%LOGFILE%" 2>&1
   )
   set "RC=%ERRORLEVEL%"
   set "RESCHEDULED=0"
@@ -89,9 +103,9 @@ if exist "%RECOVERY_HELPER%" (
 
 echo [%date% %time%] starting ingestion cycle>> "%LOGFILE%"
 if /I "%OPERATIONAL_SKIP_BIGQUERY_SYNC%"=="1" (
-  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --skip-bigquery-sync >> "%LOGFILE%" 2>&1
+  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --skip-bigquery-sync --query-timeout-seconds %PARALLEL_QUERY_TIMEOUT_SECONDS% --sharetrip-max-workers %PARALLEL_SHARETRIP_MAX_WORKERS% --sharetrip-cooldown-sec %PARALLEL_SHARETRIP_COOLDOWN_SEC% --wrapper-max-workers %PARALLEL_WRAPPER_MAX_WORKERS% --wrapper-cooldown-sec %PARALLEL_WRAPPER_COOLDOWN_SEC% --gozayaan-max-workers %PARALLEL_GOZAYAAN_MAX_WORKERS% --gozayaan-cooldown-sec %PARALLEL_GOZAYAAN_COOLDOWN_SEC% >> "%LOGFILE%" 2>&1
 ) else (
-  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local >> "%LOGFILE%" 2>&1
+  "%PYEXE%" "%ROOT%\run_pipeline.py" --python-exe "%PYEXE%" --report-format xlsx --route-monitor --report-output-dir "%ROOT%\output\reports" --report-timestamp-tz local --query-timeout-seconds %PARALLEL_QUERY_TIMEOUT_SECONDS% --sharetrip-max-workers %PARALLEL_SHARETRIP_MAX_WORKERS% --sharetrip-cooldown-sec %PARALLEL_SHARETRIP_COOLDOWN_SEC% --wrapper-max-workers %PARALLEL_WRAPPER_MAX_WORKERS% --wrapper-cooldown-sec %PARALLEL_WRAPPER_COOLDOWN_SEC% --gozayaan-max-workers %PARALLEL_GOZAYAAN_MAX_WORKERS% --gozayaan-cooldown-sec %PARALLEL_GOZAYAAN_COOLDOWN_SEC% >> "%LOGFILE%" 2>&1
 )
 set "RC=%ERRORLEVEL%"
 set "RESCHEDULED=0"

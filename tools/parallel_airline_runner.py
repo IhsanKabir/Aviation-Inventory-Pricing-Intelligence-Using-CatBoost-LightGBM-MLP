@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SHARETRIP_MODULES = {"sharetrip"}
 WRAPPER_MODULES = {"airastra", "bs"}
 PROTECTED_DIRECT_MODULES = {"indigo"}
+GOZAYAAN_MODULES: set[str] = set()  # reserved for future gozayaan direct connector
 
 
 def parse_args():
@@ -105,6 +106,18 @@ def parse_args():
         type=float,
         default=0.75,
         help="Sleep between Indigo launches to reduce session churn (default: 0.75s).",
+    )
+    p.add_argument(
+        "--gozayaan-max-workers",
+        type=int,
+        default=1,
+        help="Maximum concurrent workers for GoZayaan-backed airlines (default: 1).",
+    )
+    p.add_argument(
+        "--gozayaan-cooldown-sec",
+        type=float,
+        default=3.0,
+        help="Sleep between GoZayaan airline launches (default: 3.0s).",
     )
     p.add_argument("--strict", action="store_true")
     return p.parse_args()
@@ -205,6 +218,8 @@ def _module_family(module_name: str) -> str:
         return "wrapper"
     if normalized in PROTECTED_DIRECT_MODULES:
         return "indigo"
+    if normalized in GOZAYAAN_MODULES:
+        return "gozayaan"
     return "direct"
 
 
@@ -256,6 +271,17 @@ def _run_batches_concurrently(grouped_airlines: dict[str, list[dict]], args, cyc
                     cooldown_sec=max(0.0, float(args.indigo_cooldown_sec or 0.0)),
                 )
             ] = "indigo"
+        if non_empty_families.get("gozayaan"):
+            batch_futures[
+                ex.submit(
+                    _run_batch,
+                    non_empty_families["gozayaan"],
+                    args,
+                    cycle_id,
+                    max_workers=args.gozayaan_max_workers,
+                    cooldown_sec=max(0.0, float(args.gozayaan_cooldown_sec or 0.0)),
+                )
+            ] = "gozayaan"
         for fut in as_completed(batch_futures):
             results.extend(fut.result())
     return results
