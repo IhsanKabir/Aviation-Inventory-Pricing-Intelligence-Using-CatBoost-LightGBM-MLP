@@ -18,10 +18,10 @@ from typing import Any
 
 from google.cloud import bigquery
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _gds_table(name: str) -> str:
     project = os.environ.get("BIGQUERY_PROJECT_ID", "aeropulseintelligence")
@@ -42,6 +42,7 @@ def _rows_to_dicts(rows) -> list[dict]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Fare snapshot queries
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def get_latest_fare_run(client: bigquery.Client) -> dict | None:
     """Return metadata for the most recent GDS fare extraction run."""
@@ -120,7 +121,9 @@ def get_fares(
     airline_filter = ""
     if airline:
         airline_filter = "AND airline = @airline"
-        params.append(bigquery.ScalarQueryParameter("airline", "STRING", airline.upper()))
+        params.append(
+            bigquery.ScalarQueryParameter("airline", "STRING", airline.upper())
+        )
 
     origin_filter = ""
     if origin:
@@ -130,7 +133,9 @@ def get_fares(
     dest_filter = ""
     if destination:
         dest_filter = "AND destination = @destination"
-        params.append(bigquery.ScalarQueryParameter("destination", "STRING", destination.upper()))
+        params.append(
+            bigquery.ScalarQueryParameter("destination", "STRING", destination.upper())
+        )
 
     cabin_filter = ""
     if cabin:
@@ -140,7 +145,11 @@ def get_fares(
     jt_filter = ""
     if journey_type:
         jt_filter = "AND journey_type = @journey_type"
-        params.append(bigquery.ScalarQueryParameter("journey_type", "STRING", journey_type.upper()))
+        params.append(
+            bigquery.ScalarQueryParameter(
+                "journey_type", "STRING", journey_type.upper()
+            )
+        )
 
     query = f"""
         SELECT
@@ -203,11 +212,13 @@ def get_fare_history(
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
-            bigquery.ScalarQueryParameter("route_key",    "STRING", route_key),
-            bigquery.ScalarQueryParameter("airline",      "STRING", airline.upper()),
-            bigquery.ScalarQueryParameter("rbd",          "STRING", rbd.upper()),
-            bigquery.ScalarQueryParameter("journey_type", "STRING", journey_type.upper()),
-            bigquery.ScalarQueryParameter("days",         "INT64",  days),
+            bigquery.ScalarQueryParameter("route_key", "STRING", route_key),
+            bigquery.ScalarQueryParameter("airline", "STRING", airline.upper()),
+            bigquery.ScalarQueryParameter("rbd", "STRING", rbd.upper()),
+            bigquery.ScalarQueryParameter(
+                "journey_type", "STRING", journey_type.upper()
+            ),
+            bigquery.ScalarQueryParameter("days", "INT64", days),
         ]
     )
     return _rows_to_dicts(client.query(query, job_config=job_config).result())
@@ -216,6 +227,7 @@ def get_fare_history(
 # ─────────────────────────────────────────────────────────────────────────────
 # Change event queries
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def get_change_events(
     client: bigquery.Client,
@@ -228,27 +240,33 @@ def get_change_events(
 ) -> list[dict]:
     """Return recent fare change events."""
     params: list[bigquery.ScalarQueryParameter] = [
-        bigquery.ScalarQueryParameter("days",  "INT64",  days),
-        bigquery.ScalarQueryParameter("limit", "INT64",  limit),
+        bigquery.ScalarQueryParameter("days", "INT64", days),
+        bigquery.ScalarQueryParameter("limit", "INT64", limit),
     ]
 
-    airline_filter  = ""
-    origin_filter   = ""
-    dest_filter     = ""
-    ct_filter       = ""
+    airline_filter = ""
+    origin_filter = ""
+    dest_filter = ""
+    ct_filter = ""
 
     if airline:
         airline_filter = "AND airline = @airline"
-        params.append(bigquery.ScalarQueryParameter("airline", "STRING", airline.upper()))
+        params.append(
+            bigquery.ScalarQueryParameter("airline", "STRING", airline.upper())
+        )
     if origin:
         origin_filter = "AND origin = @origin"
         params.append(bigquery.ScalarQueryParameter("origin", "STRING", origin.upper()))
     if destination:
         dest_filter = "AND destination = @destination"
-        params.append(bigquery.ScalarQueryParameter("destination", "STRING", destination.upper()))
+        params.append(
+            bigquery.ScalarQueryParameter("destination", "STRING", destination.upper())
+        )
     if change_type:
         ct_filter = "AND change_type = @change_type"
-        params.append(bigquery.ScalarQueryParameter("change_type", "STRING", change_type))
+        params.append(
+            bigquery.ScalarQueryParameter("change_type", "STRING", change_type)
+        )
 
     query = f"""
         SELECT
@@ -302,6 +320,7 @@ def get_change_summary(
 # ─────────────────────────────────────────────────────────────────────────────
 # Tax snapshot queries
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def get_tax_rates(
     client: bigquery.Client,

@@ -20,12 +20,14 @@ router = APIRouter()
 # Dependency: BigQuery client
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def get_bq_client() -> bigquery.Client:
     """
     Return a BigQuery client. Reuse the same approach as reporting.py
     (instantiate per-request; Cloud Run handles auth via workload identity).
     """
     import os
+
     project = os.environ.get("BIGQUERY_PROJECT_ID", "aeropulseintelligence")
     return bigquery.Client(project=project)
 
@@ -33,6 +35,7 @@ def get_bq_client() -> bigquery.Client:
 # ─────────────────────────────────────────────────────────────────────────────
 # Runs
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.get("/runs")
 async def list_runs(
@@ -64,14 +67,19 @@ async def latest_run(client: bigquery.Client = Depends(get_bq_client)):
 # Fares
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.get("/fares")
 async def list_fares(
     airline: str | None = Query(default=None, description="2-3 char IATA airline code"),
     origin: str | None = Query(default=None, description="3-char IATA airport"),
     destination: str | None = Query(default=None, description="3-char IATA airport"),
-    cabin: str | None = Query(default=None, description="Economy | Business | First | Premium Economy"),
+    cabin: str | None = Query(
+        default=None, description="Economy | Business | First | Premium Economy"
+    ),
     journey_type: str | None = Query(default=None, description="OW | RT"),
-    cycle_id: str | None = Query(default=None, description="Specific cycle, e.g. gds_run_42"),
+    cycle_id: str | None = Query(
+        default=None, description="Specific cycle, e.g. gds_run_42"
+    ),
     limit: int = Query(default=500, ge=1, le=5000),
     client: bigquery.Client = Depends(get_bq_client),
 ):
@@ -121,12 +129,15 @@ async def fare_history(
 # Change events
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.get("/changes")
 async def list_changes(
     airline: str | None = Query(default=None),
     origin: str | None = Query(default=None),
     destination: str | None = Query(default=None),
-    change_type: str | None = Query(default=None, description="new | removed | price_change | sold_out | available"),
+    change_type: str | None = Query(
+        default=None, description="new | removed | price_change | sold_out | available"
+    ),
     days: int = Query(default=7, ge=1, le=90),
     limit: int = Query(default=200, ge=1, le=2000),
     client: bigquery.Client = Depends(get_bq_client),
@@ -162,6 +173,7 @@ async def change_summary(
 # Taxes
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.get("/taxes")
 async def list_tax_airports(client: bigquery.Client = Depends(get_bq_client)):
     """Return all airports that have GDS tax data."""
@@ -174,7 +186,9 @@ async def list_tax_airports(client: bigquery.Client = Depends(get_bq_client)):
 @router.get("/taxes/{airport_code}")
 async def tax_rates(
     airport_code: str,
-    status: str = Query(default="current", description="current | future | expired | all"),
+    status: str = Query(
+        default="current", description="current | future | expired | all"
+    ),
     client: bigquery.Client = Depends(get_bq_client),
 ):
     """
@@ -186,7 +200,7 @@ async def tax_rates(
         if not rows:
             raise HTTPException(
                 status_code=404,
-                detail=f"No tax data found for airport '{airport_code.upper()}'"
+                detail=f"No tax data found for airport '{airport_code.upper()}'",
             )
         return rows
     except HTTPException:
