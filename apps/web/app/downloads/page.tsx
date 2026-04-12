@@ -32,7 +32,7 @@ const RELEASES: Release[] = [
       "New YQ-YR-Q Charges Excel sheet — GDS surcharge codes per route",
       "Comprehensive user guide included",
     ],
-    exe_url: null,  // Update once GitHub release is published
+    exe_url: "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.0/TravelportAuto.exe",
     guide_url: "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
   },
   {
