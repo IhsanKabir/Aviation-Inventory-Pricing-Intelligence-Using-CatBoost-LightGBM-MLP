@@ -9,13 +9,15 @@ import Link from "next/link";
 import { getGdsTaxRates, type GdsTaxRate } from "@/lib/gds";
 
 interface Props {
-  params: { airport: string };
-  searchParams: { status?: string };
+  params: Promise<{ airport: string }>;
+  searchParams: Promise<{ status?: string }>;
 }
 
 export default async function AirportTaxPage({ params, searchParams }: Props) {
-  const airportCode = params.airport.toUpperCase();
-  const status = (searchParams.status ?? "current") as
+  const { airport } = await params;
+  const { status: statusParam } = await searchParams;
+  const airportCode = airport.toUpperCase();
+  const status = (statusParam ?? "current") as
     | "current"
     | "future"
     | "expired"
@@ -165,7 +167,8 @@ export default async function AirportTaxPage({ params, searchParams }: Props) {
 }
 
 export async function generateMetadata({ params }: Props) {
+  const { airport } = await params;
   return {
-    title: `${params.airport.toUpperCase()} Tax Rates — GDS`,
+    title: `${airport.toUpperCase()} Tax Rates — GDS`,
   };
 }

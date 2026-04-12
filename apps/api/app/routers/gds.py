@@ -11,7 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from google.cloud import bigquery
 
-from app.repositories import gds as gds_repo
+from ..repositories import gds as gds_repo
 
 router = APIRouter()
 
