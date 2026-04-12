@@ -12,7 +12,8 @@ const NAV_ITEMS = [
   { href: "/taxes", label: "Taxes" },
   { href: "/changes", label: "Changes" },
   { href: "/forecasting", label: "Forecasting" },
-  { href: "/gds", label: "GDS" }
+  { href: "/gds", label: "GDS" },
+  { href: "/downloads", label: "Downloads" }
 ];
 const ADMIN_NAV_ITEMS = [
   { href: "/admin", label: "Admin" },
