@@ -51,7 +51,9 @@ async def create_feedback(
 ):
     """Receive a feedback submission from the desktop GUI."""
     try:
-        payload_dict = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+        payload_dict = (
+            payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+        )
         return feedback_repo.create_feedback(client, payload_dict)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
