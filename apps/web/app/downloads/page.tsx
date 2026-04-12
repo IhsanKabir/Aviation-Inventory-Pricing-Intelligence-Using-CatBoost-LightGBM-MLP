@@ -29,10 +29,10 @@ const RELEASES: Release[] = [
       "PostgreSQL persistence with full run history",
       "Checkpoint resume — safely restart interrupted runs",
       "--speed flag: safe | normal | fast profiles",
-      "New YQ-YR-Q Charges Excel sheet — carrier and fuel surcharges isolated per route",
+      "New YQ-YR-Q Charges Excel sheet — GDS surcharge codes per route",
       "Comprehensive user guide included",
     ],
-    exe_url: "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/latest/download/TravelportAuto.exe",
+    exe_url: null,  // Update once GitHub release is published
     guide_url: "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
   },
   {
