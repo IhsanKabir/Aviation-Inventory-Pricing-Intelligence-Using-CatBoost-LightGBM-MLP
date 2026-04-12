@@ -16,9 +16,22 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
+    version: "v1.3.1",
+    date: "2026-04-13",
+    label: "Latest",
+    notes: [
+      "Fixed crash in Manual (paste) mode — step-by-step clipboard wizard replaces stdin prompt",
+      'New "Compare against" field — leave blank for previous run or enter a date to compare a specific snapshot',
+      "Creator credit shown in title bar",
+    ],
+    exe_url:
+      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.1/TravelportAuto.exe",
+    guide_url:
+      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
+  },
+  {
     version: "v1.3.0",
     date: "2026-04-12",
-    label: "Latest",
     notes: [
       "Full fare extraction across all routes (85 routes, DAC hub)",
       "BigQuery streaming push — fare + tax data synced to live dashboard",
@@ -32,8 +45,10 @@ const RELEASES: Release[] = [
       "New YQ-YR-Q Charges Excel sheet — GDS surcharge codes per route",
       "Comprehensive user guide included",
     ],
-    exe_url: "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.0/TravelportAuto.exe",
-    guide_url: "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
+    exe_url:
+      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.0/TravelportAuto.exe",
+    guide_url:
+      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
   },
   {
     version: "v1.2.0",
