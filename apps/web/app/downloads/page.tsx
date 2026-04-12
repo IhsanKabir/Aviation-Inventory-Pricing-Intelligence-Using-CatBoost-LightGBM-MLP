@@ -16,16 +16,26 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
-    version: "v1.3.2",
+    version: "v1.3.3",
     date: "2026-04-13",
     label: "Latest",
+    notes: [
+      'Fixed "Failed to load Python DLL" crash on launch — UPX compression disabled, exe now loads reliably on all Windows 10/11 machines',
+    ],
+    exe_url:
+      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.3/TravelportAuto.exe",
+    guide_url:
+      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
+  },
+  {
+    version: "v1.3.2",
+    date: "2026-04-13",
     notes: [
       'Fixed "Failed to load Python DLL" crash after using the built-in auto-update',
     ],
     exe_url:
       "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.2/TravelportAuto.exe",
-    guide_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
+    guide_url: null,
   },
   {
     version: "v1.3.1",
