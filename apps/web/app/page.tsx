@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { DataPanel } from "@/components/data-panel";
 import { MetricCard } from "@/components/metric-card";
 import { getDashboardPayload } from "@/lib/api";
@@ -114,17 +115,19 @@ export default async function HomePage() {
         >
           <div className="stack">
             {[
-              "Routes for fare movement, collected dates, and route-level comparison",
-              "Operations for service presence, timing patterns, and route footprint",
-              "Changes, taxes, and penalties for movement across product conditions",
-              "Forecasting for next-step pricing and route-level outlook"
-            ].map((step, idx) => (
-              <div className="card roadmap-step" key={step}>
+              { href: "/routes", label: "Routes", desc: "Fare movement, collected dates, and side-by-side airline comparison for any route and travel window." },
+              { href: "/operations", label: "Operations", desc: "Service presence, timing patterns, weekday frequency, and route footprint across recent cycles." },
+              { href: "/changes", label: "Changes", desc: "Fare movement events, new listings, sold-out signals, tax and penalty shifts across carriers." },
+              { href: "/forecasting", label: "Forecasting", desc: "Next-day price outlook, model leaderboard, route-level confidence, and backtest stability." }
+            ].map(({ href, label, desc }, idx) => (
+              <Link href={href} className="card roadmap-step" key={href} style={{ textDecoration: "none", color: "inherit" }}>
                 <div className="roadmap-step-header">
                   <div className="step-number">{idx + 1}</div>
-                  <strong>{step}</strong>
+                  <strong>{label}</strong>
+                  <div className="nav-card-arrow">→</div>
                 </div>
-              </div>
+                <div className="roadmap-step-desc">{desc}</div>
+              </Link>
             ))}
           </div>
         </DataPanel>

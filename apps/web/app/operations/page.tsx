@@ -322,13 +322,22 @@ export default async function OperationsPage({ searchParams }: PageProps) {
                 </div>
 
                 <div className="operations-weekday-grid">
-                  {route.weekday_profile.map((day) => (
-                    <div className="card operations-weekday-card" key={`${route.route_key}-${day.day_label}`}>
-                      <span>{day.day_label.slice(0, 3)}</span>
-                      <strong>{day.flight_instance_count.toLocaleString()}</strong>
-                      <small>{day.airline_count?.toLocaleString() ?? "0"} airlines</small>
-                    </div>
-                  ))}
+                  {(() => {
+                    const maxCount = Math.max(1, ...route.weekday_profile.map((d) => d.flight_instance_count));
+                    return route.weekday_profile.map((day) => (
+                      <div className="card operations-weekday-card" key={`${route.route_key}-${day.day_label}`}>
+                        <span>{day.day_label.slice(0, 3)}</span>
+                        <strong>{day.flight_instance_count.toLocaleString()}</strong>
+                        <small>{day.airline_count?.toLocaleString() ?? "0"} airlines</small>
+                        <div className="weekday-bar-track">
+                          <div
+                            className="weekday-bar-fill"
+                            style={{ width: `${Math.round((day.flight_instance_count / maxCount) * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ));
+                  })()}
                 </div>
               </div>
 

@@ -367,18 +367,34 @@ export default async function ForecastingPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {overallEval.slice(0, 12).map((row, index) => (
-                    <tr key={`${String(row.model)}-${index}`}>
-                      <td>{index + 1}</td>
-                      <td>{formatModelName(row.model)}</td>
-                      <td>{formatNumber(toNumber(row.n))}</td>
-                      <td>{formatNumber(toNumber(row.mae))}</td>
-                      <td>{formatNumber(toNumber(row.rmse))}</td>
-                      <td>{formatPercent(toNumber(row.mape_pct))}</td>
-                      <td>{formatPercent(toNumber(row.directional_accuracy_pct))}</td>
-                      <td>{toNumber(row.f1_macro) !== null ? Number(row.f1_macro).toFixed(3) : "-"}</td>
-                    </tr>
-                  ))}
+                  {(() => {
+                    const rows = overallEval.slice(0, 12);
+                    const maxMae = Math.max(1, ...rows.map((r) => toNumber(r.mae) ?? 0));
+                    return rows.map((row, index) => {
+                      const mae = toNumber(row.mae);
+                      const barPct = mae !== null ? Math.round((mae / maxMae) * 100) : 0;
+                      const isWorse = index >= Math.ceil(rows.length / 2);
+                      return (
+                        <tr key={`${String(row.model)}-${index}`}>
+                          <td>{index + 1}</td>
+                          <td>{formatModelName(row.model)}</td>
+                          <td>{formatNumber(toNumber(row.n))}</td>
+                          <td>
+                            <div className="mae-bar-cell">
+                              <span className="mae-bar-value">{formatNumber(mae)}</span>
+                              <div className="mae-bar-track">
+                                <div className={`mae-bar-fill${isWorse ? " warn" : ""}`} style={{ width: `${barPct}%` }} />
+                              </div>
+                            </div>
+                          </td>
+                          <td>{formatNumber(toNumber(row.rmse))}</td>
+                          <td>{formatPercent(toNumber(row.mape_pct))}</td>
+                          <td>{formatPercent(toNumber(row.directional_accuracy_pct))}</td>
+                          <td>{toNumber(row.f1_macro) !== null ? Number(row.f1_macro).toFixed(3) : "-"}</td>
+                        </tr>
+                      );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
