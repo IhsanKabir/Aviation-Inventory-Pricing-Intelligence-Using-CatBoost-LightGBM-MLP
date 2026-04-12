@@ -16,9 +16,20 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
-    version: "v1.3.1",
+    version: "v1.3.2",
     date: "2026-04-13",
     label: "Latest",
+    notes: [
+      'Fixed "Failed to load Python DLL" crash after using the built-in auto-update',
+    ],
+    exe_url:
+      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.2/TravelportAuto.exe",
+    guide_url:
+      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
+  },
+  {
+    version: "v1.3.1",
+    date: "2026-04-13",
     notes: [
       "Fixed crash in Manual (paste) mode — step-by-step clipboard wizard replaces stdin prompt",
       'New "Compare against" field — leave blank for previous run or enter a date to compare a specific snapshot',
