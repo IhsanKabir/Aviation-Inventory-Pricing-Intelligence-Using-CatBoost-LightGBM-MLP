@@ -11,9 +11,6 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/web
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +26,7 @@ jobs:
 
       - name: Install web dependencies
         run: npm ci
+        working-directory: apps/web
 
       - name: Pull Vercel environment
         run: vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"

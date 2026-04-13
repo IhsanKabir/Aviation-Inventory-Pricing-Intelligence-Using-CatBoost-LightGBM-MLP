@@ -57,6 +57,11 @@ The web workflow now performs:
 - `vercel build --prod`
 - `vercel deploy --prebuilt --prod`
 
+Important for this monorepo:
+
+- keep Vercel project Root Directory set to `apps/web`
+- let the GitHub Actions workflow run the Vercel CLI from repository root so the root directory is not applied twice
+
 ## Why this path matters
 
 This removes the local machine from the deployment path:

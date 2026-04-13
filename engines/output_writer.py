@@ -267,6 +267,16 @@ class OutputWriter:
         return f"{airline_s}{flight_s}"
 
     @staticmethod
+    def _timing_with_flight_label(departure_time, airline, flight_number) -> str:
+        time_s = str(departure_time or "").strip()[:5]
+        if time_s in {"", "None", "nan", "NaT"}:
+            time_s = ""
+        flight_label = OutputWriter._flight_code_label(airline, flight_number)
+        if time_s and flight_label:
+            return f"{time_s} ({flight_label})"
+        return time_s or flight_label or ""
+
+    @staticmethod
     def _join_limited(values, limit=8):
         vals = [str(v) for v in values if str(v).strip()]
         if limit is None:
@@ -935,6 +945,16 @@ class OutputWriter:
             sheet.write(2, 0, "No historical/current flight observations available to build operations sheet.", fmt_cell)
             return
 
+        working = working.copy()
+        working["timing_flight_label"] = working.apply(
+            lambda rec: self._timing_with_flight_label(
+                rec.get("departure_time"),
+                rec.get("airline"),
+                rec.get("flight_number"),
+            ),
+            axis=1,
+        )
+
         airlines = sorted([a for a in working["airline"].dropna().unique() if str(a).strip()])
         airline_theme = self._airline_theme_map(airlines)
         capacity_map = get_fleet_capacity_map(airlines=airlines) if airlines else {}
@@ -1100,7 +1120,7 @@ class OutputWriter:
         route_timings = (
             working.groupby(["airline", "route"], as_index=False)
             .agg(
-                timings=("departure_time", lambda s: sorted({str(v) for v in s if str(v).strip()})),
+                timings=("timing_flight_label", lambda s: sorted({str(v) for v in s if str(v).strip()})),
                 aircraft_types=("aircraft", lambda s: sorted({str(v) for v in s if str(v).strip()})),
             )
         )
@@ -1136,7 +1156,7 @@ class OutputWriter:
         row += 1
         sheet.write(row, 0, "Route", fmt_header)
         col = 1
-        metric_labels = ["Daily", "Weekly", "Date Span", "Pattern Detail", "Timings"]
+        metric_labels = ["Daily", "Weekly", "Date Span", "Pattern Detail", "Timings / Flight No."]
         for airline in airlines:
             for m in metric_labels:
                 sheet.write(row, col, m, fmt_airline_subheader.get(airline, fmt_header))
@@ -1189,14 +1209,14 @@ class OutputWriter:
             0,
             row,
             max(6, len(day_order) + 1),
-            "Σ = route total across all listed airlines for that weekday. Each cell shows the airline breakdown and departure times from the historical ops baseline.",
+            "Σ = route total across all listed airlines for that weekday. Each cell shows the airline breakdown and departure times with carrier flight numbers from the historical ops baseline.",
             fmt_note,
         )
         row += 1
 
         day_timings = (
             working.groupby(["route", "day_name", "airline"], as_index=False)
-            .agg(timings=("departure_time", lambda s: sorted({str(v) for v in s if str(v).strip()})))
+            .agg(timings=("timing_flight_label", lambda s: sorted({str(v) for v in s if str(v).strip()})))
         )
         day_grp = route_typical_weekday.merge(day_timings, on=["route", "day_name", "airline"], how="left")
         route_list = sorted(day_grp["route"].dropna().astype(str).unique().tolist())
@@ -1236,8 +1256,10 @@ class OutputWriter:
 
         # Column sizing and freeze
         sheet.set_column(0, 0, 16)  # Route
+        for idx in range(len(airlines)):
+            sheet.set_column(1 + idx * 5 + 4, 1 + idx * 5 + 4, 34)  # timings in section B
         for i in range(len(day_order)):
-            sheet.set_column(1 + i, 1 + i, 42)  # route-day summary value
+            sheet.set_column(1 + i, 1 + i, 50)  # route-day summary value
         sheet.freeze_panes(3, 1)
 
     def _write_penalty_comparison(self, workbook, df: pd.DataFrame):

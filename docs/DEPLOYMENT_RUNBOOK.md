@@ -148,6 +148,7 @@ GitHub Actions alternative:
 - use `.github/workflows/deploy-web-vercel.yml`
 - supply `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`
 - the workflow now uses `vercel pull -> vercel build --prod -> vercel deploy --prebuilt --prod`
+- in this monorepo, the workflow runs Vercel CLI from repo root while Vercel itself keeps `apps/web` as the configured Root Directory
 
 ## Database migration
 

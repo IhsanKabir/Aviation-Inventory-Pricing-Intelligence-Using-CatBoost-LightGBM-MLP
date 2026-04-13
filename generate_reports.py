@@ -885,7 +885,101 @@ def _apply_risk_formats(writer, sheet_name: str, df):
         worksheet.conditional_format(1, risk_idx, max_row, risk_idx, {"type": "text", "criteria": "containing", "value": "LOW", "format": fmt_low})
 
 
-def _write_xlsx(workbook_path: Path, report_payload: dict, args):
+def _query_flight_operations(engine, args, limit=5000):
+    """Query detailed flight operations data with flight numbers from flight_offers table."""
+    import pandas as pd
+    from sqlalchemy import text
+    
+    clauses = []
+    params = {"limit": limit}
+    
+    # Apply filters
+    airline_codes = _airline_codes(args)
+    if airline_codes:
+        if len(airline_codes) == 1:
+            clauses.append("fo.airline = :airline")
+            params["airline"] = airline_codes[0]
+        else:
+            placeholders = ", ".join([f":airline_{i}" for i in range(len(airline_codes))])
+            clauses.append(f"fo.airline IN ({placeholders})")
+            for i, code in enumerate(airline_codes):
+                params[f"airline_{i}"] = code
+    
+    if args.start_date:
+        clauses.append("fo.departure::date >= :start_date")
+        params["start_date"] = args.start_date
+    
+    if args.end_date:
+        clauses.append("fo.departure::date <= :end_date")
+        params["end_date"] = args.end_date
+    
+    if args.origin:
+        clauses.append("fo.origin = :origin")
+        params["origin"] = args.origin.upper()
+    
+    if args.destination:
+        clauses.append("fo.destination = :destination")
+        params["destination"] = args.destination.upper()
+    
+    if args.cabin:
+        clauses.append("fo.cabin = :cabin")
+        params["cabin"] = args.cabin
+    
+    where_clause = " AND ".join(clauses) if clauses else "1=1"
+    
+    query = f"""
+    SELECT DISTINCT ON (
+        fo.airline,
+        fo.origin,
+        fo.destination,
+        fo.flight_number,
+        fo.departure::date,
+        TO_CHAR(fo.departure, 'HH24:MI')
+    )
+        fo.airline,
+        fo.origin,
+        fo.destination,
+        CONCAT(fo.origin, '-', fo.destination) AS route,
+        fo.flight_number,
+        fo.departure::date AS departure_date,
+        TO_CHAR(fo.departure, 'HH24:MI') AS departure_time,
+        TO_CHAR(fo.departure, 'Day') AS departure_day,
+        fo.cabin,
+        fo.brand,
+        fo.price_total_bdt AS fare_bdt,
+        fo.seat_capacity,
+        fo.seat_available,
+        frm.aircraft,
+        frm.equipment_code,
+        frm.duration_min,
+        frm.stops,
+        frm.via_airports,
+        frm.booking_class,
+        fo.scraped_at AS last_scraped_utc
+    FROM flight_offers fo
+    LEFT JOIN flight_offer_raw_meta frm ON frm.flight_offer_id = fo.id
+    WHERE {where_clause}
+    ORDER BY 
+        fo.airline,
+        fo.origin,
+        fo.destination,
+        fo.flight_number,
+        fo.departure::date,
+        TO_CHAR(fo.departure, 'HH24:MI'),
+        fo.scraped_at DESC
+    LIMIT :limit
+    """
+    
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(text(query), conn, params=params)
+        return df
+    except Exception as e:
+        print(f"Warning: Could not query flight operations data: {e}")
+        return pd.DataFrame()
+
+
+def _write_xlsx(workbook_path: Path, report_payload: dict, args, engine=None):
     try:
         import pandas as pd
     except ImportError as exc:
@@ -1024,6 +1118,18 @@ def _write_xlsx(workbook_path: Path, report_payload: dict, args):
         _apply_risk_formats(writer, "action_queue", action_queue_df)
         _apply_risk_formats(writer, "airline_sections", airline_sections_df)
 
+        # Add operations sheet with flight numbers
+        if engine is not None:
+            ops_df = _query_flight_operations(engine, args, limit=5000)
+            if not ops_df.empty:
+                ops_df.to_excel(writer, sheet_name="operations_flights", index=False)
+                _autofit_sheet(writer, "operations_flights", ops_df)
+                print(f"operations_flights: {len(ops_df)} rows added to dashboard workbook")
+            else:
+                print("operations_flights: No flight operations data available")
+        else:
+            print("operations_flights: Skipped (no database engine provided)")
+
 
 def export_reports(args):
     engine = create_engine(args.db_url, pool_pre_ping=True, future=True)
@@ -1048,7 +1154,7 @@ def export_reports(args):
 
     if args.format in {"xlsx", "both"}:
         workbook_path = run_dir / f"airline_intel_dashboard_{ts}_{tz_token}.xlsx"
-        _write_xlsx(workbook_path, report_payload, args)
+        _write_xlsx(workbook_path, report_payload, args, engine=engine)
         exported.append(("dashboard_workbook", workbook_path, len(report_payload)))
 
     if args.route_monitor:
