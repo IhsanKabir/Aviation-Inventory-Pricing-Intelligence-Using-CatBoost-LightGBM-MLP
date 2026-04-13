@@ -16,16 +16,27 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
-    version: "v1.3.7",
+    version: "v1.3.8",
     date: "2026-04-13",
     label: "Latest",
     notes: [
-      'Fixed "Application Window 1 not found" without requiring admin rights — now uses Win32 window title matching which works on all machines including IT-managed work laptops',
+      "Performance: eliminated fixed sleeps, replaced with adaptive polling — 1-3 minutes faster per full run",
+      "Startup connection 14s faster, FS freshness check and currency redirect no longer wait the full timeout when data arrives early",
+    ],
+    exe_url:
+      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.8/TravelportAuto.exe",
+    guide_url:
+      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
+  },
+  {
+    version: "v1.3.7",
+    date: "2026-04-13",
+    notes: [
+      'Fixed "Application Window 1 not found" without admin rights — Win32 title matching works on IT-managed work laptops',
     ],
     exe_url:
       "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.7/TravelportAuto.exe",
-    guide_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
+    guide_url: null,
   },
   {
     version: "v1.3.6",
