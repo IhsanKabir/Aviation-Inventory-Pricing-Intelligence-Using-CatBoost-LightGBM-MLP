@@ -1,4 +1,5 @@
 import Link from "next/link";
+
 import { DataPanel } from "@/components/data-panel";
 import { MetricCard } from "@/components/metric-card";
 import { getDashboardPayload } from "@/lib/api";
@@ -25,7 +26,7 @@ function formatDate(value?: string | null) {
   return new Intl.DateTimeFormat("en-GB", {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: "Asia/Dhaka"
+    timeZone: "Asia/Dhaka",
   }).format(new Date(value));
 }
 
@@ -33,10 +34,14 @@ export default async function HomePage() {
   const payload = await getDashboardPayload();
   const latestCycle = payload.latestCycle.data;
   const cycleHealth = payload.cycleHealth.data;
-  const airlines = uniqueByKey(payload.airlines.data?.items ?? [], (item) => item.airline)
-    .sort((left, right) => (right.offer_rows ?? 0) - (left.offer_rows ?? 0) || left.airline.localeCompare(right.airline));
-  const routes = uniqueByKey(payload.routes.data?.items ?? [], (item) => item.route_key)
-    .sort((left, right) => (right.offer_rows ?? 0) - (left.offer_rows ?? 0) || left.route_key.localeCompare(right.route_key));
+  const airlines = uniqueByKey(payload.airlines.data?.items ?? [], (item) => item.airline).sort(
+    (left, right) =>
+      (right.offer_rows ?? 0) - (left.offer_rows ?? 0) || left.airline.localeCompare(right.airline)
+  );
+  const routes = uniqueByKey(payload.routes.data?.items ?? [], (item) => item.route_key).sort(
+    (left, right) =>
+      (right.offer_rows ?? 0) - (left.offer_rows ?? 0) || left.route_key.localeCompare(right.route_key)
+  );
 
   return (
     <>
@@ -73,10 +78,7 @@ export default async function HomePage() {
       </div>
 
       <div className="section-grid">
-        <DataPanel
-          title="Coverage snapshot"
-          copy="A quick view of market breadth and monitoring completeness."
-        >
+        <DataPanel title="Coverage snapshot" copy="A quick view of market breadth and monitoring completeness.">
           <div className="table-list">
             <div className="table-row">
               <div>
@@ -93,7 +95,9 @@ export default async function HomePage() {
                 <strong>Expected scope</strong>
                 <span>Total route-airline pairs tracked in the current monitoring scope</span>
               </div>
-              <div className="pill good">{(cycleHealth?.configured_route_pair_count ?? 0).toLocaleString()}</div>
+              <div className="pill good">
+                {(cycleHealth?.configured_route_pair_count ?? 0).toLocaleString()}
+              </div>
               <span>{(cycleHealth?.missing_route_pairs?.length ?? 0).toLocaleString()} currently missing</span>
             </div>
             <div className="table-row">
@@ -110,21 +114,37 @@ export default async function HomePage() {
         </DataPanel>
 
         <DataPanel
-          title="Main views"
-          copy="Start with the part of the monitor that matches the question you want to answer."
+          title="Primary workspaces"
+          copy="Start with the top-level workspace that matches the question you want to answer."
         >
           <div className="stack">
             {[
-              { href: "/routes", label: "Routes", desc: "Fare movement, collected dates, and side-by-side airline comparison for any route and travel window." },
-              { href: "/operations", label: "Operations", desc: "Service presence, timing patterns, weekday frequency, and route footprint across recent cycles." },
-              { href: "/changes", label: "Changes", desc: "Fare movement events, new listings, sold-out signals, tax and penalty shifts across carriers." },
-              { href: "/forecasting", label: "Forecasting", desc: "Next-day price outlook, model leaderboard, route-level confidence, and backtest stability." }
+              {
+                href: "/market",
+                label: "Market Intelligence",
+                desc: "Routes, operations, changes, taxes, penalties, and GDS monitoring from one grouped workspace.",
+              },
+              {
+                href: "/forecasting",
+                label: "Forecasting",
+                desc: "Next-day price outlook, model leaderboard, route-level confidence, and backtest stability.",
+              },
+              {
+                href: "/downloads",
+                label: "Downloads",
+                desc: "Operational workbook releases, Smartpoint tooling updates, and packaged desktop utilities.",
+              },
             ].map(({ href, label, desc }, idx) => (
-              <Link href={href} className="card roadmap-step" key={href} style={{ textDecoration: "none", color: "inherit" }}>
+              <Link
+                href={href}
+                className="card roadmap-step"
+                key={href}
+                style={{ textDecoration: "none", color: "inherit" }}
+              >
                 <div className="roadmap-step-header">
                   <div className="step-number">{idx + 1}</div>
                   <strong>{label}</strong>
-                  <div className="nav-card-arrow">→</div>
+                  <div className="nav-card-arrow">{">"}</div>
                 </div>
                 <div className="roadmap-step-desc">{desc}</div>
               </Link>
@@ -134,10 +154,7 @@ export default async function HomePage() {
       </div>
 
       <div className="section-grid">
-        <DataPanel
-          title="Top airlines"
-          copy="Carrier-level presence in the latest monitored update."
-        >
+        <DataPanel title="Top airlines" copy="Carrier-level presence in the latest monitored update.">
           <div className="table-list">
             {airlines.slice(0, 8).map((item) => (
               <div className="table-row" key={item.airline}>
@@ -152,10 +169,7 @@ export default async function HomePage() {
           </div>
         </DataPanel>
 
-        <DataPanel
-          title="Top routes"
-          copy="Current route coverage in the live monitor."
-        >
+        <DataPanel title="Top routes" copy="Current route coverage in the live monitor.">
           <div className="table-list">
             {routes.slice(0, 8).map((item) => (
               <div className="table-row" key={item.route_key}>
@@ -168,9 +182,7 @@ export default async function HomePage() {
                     <span>{formatRouteGeo(item.origin_country_code, item.destination_country_code)}</span>
                   </span>
                 </div>
-                <div className="pill good">
-                  {(item.airlines_present ?? 0).toLocaleString()} airlines
-                </div>
+                <div className="pill good">{(item.airlines_present ?? 0).toLocaleString()} airlines</div>
                 <span>{(item.offer_rows ?? 0).toLocaleString()} rows</span>
               </div>
             ))}

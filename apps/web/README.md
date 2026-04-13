@@ -40,6 +40,9 @@ See:
 - `/`
   Executive overview with cycle health, platform status, airline coverage, and route coverage cards.
 
+- `/market`
+  Market Intelligence hub that groups the live routes, operations, penalties, taxes, changes, and GDS views.
+
 - `/routes`
   Live route monitor with API-backed filters for route, airline, cabin, and trip scope, plus filter-scoped Excel export.
 
@@ -78,6 +81,7 @@ See:
 ## UX Guardrails
 
 - Navigation highlight must always match the active route.
+- Top-level navigation should reflect the primary workspaces: overview, market intelligence, forecasting, and downloads.
 - Cross-airline comparison views default to departure-time ordering.
 - Date-selection behavior should be shared across pages instead of implemented differently per screen.
 - Route-bearing views should expose country-aware `DOM` / `INT` context from the API instead of duplicating route classification in the client.

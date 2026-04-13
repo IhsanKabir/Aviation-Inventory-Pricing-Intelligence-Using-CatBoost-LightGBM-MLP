@@ -2,27 +2,24 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { signOut as nextAuthSignOut } from "next-auth/react";
 
-const NAV_ITEMS = [
-  { href: "/", label: "Overview" },
-  { href: "/forecasting", label: "Forecasting" },
-  { href: "/downloads", label: "Downloads" }
-];
+const MARKET_ROOT_HREF = "/market";
 
 const MARKET_ITEMS = [
-  { href: "/routes",     label: "Routes" },
+  { href: "/routes", label: "Routes" },
   { href: "/operations", label: "Operations" },
-  { href: "/penalties",  label: "Penalties" },
-  { href: "/taxes",      label: "Taxes" },
-  { href: "/changes",    label: "Changes" },
-  { href: "/gds",        label: "GDS" },
+  { href: "/penalties", label: "Penalties" },
+  { href: "/taxes", label: "Taxes" },
+  { href: "/changes", label: "Changes" },
+  { href: "/gds", label: "GDS" },
 ];
-const MARKET_HREFS = MARKET_ITEMS.map((i) => i.href);
+const MARKET_HREFS = MARKET_ITEMS.map((item) => item.href);
 
 const ADMIN_NAV_ITEMS = [
   { href: "/admin", label: "Admin" },
-  { href: "/health", label: "Health" }
+  { href: "/health", label: "Health" },
 ];
 
 function isActivePath(pathname: string, href: string) {
@@ -35,7 +32,7 @@ function isActivePath(pathname: string, href: string) {
 export function Topbar({
   showAdminLink = false,
   currentUserName,
-  currentUserEmail
+  currentUserEmail,
 }: {
   showAdminLink?: boolean;
   currentUserName?: string | null;
@@ -43,7 +40,39 @@ export function Topbar({
 }) {
   const pathname = usePathname() || "/";
   const adminItems = showAdminLink ? ADMIN_NAV_ITEMS : [];
-  const isMarketActive = MARKET_HREFS.some((h) => isActivePath(pathname, h));
+  const marketMenuRef = useRef<HTMLDivElement>(null);
+  const [isMarketMenuOpen, setIsMarketMenuOpen] = useState(false);
+  const isMarketActive =
+    isActivePath(pathname, MARKET_ROOT_HREF) ||
+    MARKET_HREFS.some((href) => isActivePath(pathname, href));
+
+  useEffect(() => {
+    setIsMarketMenuOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      if (!marketMenuRef.current) {
+        return;
+      }
+      if (event.target instanceof Node && !marketMenuRef.current.contains(event.target)) {
+        setIsMarketMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsMarketMenuOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -63,29 +92,42 @@ export function Topbar({
           </div>
         </div>
         <nav className="nav" aria-label="Primary">
-          <Link
-            className="nav-link"
-            href="/"
-            data-active={isActivePath(pathname, "/")}
-          >
+          <Link className="nav-link" href="/" data-active={isActivePath(pathname, "/")}>
             Overview
           </Link>
 
-          {/* Market Intelligence dropdown — groups all BigQuery-backed pages */}
-          <div className="nav-group">
-            <span
-              className="nav-link nav-group-trigger"
+          <div className="nav-group" ref={marketMenuRef} data-open={isMarketMenuOpen}>
+            <Link
+              className="nav-link nav-group-link"
+              href={MARKET_ROOT_HREF}
               data-active={isMarketActive}
             >
-              Market Intelligence ▾
-            </span>
-            <div className="nav-group-menu">
+              Market Intelligence
+            </Link>
+            <button
+              aria-controls="market-intelligence-menu"
+              aria-expanded={isMarketMenuOpen}
+              aria-haspopup="true"
+              aria-label="Open Market Intelligence pages"
+              className="nav-group-toggle"
+              data-active={isMarketActive}
+              onClick={() => setIsMarketMenuOpen((open) => !open)}
+              type="button"
+            >
+              <span aria-hidden="true">{isMarketMenuOpen ? "^" : "v"}</span>
+            </button>
+            <div
+              className="nav-group-menu"
+              id="market-intelligence-menu"
+              aria-label="Market Intelligence pages"
+            >
               {MARKET_ITEMS.map((item) => (
                 <Link
                   key={item.href}
                   className="nav-group-item"
                   href={item.href}
                   data-active={isActivePath(pathname, item.href)}
+                  onClick={() => setIsMarketMenuOpen(false)}
                 >
                   {item.label}
                 </Link>
