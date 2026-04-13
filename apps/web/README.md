@@ -111,5 +111,8 @@ For production:
 - set Vercel Root Directory to `apps/web`
 - use [vercel.json](vercel.json)
 - set env vars from [.env.production.example](.env.production.example)
+- set `NEXTAUTH_URL` to the deployed web domain
+- set `AUTH_SECRET` if Google sign-in is enabled
+- add `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` only when enabling Google sign-in
 
 The frontend should point to the hosted API, not localhost.

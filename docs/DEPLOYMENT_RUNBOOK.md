@@ -24,6 +24,9 @@ For repository-driven deployments, see:
 - Runtime env:
   - `API_BASE_URL`
   - `NEXT_PUBLIC_API_BASE_URL`
+  - `NEXTAUTH_URL`
+  - `AUTH_SECRET` when Google OAuth is enabled
+  - `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` only if you want Google sign-in enabled
 
 ### API
 
@@ -82,6 +85,10 @@ Important:
 
 - `API_BASE_URL=https://YOUR_API_DOMAIN`
 - `NEXT_PUBLIC_API_BASE_URL=https://YOUR_API_DOMAIN`
+- `NEXTAUTH_URL=https://YOUR_WEB_DOMAIN`
+- `AUTH_SECRET=long-random-secret` when Google OAuth is enabled
+- `AUTH_GOOGLE_ID=...` optional
+- `AUTH_GOOGLE_SECRET=...` optional
 
 ### Cloud Run
 
@@ -99,7 +106,8 @@ Important:
 2. Set Root Directory to `apps/web`
 3. Framework preset should detect `Next.js`
 4. Add env vars from [apps/web/.env.production.example](../apps/web/.env.production.example)
-5. Deploy
+5. If you want Google sign-in, set `AUTH_SECRET`, `AUTH_GOOGLE_ID`, and `AUTH_GOOGLE_SECRET`
+6. Deploy
 
 ## Cloud Run setup checklist
 
@@ -139,6 +147,7 @@ GitHub Actions alternative:
 
 - use `.github/workflows/deploy-web-vercel.yml`
 - supply `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`
+- the workflow now uses `vercel pull -> vercel build --prod -> vercel deploy --prebuilt --prod`
 
 ## Database migration
 

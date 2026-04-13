@@ -37,6 +37,10 @@ The Vercel project must already exist with:
 - Environment variables:
   - `API_BASE_URL`
   - `NEXT_PUBLIC_API_BASE_URL`
+  - `NEXTAUTH_URL`
+  - `AUTH_SECRET` when Google sign-in is enabled
+  - `AUTH_GOOGLE_ID` optional
+  - `AUTH_GOOGLE_SECRET` optional
 
 ## Minimum deployment sequence
 
@@ -46,6 +50,12 @@ The Vercel project must already exist with:
 4. Trigger `deploy-api-cloud-run`.
 5. Update the Vercel env vars to the Cloud Run URL if needed.
 6. Trigger `deploy-web-vercel`.
+
+The web workflow now performs:
+
+- `vercel pull --environment=production`
+- `vercel build --prod`
+- `vercel deploy --prebuilt --prod`
 
 ## Why this path matters
 

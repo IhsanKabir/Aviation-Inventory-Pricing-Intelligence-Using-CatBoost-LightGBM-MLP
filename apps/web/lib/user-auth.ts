@@ -1,15 +1,35 @@
 import "server-only";
 
 import { cookies } from "next/headers";
-import { getServerSession } from "next-auth";
-
-import { authOptions } from "@/auth";
 import { getApiBaseUrl, type AuthenticatedUser } from "@/lib/api";
 
 const USER_SESSION_COOKIE = "ap_user_session";
 
 export function getUserSessionCookieName() {
   return USER_SESSION_COOKIE;
+}
+
+async function getOAuthSession() {
+  const authSecret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+  const googleConfigured = Boolean(
+    authSecret &&
+    process.env.AUTH_GOOGLE_ID &&
+    process.env.AUTH_GOOGLE_SECRET
+  );
+
+  if (!googleConfigured) {
+    return null;
+  }
+
+  try {
+    const [{ getServerSession }, { authOptions }] = await Promise.all([
+      import("next-auth"),
+      import("@/auth"),
+    ]);
+    return await getServerSession(authOptions);
+  } catch {
+    return null;
+  }
 }
 
 async function fetchCurrentUser(token: string): Promise<AuthenticatedUser | null> {
@@ -32,7 +52,7 @@ async function fetchCurrentUser(token: string): Promise<AuthenticatedUser | null
 }
 
 export async function getCurrentUserSession() {
-  const oauthSession = await getServerSession(authOptions);
+  const oauthSession = await getOAuthSession();
   if (oauthSession?.apiSessionToken && oauthSession.apiUser) {
     return {
       token: oauthSession.apiSessionToken,

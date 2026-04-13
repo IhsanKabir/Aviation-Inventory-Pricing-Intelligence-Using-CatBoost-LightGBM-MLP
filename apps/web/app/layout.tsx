@@ -30,6 +30,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const vercelTelemetryEnabled = Boolean(process.env.VERCEL || process.env.NEXT_PUBLIC_VERCEL_ENV);
   const showAdminLink = await hasAdminSession();
   const { user } = await getCurrentUserSession();
   return (
@@ -41,8 +42,8 @@ export default async function RootLayout({
           showAdminLink={showAdminLink}
         />
         <main className="page shell">{children}</main>
-        <Analytics />
-        <SpeedInsights />
+        {vercelTelemetryEnabled ? <Analytics /> : null}
+        {vercelTelemetryEnabled ? <SpeedInsights /> : null}
       </body>
     </html>
   );

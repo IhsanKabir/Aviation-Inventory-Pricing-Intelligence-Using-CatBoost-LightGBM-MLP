@@ -8,7 +8,13 @@ type OAuthApiPayload = {
   session_token?: string;
 };
 
-export const googleAuthEnabled = Boolean(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET);
+const authSecret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+
+export const googleAuthEnabled = Boolean(
+  authSecret &&
+  process.env.AUTH_GOOGLE_ID &&
+  process.env.AUTH_GOOGLE_SECRET
+);
 
 async function createApiSession(input: {
   email?: string | null;
@@ -50,6 +56,7 @@ async function createApiSession(input: {
 }
 
 export const authOptions: NextAuthOptions = {
+  secret: authSecret,
   session: {
     strategy: "jwt"
   },
