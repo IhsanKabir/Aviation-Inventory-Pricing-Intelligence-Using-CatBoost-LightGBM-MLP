@@ -16,16 +16,25 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
-    version: "v1.3.6",
+    version: "v1.3.7",
     date: "2026-04-13",
     label: "Latest",
     notes: [
-      'Fixed "Application Window 1 not found" when Smartpoint runs as Administrator — exe now requests elevation at launch so it can always see the Smartpoint window',
+      'Fixed "Application Window 1 not found" without requiring admin rights — now uses Win32 window title matching which works on all machines including IT-managed work laptops',
     ],
     exe_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.6/TravelportAuto.exe",
+      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.7/TravelportAuto.exe",
     guide_url:
       "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
+  },
+  {
+    version: "v1.3.6",
+    date: "2026-04-13",
+    notes: [
+      "Fixed Smartpoint connection for elevated installs (superseded by v1.3.7)",
+    ],
+    exe_url: null,
+    guide_url: null,
   },
   {
     version: "v1.3.5",
