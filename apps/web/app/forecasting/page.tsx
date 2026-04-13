@@ -3,6 +3,8 @@ import { MetricCard } from "@/components/metric-card";
 import { getForecastingPayload } from "@/lib/api";
 import { formatDhakaDateTime, formatNumber, formatPercent } from "@/lib/format";
 
+export const revalidate = 3600;
+
 type MetricLike = Record<string, unknown>;
 
 type NextDayRow = Record<string, unknown>;
@@ -179,14 +181,14 @@ export default async function ForecastingPage() {
     <>
       <h1 className="page-title">Forecasting Console</h1>
       <p className="page-copy">
-        Warehouse-backed forecast review for operational price movement work. The page is organized for
+        Latest published warehouse-backed forecast review for operational price movement work. The page is organized for
         decision-making first: strongest models, hardest markets, next-day watchlist, then backtest stability.
       </p>
       {sourceWarning ? <div className="status-banner warn">{sourceWarning}</div> : null}
 
       <section className="forecast-banner card">
         <div>
-          <div className="forecast-banner-label">Live source</div>
+          <div className="forecast-banner-label">Latest published bundle</div>
           <h2>{latestPrediction?.target ?? "No prediction bundle"}</h2>
           <p>
             {latestPrediction?.modified_at_utc
@@ -614,4 +616,3 @@ export default async function ForecastingPage() {
     </>
   );
 }
-

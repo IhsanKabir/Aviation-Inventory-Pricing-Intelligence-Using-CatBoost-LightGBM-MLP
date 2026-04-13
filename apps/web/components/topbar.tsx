@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { signOut as nextAuthSignOut } from "next-auth/react";
 
 const MARKET_ROOT_HREF = "/market";
@@ -39,42 +39,54 @@ export function Topbar({
   currentUserEmail?: string | null;
 }) {
   const pathname = usePathname() || "/";
-  const adminItems = showAdminLink ? ADMIN_NAV_ITEMS : [];
-  const marketMenuRef = useRef<HTMLDivElement>(null);
-  const [isMarketMenuOpen, setIsMarketMenuOpen] = useState(false);
+  const [sessionState, setSessionState] = useState({
+    showAdminLink,
+    currentUserName,
+    currentUserEmail,
+  });
+  const adminItems = sessionState.showAdminLink ? ADMIN_NAV_ITEMS : [];
   const isMarketActive =
     isActivePath(pathname, MARKET_ROOT_HREF) ||
     MARKET_HREFS.some((href) => isActivePath(pathname, href));
 
   useEffect(() => {
-    setIsMarketMenuOpen(false);
-  }, [pathname]);
+    let active = true;
 
-  useEffect(() => {
-    function handlePointerDown(event: PointerEvent) {
-      if (!marketMenuRef.current) {
-        return;
-      }
-      if (event.target instanceof Node && !marketMenuRef.current.contains(event.target)) {
-        setIsMarketMenuOpen(false);
+    async function loadSession() {
+      try {
+        const response = await fetch("/api/auth/session", { cache: "no-store" });
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as {
+          showAdminLink?: boolean;
+          user?: { email?: string | null; full_name?: string | null } | null;
+        };
+        if (!active) {
+          return;
+        }
+        setSessionState({
+          showAdminLink: Boolean(payload.showAdminLink),
+          currentUserName: payload.user?.full_name ?? null,
+          currentUserEmail: payload.user?.email ?? null,
+        });
+      } catch {
+        // Keep the optimistic signed-out shell when session lookup fails.
       }
     }
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setIsMarketMenuOpen(false);
-      }
-    }
-
-    window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
+    loadSession();
     return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
+      active = false;
     };
   }, []);
 
   async function signOut() {
+    setSessionState({
+      showAdminLink: false,
+      currentUserName: null,
+      currentUserEmail: null,
+    });
     await fetch("/api/auth/logout", { method: "POST" });
     await nextAuthSignOut({ callbackUrl: "/" });
   }
@@ -96,30 +108,20 @@ export function Topbar({
             Overview
           </Link>
 
-          <div className="nav-group" ref={marketMenuRef} data-open={isMarketMenuOpen}>
+          <div className="nav-group">
             <Link
               className="nav-link nav-group-link"
               href={MARKET_ROOT_HREF}
               data-active={isMarketActive}
+              aria-haspopup="menu"
             >
               Market Intelligence
             </Link>
-            <button
-              aria-controls="market-intelligence-menu"
-              aria-expanded={isMarketMenuOpen}
-              aria-haspopup="true"
-              aria-label="Open Market Intelligence pages"
-              className="nav-group-toggle"
-              data-active={isMarketActive}
-              onClick={() => setIsMarketMenuOpen((open) => !open)}
-              type="button"
-            >
-              <span aria-hidden="true">{isMarketMenuOpen ? "^" : "v"}</span>
-            </button>
             <div
               className="nav-group-menu"
               id="market-intelligence-menu"
               aria-label="Market Intelligence pages"
+              role="menu"
             >
               {MARKET_ITEMS.map((item) => (
                 <Link
@@ -127,7 +129,7 @@ export function Topbar({
                   className="nav-group-item"
                   href={item.href}
                   data-active={isActivePath(pathname, item.href)}
-                  onClick={() => setIsMarketMenuOpen(false)}
+                  role="menuitem"
                 >
                   {item.label}
                 </Link>
@@ -162,11 +164,11 @@ export function Topbar({
           ))}
         </nav>
         <div className="topbar-user">
-          {currentUserEmail ? (
+          {sessionState.currentUserEmail ? (
             <>
               <div className="topbar-user-copy">
-                <strong>{currentUserName || "Signed in user"}</strong>
-                <span>{currentUserEmail}</span>
+                <strong>{sessionState.currentUserName || "Signed in user"}</strong>
+                <span>{sessionState.currentUserEmail}</span>
               </div>
               <button className="button-link ghost topbar-user-button" onClick={signOut} type="button">
                 Sign out

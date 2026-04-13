@@ -5,9 +5,7 @@ import { SpeedInsights } from "@vercel/speed-insights/next";
 
 import "./globals.css";
 
-import { hasAdminSession } from "@/lib/admin";
 import { Topbar } from "@/components/topbar";
-import { getCurrentUserSession } from "@/lib/user-auth";
 
 const display = Space_Grotesk({
   subsets: ["latin"],
@@ -31,16 +29,10 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const vercelTelemetryEnabled = Boolean(process.env.VERCEL || process.env.NEXT_PUBLIC_VERCEL_ENV);
-  const showAdminLink = await hasAdminSession();
-  const { user } = await getCurrentUserSession();
   return (
     <html lang="en" className={`${display.variable} ${mono.variable}`}>
       <body style={{ fontFamily: "var(--font-display)" }}>
-        <Topbar
-          currentUserEmail={user?.email ?? null}
-          currentUserName={user?.full_name ?? null}
-          showAdminLink={showAdminLink}
-        />
+        <Topbar />
         <main className="page shell">{children}</main>
         {vercelTelemetryEnabled ? <Analytics /> : null}
         {vercelTelemetryEnabled ? <SpeedInsights /> : null}

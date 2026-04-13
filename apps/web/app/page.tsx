@@ -5,7 +5,7 @@ import { MetricCard } from "@/components/metric-card";
 import { getDashboardPayload } from "@/lib/api";
 import { formatRouteGeo, formatRouteType } from "@/lib/format";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600;
 
 function uniqueByKey<T>(items: T[], keyFn: (item: T) => string) {
   const seen = new Set<string>();
@@ -46,11 +46,11 @@ export default async function HomePage() {
   return (
     <>
       <section className="hero">
-        <div className="eyebrow">Live Monitor</div>
+        <div className="eyebrow">Latest Snapshot</div>
         <h1>Review routes, fares, operations, and market shifts in one place.</h1>
         <p>
-          Track airline movement across routes, compare current fare signals, and follow
-          operational changes with a cleaner web experience.
+          Review the latest published market snapshot, then open live comparison views only
+          when you need a fresh request-backed read.
         </p>
       </section>
 
@@ -58,7 +58,7 @@ export default async function HomePage() {
         <MetricCard
           label="Latest update"
           value={formatDate(latestCycle?.cycle_completed_at_utc)}
-          footnote="Most recent completed market snapshot"
+          footnote="Most recent published market snapshot"
         />
         <MetricCard
           label="Fare rows"
@@ -169,7 +169,7 @@ export default async function HomePage() {
           </div>
         </DataPanel>
 
-        <DataPanel title="Top routes" copy="Current route coverage in the live monitor.">
+        <DataPanel title="Top routes" copy="Current route coverage in the latest published snapshot.">
           <div className="table-list">
             {routes.slice(0, 8).map((item) => (
               <div className="table-row" key={item.route_key}>

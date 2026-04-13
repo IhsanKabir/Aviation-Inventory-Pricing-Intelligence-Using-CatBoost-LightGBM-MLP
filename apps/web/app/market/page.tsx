@@ -4,11 +4,11 @@ import { DataPanel } from "@/components/data-panel";
 import { MetricCard } from "@/components/metric-card";
 import { getDashboardPayload } from "@/lib/api";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600;
 
 export const metadata = {
   title: "Market Intelligence | Aero Pulse Intelligence Monitor",
-  description: "Live route, operations, changes, tax, penalty, and GDS intelligence workspace.",
+  description: "Latest route, operations, changes, tax, penalty, and GDS intelligence workspace.",
 };
 
 const MARKET_VIEWS = [
@@ -97,16 +97,16 @@ export default async function MarketIntelligencePage() {
     <>
       <h1 className="page-title">Market Intelligence</h1>
       <p className="page-copy">
-        Use this workspace for the live market picture: route pricing, airline operations,
-        market changes, taxes, penalties, and GDS-originated fare intelligence. Start here,
-        then drill into the page that matches the question you need answered.
+        Use this workspace for the latest published market picture: route pricing, airline operations,
+        market changes, taxes, penalties, and GDS-originated fare intelligence. Start here for the
+        snapshot, then drill into the live request-backed page only when you need fresh comparison data.
       </p>
 
       <div className="grid cards">
         <MetricCard
           label="Latest update"
           value={formatDate(latestCycle?.cycle_completed_at_utc)}
-          footnote="Most recent completed market snapshot"
+          footnote="Most recent published market snapshot"
         />
         <MetricCard
           label="Coverage"
@@ -128,7 +128,7 @@ export default async function MarketIntelligencePage() {
       <div className="section-grid">
         <DataPanel
           title="Included views"
-          copy="Choose the live market page that matches the slice of intelligence you need."
+          copy="Choose the market page that matches the slice of intelligence you need. Live comparison pages only load data when explicitly requested."
         >
           <div className="market-view-grid">
             {MARKET_VIEWS.map((view, index) => (

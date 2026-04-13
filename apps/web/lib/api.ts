@@ -607,6 +607,7 @@ export function getApiBaseUrl(): string {
 }
 
 const DEFAULT_FETCH_TIMEOUT_MS = 12000;
+const SNAPSHOT_REVALIDATE_SECONDS = 60 * 60;
 
 async function fetchJson<T>(path: string): Promise<FetchResult<T>> {
   return fetchJsonWithRevalidate<T>(path, 60);
@@ -715,15 +716,14 @@ export async function getFilteredRoutes(query?: {
 }
 
 export async function getDashboardPayload() {
-  const [health, latestCycle, airlines, routes, cycleHealth] = await Promise.all([
-    fetchJson<HealthPayload>("/health"),
-    getLatestCycle(),
-    getAirlines(),
-    getRoutes(),
-    getCycleHealth()
+  const [latestCycle, airlines, routes, cycleHealth] = await Promise.all([
+    fetchJsonWithRevalidate<CycleSummary>("/api/v1/reporting/cycles/latest", SNAPSHOT_REVALIDATE_SECONDS),
+    fetchJsonWithRevalidate<{ items: AirlineItem[] }>("/api/v1/meta/airlines", SNAPSHOT_REVALIDATE_SECONDS),
+    fetchJsonWithRevalidate<{ items: RouteItem[] }>("/api/v1/meta/routes", SNAPSHOT_REVALIDATE_SECONDS),
+    fetchJsonWithRevalidate<CycleHealthPayload>("/api/v1/reporting/cycle-health", SNAPSHOT_REVALIDATE_SECONDS)
   ]);
 
-  return { health, latestCycle, airlines, routes, cycleHealth };
+  return { latestCycle, airlines, routes, cycleHealth };
 }
 
 export async function getCycleHealth() {
@@ -922,7 +922,7 @@ export async function getChangeDashboardPayload(query: {
 }
 
 export async function getForecastingPayload() {
-  return fetchJsonWithRevalidate<ForecastingPayload>("/api/v1/reporting/forecasting/latest", 300);
+  return fetchJsonWithRevalidate<ForecastingPayload>("/api/v1/reporting/forecasting/latest", SNAPSHOT_REVALIDATE_SECONDS);
 }
 
 export async function getReportAccessRequest(requestId: string) {
