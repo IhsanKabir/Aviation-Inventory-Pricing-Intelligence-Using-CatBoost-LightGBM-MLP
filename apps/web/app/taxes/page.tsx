@@ -45,6 +45,22 @@ function renderTrendStrip(timeline?: Array<Record<string, unknown>>) {
 
 export default async function TaxesPage({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {};
+
+  const load = firstParam(params, "load");
+  if (!load) {
+    return (
+      <>
+        <h1 className="page-title">Tax Monitor</h1>
+        <p className="page-copy">Departure tax and fuel surcharge breakdown by route and airline.</p>
+        <div className="market-gate">
+          <p className="market-gate-title">Live market data — load on demand</p>
+          <p className="market-gate-copy">This view queries live data on each load. Click below only when you need current data.</p>
+          <a className="button-link" href="?load=1">Load Data</a>
+        </div>
+      </>
+    );
+  }
+
   const selectedAirlines = manyParams(params, "airline");
   const selectedRouteTypes = manyParams(params, "route_type");
   const origin = firstParam(params, "origin");

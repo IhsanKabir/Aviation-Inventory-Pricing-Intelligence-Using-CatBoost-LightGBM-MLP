@@ -91,6 +91,22 @@ function pct(part: number, total: number) {
 
 export default async function ChangesPage({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {};
+
+  const load = firstParam(params, "load");
+  if (!load) {
+    return (
+      <>
+        <h1 className="page-title">Market Changes</h1>
+        <p className="page-copy">Fare movement events, new listings, and removals detected across scrape cycles.</p>
+        <div className="market-gate">
+          <p className="market-gate-title">Live market data — load on demand</p>
+          <p className="market-gate-copy">This view queries live data on each load. Click below only when you need current data.</p>
+          <a className="button-link" href="?load=1">Load Data</a>
+        </div>
+      </>
+    );
+  }
+
   const selectedAirlines = manyParams(params, "airline");
   const selectedDomains = manyParams(params, "domain");
   const selectedChangeTypes = manyParams(params, "change_type");

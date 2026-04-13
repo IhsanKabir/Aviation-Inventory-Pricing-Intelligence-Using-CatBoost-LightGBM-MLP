@@ -6,15 +6,20 @@ import { signOut as nextAuthSignOut } from "next-auth/react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Overview" },
-  { href: "/routes", label: "Routes" },
-  { href: "/operations", label: "Operations" },
-  { href: "/penalties", label: "Penalties" },
-  { href: "/taxes", label: "Taxes" },
-  { href: "/changes", label: "Changes" },
   { href: "/forecasting", label: "Forecasting" },
-  { href: "/gds", label: "GDS" },
   { href: "/downloads", label: "Downloads" }
 ];
+
+const MARKET_ITEMS = [
+  { href: "/routes",     label: "Routes" },
+  { href: "/operations", label: "Operations" },
+  { href: "/penalties",  label: "Penalties" },
+  { href: "/taxes",      label: "Taxes" },
+  { href: "/changes",    label: "Changes" },
+  { href: "/gds",        label: "GDS" },
+];
+const MARKET_HREFS = MARKET_ITEMS.map((i) => i.href);
+
 const ADMIN_NAV_ITEMS = [
   { href: "/admin", label: "Admin" },
   { href: "/health", label: "Health" }
@@ -37,7 +42,8 @@ export function Topbar({
   currentUserEmail?: string | null;
 }) {
   const pathname = usePathname() || "/";
-  const navItems = showAdminLink ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS] : NAV_ITEMS;
+  const adminItems = showAdminLink ? ADMIN_NAV_ITEMS : [];
+  const isMarketActive = MARKET_HREFS.some((h) => isActivePath(pathname, h));
 
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -57,7 +63,52 @@ export function Topbar({
           </div>
         </div>
         <nav className="nav" aria-label="Primary">
-          {navItems.map((item) => (
+          <Link
+            className="nav-link"
+            href="/"
+            data-active={isActivePath(pathname, "/")}
+          >
+            Overview
+          </Link>
+
+          {/* Market Intelligence dropdown — groups all BigQuery-backed pages */}
+          <div className="nav-group">
+            <span
+              className="nav-link nav-group-trigger"
+              data-active={isMarketActive}
+            >
+              Market Intelligence ▾
+            </span>
+            <div className="nav-group-menu">
+              {MARKET_ITEMS.map((item) => (
+                <Link
+                  key={item.href}
+                  className="nav-group-item"
+                  href={item.href}
+                  data-active={isActivePath(pathname, item.href)}
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          <Link
+            className="nav-link"
+            href="/forecasting"
+            data-active={isActivePath(pathname, "/forecasting")}
+          >
+            Forecasting
+          </Link>
+          <Link
+            className="nav-link"
+            href="/downloads"
+            data-active={isActivePath(pathname, "/downloads")}
+          >
+            Downloads
+          </Link>
+
+          {adminItems.map((item) => (
             <Link
               key={item.href}
               className="nav-link"

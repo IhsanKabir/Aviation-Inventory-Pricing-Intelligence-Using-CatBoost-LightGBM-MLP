@@ -16,6 +16,7 @@ import {
   type GdsFareRow,
   type GdsFareRun,
 } from "@/lib/gds";
+import { firstParam, type RawSearchParams } from "@/lib/query";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -66,7 +67,28 @@ async function getPageData() {
 // Page
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default async function GdsDashboardPage() {
+type PageProps = {
+  searchParams?: Promise<RawSearchParams>;
+};
+
+export default async function GdsDashboardPage({ searchParams }: PageProps) {
+  const params = (await searchParams) ?? {};
+
+  const load = firstParam(params, "load");
+  if (!load) {
+    return (
+      <>
+        <h1 className="page-title">GDS Fare Intelligence</h1>
+        <p className="page-copy">Travelport Smartpoint fare and tax data for cross-source comparison.</p>
+        <div className="market-gate">
+          <p className="market-gate-title">Live market data — load on demand</p>
+          <p className="market-gate-copy">This view queries live data on each load. Click below only when you need current data.</p>
+          <a className="button-link" href="?load=1">Load Data</a>
+        </div>
+      </>
+    );
+  }
+
   const { latestRun, runs, fares, changes, summary } = await getPageData();
 
   // Metric card values
