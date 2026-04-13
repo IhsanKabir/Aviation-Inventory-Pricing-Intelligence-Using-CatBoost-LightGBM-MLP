@@ -1,10 +1,12 @@
-import { LiveFilterControls } from "@/components/live-filter-controls";
 import { DataPanel } from "@/components/data-panel";
+import { LiveFilterControls } from "@/components/live-filter-controls";
 import { MetricCard } from "@/components/metric-card";
+import { ReportAccessRequestPanel } from "@/components/report-access-request-panel";
 import {
   getAirlineOperationsPayload,
   getAirlines,
   getRecentCycles,
+  getReportAccessRequest,
   getRoutes,
   type OperationsRoute,
 } from "@/lib/api";
@@ -16,6 +18,7 @@ import {
   formatRouteTypeDetail,
 } from "@/lib/format";
 import { firstParam, manyParams, parseLimit, type RawSearchParams } from "@/lib/query";
+import { getCurrentUserSession } from "@/lib/user-auth";
 
 type PageProps = {
   searchParams?: Promise<RawSearchParams>;
@@ -75,22 +78,6 @@ function normalizeOperationsRoutes(routes: OperationsRoute[]): OperationsRoute[]
 
 export default async function OperationsPage({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {};
-
-  const load = firstParam(params, "load");
-  if (!load) {
-    return (
-      <>
-        <h1 className="page-title">Airline Operations</h1>
-        <p className="page-copy">Route-level operating pattern review across airlines — who is flying, how often, when they depart.</p>
-        <div className="market-gate">
-          <p className="market-gate-title">Live market data — load on demand</p>
-          <p className="market-gate-copy">This view queries live data on each load. Click below only when you need current data.</p>
-          <a className="button-link" href="?load=1">Load Data</a>
-        </div>
-      </>
-    );
-  }
-
   const selectedAirlines = manyParams(params, "airline");
   const selectedRouteTypes = manyParams(params, "route_type");
   const origin = firstParam(params, "origin");
@@ -102,25 +89,34 @@ export default async function OperationsPage({ searchParams }: PageProps) {
   const endDate = firstParam(params, "end_date") ?? undefined;
   const routeLimit = parseLimit(firstParam(params, "route_limit"), 3);
   const trendLimit = parseLimit(firstParam(params, "trend_limit"), 8);
+  const requestId = firstParam(params, "request_id") ?? undefined;
   const routeKey = selectedRouteKey(origin, destination);
 
-  const [airlines, routes, recentCycles, operations] = await Promise.all([
+  const [airlines, routes, recentCycles, accessRequest] = await Promise.all([
     getAirlines(),
     getRoutes(),
     getRecentCycles(8),
-    getAirlineOperationsPayload({
-      cycleId,
-      airlines: selectedAirlines,
-      origins: origin ? [origin] : undefined,
-      destinations: destination ? [destination] : undefined,
-      viaAirports: selectedViaAirports.length ? selectedViaAirports : undefined,
-      routeTypes: selectedRouteTypes,
-      startDate,
-      endDate,
-      routeLimit,
-      trendLimit,
-    }),
+    requestId ? getReportAccessRequest(requestId) : Promise.resolve({ ok: true, data: null as null, error: undefined }),
   ]);
+  const { user } = await getCurrentUserSession();
+  const accessGranted = accessRequest.ok && accessRequest.data?.page_key === "operations" && accessRequest.data?.status === "approved";
+
+  const operations =
+    accessGranted && requestId
+      ? await getAirlineOperationsPayload({
+          requestId,
+          cycleId,
+          airlines: selectedAirlines,
+          origins: origin ? [origin] : undefined,
+          destinations: destination ? [destination] : undefined,
+          viaAirports: selectedViaAirports.length ? selectedViaAirports : undefined,
+          routeTypes: selectedRouteTypes,
+          startDate,
+          endDate,
+          routeLimit,
+          trendLimit,
+        })
+      : { ok: true, data: null as null, error: undefined };
 
   const routeBlocks = normalizeOperationsRoutes(operations.data?.routes ?? []);
   const airlineOptions = [...(airlines.data?.items ?? [])]
@@ -170,7 +166,7 @@ export default async function OperationsPage({ searchParams }: PageProps) {
         <MetricCard
           label="Cycle"
           value={activeCycle?.cycle_completed_at_utc ? formatDhakaDateTime(activeCycle.cycle_completed_at_utc) : "Not available"}
-          footnote={operations.ok ? "Latest warehouse-backed operations slice" : "No cycle loaded"}
+          footnote={operations.ok && accessGranted ? "Latest warehouse-backed operations slice" : "Approval required for live data"}
         />
         <MetricCard label="Routes" value={routeCount.toLocaleString()} footnote={`Route block limit ${routeLimit.toLocaleString()}`} />
         <MetricCard label="Airlines" value={airlineCount.toLocaleString()} footnote={`${flightInstanceCount.toLocaleString()} visible departures`} />
@@ -242,14 +238,67 @@ export default async function OperationsPage({ searchParams }: PageProps) {
             selectedRouteKey={routeKey}
           />
 
-          <div className="button-row">
-            <a className="button-link ghost" href={exportHref}>
-              Download Excel
-            </a>
-          </div>
+          {accessGranted && requestId ? (
+            <div className="button-row">
+              <a className="button-link ghost" href={exportHref}>
+                Download Excel
+              </a>
+            </div>
+          ) : null}
         </DataPanel>
 
-        {!operations.ok ? (
+        <DataPanel
+          title="Data access request"
+          copy="Approve the selected operations scope before running the live airline-operations monitor."
+        >
+          <ReportAccessRequestPanel
+            currentUser={user}
+            description="Submit this operations scope for approval. After approval, the live schedule map and workbook export will unlock for the same scope."
+            headline="Operations access requires approval."
+            pageKey="operations"
+            request={accessRequest.ok ? accessRequest.data : null}
+            requestWindow={{
+              startDate,
+              endDate: endDate ?? startDate,
+            }}
+            resourceLabel="operations"
+            scope={{
+              cycle_id: cycleId,
+              airline: selectedAirlines,
+              origin: origin ?? undefined,
+              destination: destination ?? undefined,
+              via_airport: selectedViaAirports,
+              route_type: selectedRouteTypes,
+              start_date: startDate,
+              end_date: endDate ?? startDate,
+              route_limit: routeLimit,
+              trend_limit: trendLimit,
+            }}
+            scopeSummary={[
+              `Route: ${origin || "any"} -> ${destination || "any"}`,
+              selectedAirlines.length ? `Airlines: ${selectedAirlines.join(", ")}` : "Airlines: all carriers",
+              selectedRouteTypes.length ? `Route types: ${selectedRouteTypes.join(", ")}` : "Route types: all",
+              selectedViaAirports.length ? `Via airports: ${selectedViaAirports.join(", ")}` : "Via airports: all",
+              startDate || endDate ? `Departure window: ${startDate ?? "any"} to ${endDate ?? startDate ?? "any"}` : "Departure window: all collected dates",
+              cycleId ? "Saved update selected" : "Latest available cycle",
+              `View size: ${routeLimit} route blocks | ${trendLimit} trend cycles`,
+            ]}
+            submitLabel="Submit operations request"
+          />
+        </DataPanel>
+
+        {!accessGranted || !requestId ? (
+          <DataPanel
+            title="Operations blocks"
+            copy="This live operations view unlocks after the current request is approved."
+          >
+            <div className="empty-state">
+              {requestId
+                ? "This operations scope is not approved yet. Refresh after manual review, or adjust the filters and submit a new request."
+                : "Submit an operations access request above to unlock the live schedule map for this scope."}
+            </div>
+          </DataPanel>
+        ) : !operations.ok ? (
           <DataPanel
             title="Operations blocks"
             copy="The API request for operations data did not complete."

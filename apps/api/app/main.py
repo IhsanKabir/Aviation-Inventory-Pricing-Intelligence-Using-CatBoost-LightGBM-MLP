@@ -127,6 +127,28 @@ def _require_access_request_db(db: Session | None) -> Session:
     return db
 
 
+def _enforce_report_access(
+    db: Session | None,
+    *,
+    request_id: str | None,
+    page_key: str,
+    scope: dict,
+) -> Session:
+    required_db = _require_access_request_db(db)
+    try:
+        access_requests.require_approved_request(
+            required_db,
+            request_id=request_id,
+            page_key=page_key,
+            scope=scope,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return required_db
+
+
 def _require_admin_token(x_admin_token: str | None) -> None:
     if not settings.report_access_admin_token:
         raise HTTPException(status_code=503, detail="Admin approval token is not configured.")
@@ -406,6 +428,7 @@ def current_snapshot(
     airline: list[str] | None = Query(default=None),
     origin: list[str] | None = Query(default=None),
     destination: list[str] | None = Query(default=None),
+    route_pair: list[str] | None = Query(default=None),
     cabin: list[str] | None = Query(default=None),
     limit: int = Query(default=settings.default_limit, ge=1),
     db: Session | None = Depends(get_optional_db),
@@ -416,6 +439,7 @@ def current_snapshot(
         airlines=airline,
         origins=origin,
         destinations=destination,
+        route_pairs=route_pair,
         cabins=cabin,
         limit=_cap_limit(limit),
     )
@@ -443,33 +467,27 @@ def route_monitor_matrix(
     response: Response = None,
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
-    required_db = _require_access_request_db(db)
-    try:
-        access_requests.require_approved_request(
-            required_db,
-            request_id=request_id,
-            page_key="routes",
-            scope={
-                "cycle_id": cycle_id,
-                "airline": airline,
-                "origin": origin,
-                "destination": destination,
-                "route_pair": route_pair,
-                "cabin": cabin,
-                "trip_type": trip_type,
-                "start_date": start_date.isoformat() if start_date else None,
-                "end_date": end_date.isoformat() if end_date else None,
-                "return_date": return_date.isoformat() if return_date else None,
-                "return_date_start": return_date_start.isoformat() if return_date_start else None,
-                "return_date_end": return_date_end.isoformat() if return_date_end else None,
-                "route_limit": route_limit,
-                "history_limit": history_limit,
-            },
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    required_db = _enforce_report_access(
+        db,
+        request_id=request_id,
+        page_key="routes",
+        scope={
+            "cycle_id": cycle_id,
+            "airline": airline,
+            "origin": origin,
+            "destination": destination,
+            "route_pair": route_pair,
+            "cabin": cabin,
+            "trip_type": trip_type,
+            "start_date": start_date.isoformat() if start_date else None,
+            "end_date": end_date.isoformat() if end_date else None,
+            "return_date": return_date.isoformat() if return_date else None,
+            "return_date_start": return_date_start.isoformat() if return_date_start else None,
+            "return_date_end": return_date_end.isoformat() if return_date_end else None,
+            "route_limit": route_limit,
+            "history_limit": history_limit,
+        },
+    )
     reporting.clear_request_metrics()
     payload = reporting.get_route_monitor_matrix(
         required_db,
@@ -508,26 +526,20 @@ def route_date_availability(
     response: Response = None,
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
-    required_db = _require_access_request_db(db)
-    try:
-        access_requests.require_approved_request(
-            required_db,
-            request_id=request_id,
-            page_key="routes",
-            scope={
-                "cycle_id": cycle_id,
-                "airline": airline,
-                "origin": origin,
-                "destination": destination,
-                "route_pair": route_pair,
-                "cabin": cabin,
-                "trip_type": trip_type,
-            },
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    required_db = _enforce_report_access(
+        db,
+        request_id=request_id,
+        page_key="routes",
+        scope={
+            "cycle_id": cycle_id,
+            "airline": airline,
+            "origin": origin,
+            "destination": destination,
+            "route_pair": route_pair,
+            "cabin": cabin,
+            "trip_type": trip_type,
+        },
+    )
     reporting.clear_request_metrics()
     payload = reporting.get_route_date_availability(
         required_db,
@@ -546,6 +558,7 @@ def route_date_availability(
 
 @app.get("/api/v1/reporting/airline-operations")
 def airline_operations(
+    request_id: str | None = None,
     cycle_id: str | None = None,
     airline: list[str] | None = Query(default=None),
     origin: list[str] | None = Query(default=None),
@@ -558,8 +571,25 @@ def airline_operations(
     trend_limit: int = Query(default=8, ge=1, le=20),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
-    return reporting.get_airline_operations(
+    required_db = _enforce_report_access(
         db,
+        request_id=request_id,
+        page_key="operations",
+        scope={
+            "cycle_id": cycle_id,
+            "airline": airline,
+            "origin": origin,
+            "destination": destination,
+            "via_airport": via_airport,
+            "route_type": route_type,
+            "start_date": start_date.isoformat() if start_date else None,
+            "end_date": end_date.isoformat() if end_date else None,
+            "route_limit": route_limit,
+            "trend_limit": trend_limit,
+        },
+    )
+    return reporting.get_airline_operations(
+        required_db,
         cycle_id=cycle_id,
         airlines=airline,
         origins=origin,
@@ -600,6 +630,7 @@ def route_summary(
 
 @app.get("/api/v1/reporting/change-events")
 def change_events(
+    request_id: str | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
     airline: list[str] | None = Query(default=None),
@@ -611,9 +642,25 @@ def change_events(
     limit: int = Query(default=settings.default_limit, ge=1),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
+    required_db = _enforce_report_access(
+        db,
+        request_id=request_id,
+        page_key="changes",
+        scope={
+            "airline": airline,
+            "origin": origin,
+            "destination": destination,
+            "domain": domain,
+            "change_type": change_type,
+            "direction": direction,
+            "start_date": start_date.isoformat() if start_date else None,
+            "end_date": end_date.isoformat() if end_date else None,
+            "limit": _cap_limit(limit),
+        },
+    )
     return {
         "items": reporting.get_change_events(
-            db,
+            required_db,
             start_date=start_date,
             end_date=end_date,
             airlines=airline,
@@ -629,6 +676,7 @@ def change_events(
 
 @app.get("/api/v1/reporting/change-dashboard")
 def change_dashboard(
+    request_id: str | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
     airline: list[str] | None = Query(default=None),
@@ -640,8 +688,23 @@ def change_dashboard(
     top_n: int = Query(default=8, ge=1, le=20),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
-    return reporting.get_change_dashboard(
+    required_db = _enforce_report_access(
         db,
+        request_id=request_id,
+        page_key="changes",
+        scope={
+            "airline": airline,
+            "origin": origin,
+            "destination": destination,
+            "domain": domain,
+            "change_type": change_type,
+            "direction": direction,
+            "start_date": start_date.isoformat() if start_date else None,
+            "end_date": end_date.isoformat() if end_date else None,
+        },
+    )
+    return reporting.get_change_dashboard(
+        required_db,
         start_date=start_date,
         end_date=end_date,
         airlines=airline,
@@ -656,6 +719,7 @@ def change_dashboard(
 
 @app.get("/api/v1/reporting/penalties")
 def penalties(
+    request_id: str | None = None,
     cycle_id: str | None = None,
     airline: list[str] | None = Query(default=None),
     origin: list[str] | None = Query(default=None),
@@ -663,8 +727,20 @@ def penalties(
     limit: int = Query(default=settings.default_limit, ge=1),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
-    return reporting.get_penalties(
+    required_db = _enforce_report_access(
         db,
+        request_id=request_id,
+        page_key="penalties",
+        scope={
+            "cycle_id": cycle_id,
+            "airline": airline,
+            "origin": origin,
+            "destination": destination,
+            "limit": _cap_limit(limit),
+        },
+    )
+    return reporting.get_penalties(
+        required_db,
         cycle_id=cycle_id,
         airlines=airline,
         origins=origin,
@@ -675,6 +751,7 @@ def penalties(
 
 @app.get("/api/v1/reporting/taxes")
 def taxes(
+    request_id: str | None = None,
     cycle_id: str | None = None,
     airline: list[str] | None = Query(default=None),
     origin: list[str] | None = Query(default=None),
@@ -684,8 +761,22 @@ def taxes(
     trend_limit: int = Query(default=8, ge=1, le=20),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
-    return reporting.get_taxes(
+    required_db = _enforce_report_access(
         db,
+        request_id=request_id,
+        page_key="taxes",
+        scope={
+            "cycle_id": cycle_id,
+            "airline": airline,
+            "origin": origin,
+            "destination": destination,
+            "route_type": route_type,
+            "limit": _cap_limit(limit),
+            "trend_limit": trend_limit,
+        },
+    )
+    return reporting.get_taxes(
+        required_db,
         cycle_id=cycle_id,
         airlines=airline,
         origins=origin,
@@ -727,34 +818,70 @@ def export_reporting_workbook(
     db: Session | None = Depends(get_optional_db),
 ) -> StreamingResponse:
     requested_sections = tuple(include or ())
-    if "routes" in requested_sections:
+    if requested_sections:
         required_db = _require_access_request_db(db)
-        try:
-            access_requests.require_approved_request(
-                required_db,
-                request_id=request_id,
-                page_key="routes",
-                scope={
-                    "cycle_id": cycle_id,
-                    "airline": airline,
-                    "origin": origin,
-                    "destination": destination,
-                    "route_pair": route_pair,
-                    "cabin": cabin,
-                    "trip_type": trip_type,
-                    "start_date": start_date.isoformat() if start_date else None,
-                    "end_date": end_date.isoformat() if end_date else None,
-                    "return_date": return_date.isoformat() if return_date else None,
-                    "return_date_start": return_date_start.isoformat() if return_date_start else None,
-                    "return_date_end": return_date_end.isoformat() if return_date_end else None,
-                    "route_limit": route_limit,
-                    "history_limit": history_limit,
-                },
-            )
-        except LookupError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        section_scopes = {
+            "routes": {
+                "cycle_id": cycle_id,
+                "airline": airline,
+                "origin": origin,
+                "destination": destination,
+                "route_pair": route_pair,
+                "cabin": cabin,
+                "trip_type": trip_type,
+                "start_date": start_date.isoformat() if start_date else None,
+                "end_date": end_date.isoformat() if end_date else None,
+                "return_date": return_date.isoformat() if return_date else None,
+                "return_date_start": return_date_start.isoformat() if return_date_start else None,
+                "return_date_end": return_date_end.isoformat() if return_date_end else None,
+                "route_limit": route_limit,
+                "history_limit": history_limit,
+            },
+            "operations": {
+                "cycle_id": cycle_id,
+                "airline": airline,
+                "origin": origin,
+                "destination": destination,
+                "route_type": route_type,
+                "start_date": start_date.isoformat() if start_date else None,
+                "end_date": end_date.isoformat() if end_date else None,
+                "route_limit": route_limit,
+            },
+            "changes": {
+                "airline": airline,
+                "origin": origin,
+                "destination": destination,
+                "domain": domain,
+                "change_type": change_type,
+                "direction": direction,
+                "start_date": start_date.isoformat() if start_date else None,
+                "end_date": end_date.isoformat() if end_date else None,
+                "limit": _cap_limit(limit),
+            },
+            "penalties": {
+                "cycle_id": cycle_id,
+                "airline": airline,
+                "origin": origin,
+                "destination": destination,
+                "limit": _cap_limit(limit),
+            },
+            "taxes": {
+                "cycle_id": cycle_id,
+                "airline": airline,
+                "origin": origin,
+                "destination": destination,
+                "route_type": route_type,
+                "limit": _cap_limit(limit),
+            },
+        }
+        for section in requested_sections:
+            if section in section_scopes:
+                _enforce_report_access(
+                    required_db,
+                    request_id=request_id,
+                    page_key=section,
+                    scope=section_scopes[section],
+                )
     payload, filename = exporting.build_reporting_workbook(
         db,
         sections=requested_sections,

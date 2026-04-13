@@ -5,45 +5,6 @@ import { useMemo, useState, useTransition } from "react";
 
 import type { AuthenticatedUser, ReportAccessRequest } from "@/lib/api";
 
-type RouteAccessScope = {
-  cycleId?: string;
-  airlines: string[];
-  routePairs?: string[];
-  origin?: string;
-  destination?: string;
-  cabin?: string;
-  tripType: string;
-  startDate?: string;
-  endDate?: string;
-  returnScope: string;
-  returnDate?: string;
-  returnDateStart?: string;
-  returnDateEnd?: string;
-  routeLimit: number;
-  historyLimit: number;
-};
-
-function buildScopePayload(scope: RouteAccessScope) {
-  const hasExactRoutePairs = Boolean(scope.routePairs?.length);
-  return {
-    cycle_id: scope.cycleId,
-    airline: scope.airlines,
-    route_pair: scope.routePairs,
-    origin: hasExactRoutePairs ? undefined : scope.origin,
-    destination: hasExactRoutePairs ? undefined : scope.destination,
-    cabin: scope.cabin,
-    trip_type: scope.tripType,
-    start_date: scope.startDate,
-    end_date: scope.endDate,
-    return_scope: scope.returnScope,
-    return_date: scope.returnDate,
-    return_date_start: scope.returnDateStart,
-    return_date_end: scope.returnDateEnd,
-    route_limit: scope.routeLimit,
-    history_limit: scope.historyLimit
-  };
-}
-
 function formatStatusLabel(status: ReportAccessRequest["status"]) {
   if (status === "approved") return "Approved";
   if (status === "payment_required") return "Payment required";
@@ -51,27 +12,44 @@ function formatStatusLabel(status: ReportAccessRequest["status"]) {
   return "Pending review";
 }
 
-function statusCopy(request: ReportAccessRequest) {
+function statusCopy(request: ReportAccessRequest, resourceLabel: string) {
   if (request.status === "approved") {
-    return request.decision_note || "This scope is unlocked. The selected route view can now be opened.";
+    return request.decision_note || `This ${resourceLabel} scope is unlocked.`;
   }
   if (request.status === "payment_required") {
-    return request.decision_note || "This request needs payment approval before the route view can be opened.";
+    return request.decision_note || `This request needs payment approval before the ${resourceLabel} view can be opened.`;
   }
   if (request.status === "rejected") {
-    return request.decision_note || "This request was rejected. Adjust the route or travel window and submit a new request.";
+    return request.decision_note || `This request was rejected. Adjust the ${resourceLabel} scope and submit a new request.`;
   }
   return request.decision_note || "This request is waiting for manual review. Refresh later to check the result.";
 }
 
 export function ReportAccessRequestPanel({
+  pageKey,
   scope,
+  scopeSummary,
+  requestWindow,
   request,
-  currentUser
+  currentUser,
+  headline,
+  description,
+  submitLabel,
+  resourceLabel
 }: {
-  scope: RouteAccessScope;
+  pageKey: string;
+  scope: Record<string, unknown>;
+  scopeSummary: string[];
+  requestWindow?: {
+    startDate?: string;
+    endDate?: string;
+  };
   request: ReportAccessRequest | null;
   currentUser: AuthenticatedUser | null;
+  headline: string;
+  description: string;
+  submitLabel: string;
+  resourceLabel: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -79,41 +57,9 @@ export function ReportAccessRequestPanel({
   const [isPending, startTransition] = useTransition();
   const [notes, setNotes] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const requestedStartDate = scope.startDate || undefined;
-  const requestedEndDate = scope.endDate || scope.startDate || undefined;
-
-  const scopeSummary = useMemo(() => {
-    const lines: string[] = [];
-    if (scope.routePairs?.length) {
-      lines.push(`Routes: ${scope.routePairs.join(", ")}`);
-    } else {
-      lines.push(`Route: ${scope.origin || "any"} -> ${scope.destination || "any"}`);
-    }
-    lines.push(`Trip: ${scope.tripType === "RT" ? "Round-trip" : "One-way"}`);
-    if (scope.airlines.length) {
-      lines.push(`Airlines: ${scope.airlines.join(", ")}`);
-    }
-    if (scope.cabin) {
-      lines.push(`Cabin: ${scope.cabin}`);
-    }
-    if (scope.cycleId) {
-      lines.push("Saved update selected");
-    }
-    if (scope.startDate || scope.endDate) {
-      lines.push(`Outbound window: ${scope.startDate ?? "any"} to ${scope.endDate ?? "any"}`);
-    } else {
-      lines.push("Outbound window: all collected outbound dates");
-    }
-    if (scope.tripType === "RT") {
-      if (scope.returnDateStart || scope.returnDateEnd) {
-        lines.push(`Inbound window: ${scope.returnDateStart ?? "any"} to ${scope.returnDateEnd ?? "any"}`);
-      } else {
-        lines.push("Inbound window: all collected inbound dates");
-      }
-    }
-    lines.push(`View size: ${scope.routeLimit} route blocks | ${scope.historyLimit} history rows`);
-    return lines;
-  }, [scope]);
+  const requestedStartDate = requestWindow?.startDate || undefined;
+  const requestedEndDate = requestWindow?.endDate || requestWindow?.startDate || undefined;
+  const stableScopeSummary = useMemo(() => scopeSummary, [scopeSummary]);
 
   async function submitRequest() {
     setSubmitError(null);
@@ -124,11 +70,11 @@ export function ReportAccessRequestPanel({
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          page_key: "routes",
+          page_key: pageKey,
           requested_start_date: requestedStartDate,
           requested_end_date: requestedEndDate,
           notes: notes || undefined,
-          request_scope: buildScopePayload(scope)
+          request_scope: scope
         })
       });
       const payload = (await response.json()) as ReportAccessRequest | { detail?: string };
@@ -168,12 +114,12 @@ export function ReportAccessRequestPanel({
   return (
     <div className="filter-form">
       <div className="empty-state">
-        <strong>Route access requires approval.</strong>
+        <strong>{headline}</strong>
         <div style={{ marginTop: "0.6rem" }}>
-          Submit the route and travel window first. After approval, this page will unlock the route view.
+          {description}
         </div>
         <div className="table-list" style={{ marginTop: "0.9rem" }}>
-      {scopeSummary.map((item) => (
+          {stableScopeSummary.map((item) => (
             <div className="table-row" key={item}>
               <strong>{item}</strong>
             </div>
@@ -192,7 +138,7 @@ export function ReportAccessRequestPanel({
             </div>
             <span className={`pill ${request.status === "approved" ? "good" : "warn"}`}>{formatStatusLabel(request.status)}</span>
           </div>
-          <div style={{ marginTop: "0.7rem" }}>{statusCopy(request)}</div>
+          <div style={{ marginTop: "0.7rem" }}>{statusCopy(request, resourceLabel)}</div>
           {request.requested_start_date || request.requested_end_date ? (
             <div className="mono" style={{ marginTop: "0.55rem" }}>
               Requested window: {request.requested_start_date ?? "any"} to {request.requested_end_date ?? "any"}
@@ -218,7 +164,7 @@ export function ReportAccessRequestPanel({
             </div>
           ) : (
             <div className="status-banner warn">
-              Sign in first so this route-data request can be tracked to a user account.
+              Sign in first so this access request can be tracked to a user account.
               <div className="button-row" style={{ marginTop: "0.7rem" }}>
                 <a className="button-link ghost" href={`/login?next=${encodeURIComponent(`${pathname}?${searchParams.toString()}`)}`}>
                   Sign in or create account
@@ -241,7 +187,7 @@ export function ReportAccessRequestPanel({
 
           <div className="button-row">
             <button className="button-link" data-pending={isPending} disabled={!currentUser} onClick={submitRequest} type="button">
-              Submit route data request
+              {submitLabel}
             </button>
           </div>
         </>

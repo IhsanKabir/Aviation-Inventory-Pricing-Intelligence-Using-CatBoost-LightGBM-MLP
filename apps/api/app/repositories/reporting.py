@@ -2149,6 +2149,7 @@ def get_current_snapshot(
     airlines: Sequence[str] | None = None,
     origins: Sequence[str] | None = None,
     destinations: Sequence[str] | None = None,
+    route_pairs: Sequence[str] | None = None,
     cabins: Sequence[str] | None = None,
     limit: int = 250,
 ) -> dict[str, Any]:
@@ -2159,8 +2160,10 @@ def get_current_snapshot(
     clauses = ["fo.scrape_id = CAST(:cycle_id AS uuid)"]
     params: dict[str, Any] = {"cycle_id": resolved_cycle_id, "limit": limit}
     _apply_in_filter(clauses, params, "fo.airline", airlines, "airline")
-    _apply_in_filter(clauses, params, "fo.origin", origins, "origin")
-    _apply_in_filter(clauses, params, "fo.destination", destinations, "destination")
+    _apply_in_filter(clauses, params, "(fo.origin || '-' || fo.destination)", route_pairs, "route_pair")
+    if not route_pairs:
+        _apply_in_filter(clauses, params, "fo.origin", origins, "origin")
+        _apply_in_filter(clauses, params, "fo.destination", destinations, "destination")
     _apply_in_filter(clauses, params, "fo.cabin", cabins, "cabin", uppercase=False)
 
     rows = session.execute(

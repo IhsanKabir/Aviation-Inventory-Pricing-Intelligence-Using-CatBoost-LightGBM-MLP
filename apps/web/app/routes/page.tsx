@@ -5,11 +5,12 @@ import { Suspense, cache } from "react";
 import { DataPanel } from "@/components/data-panel";
 import { ReportAccessRequestPanel } from "@/components/report-access-request-panel";
 import { RouteScopeControls } from "@/components/route-scope-controls";
-import { getAirlines, getRecentCycles, getReportAccessRequest } from "@/lib/api";
+import { getAirlines, getCurrentSnapshotPayload, getRecentCycles, getReportAccessRequest } from "@/lib/api";
 import { formatDhakaDateTime } from "@/lib/format";
 import { firstParam, manyParams, parseLimit, type RawSearchParams } from "@/lib/query";
 import { getCurrentUserSession } from "@/lib/user-auth";
 
+import { RouteSnapshotSection } from "./route-snapshot-section";
 import { RouteMonitorSection, RouteMonitorSectionFallback } from "./route-monitor-section";
 
 type PageProps = {
@@ -185,6 +186,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
   const historyLimit = parseLimit(firstParam(params, "history_limit"), 6);
   const routeSelectionReady = Boolean(selectedRoutePairs.length || (origin && destination));
   const effectiveReturnDate = undefined;
+  const requestedEndDate = endDate ?? startDate ?? undefined;
   const effectiveReturnDateStart =
     tripType === "RT" ? returnDateStart ?? undefined : undefined;
   const effectiveReturnDateEnd =
@@ -197,14 +199,25 @@ export default async function RoutesPage({ searchParams }: PageProps) {
     effectiveReturnDateEnd
   );
 
-  const [airlines, recentCycles, configuredRouteEntries, accessRequest] = await Promise.all([
+  const routeSnapshotLimit = routeSelectionReady ? 20 : 12;
+
+  const [airlines, recentCycles, configuredRouteEntries, accessRequest, routeSnapshot] = await Promise.all([
     getAirlines(),
     getRecentCycles(8),
     loadConfiguredRouteEntries(),
-    requestId ? getReportAccessRequest(requestId) : Promise.resolve({ ok: true, data: null as null, error: undefined })
+    requestId ? getReportAccessRequest(requestId) : Promise.resolve({ ok: true, data: null as null, error: undefined }),
+    getCurrentSnapshotPayload({
+      cycleId,
+      airlines: selectedAirlines,
+      origins: selectedRoutePairs.length ? undefined : origin ? [origin] : undefined,
+      destinations: selectedRoutePairs.length ? undefined : destination ? [destination] : undefined,
+      routePairKeys: selectedRoutePairs.length ? selectedRoutePairs : undefined,
+      cabins: cabin ? [cabin] : undefined,
+      limit: routeSnapshotLimit
+    })
   ]);
   const { user } = await getCurrentUserSession();
-  const accessGranted = accessRequest.ok && accessRequest.data?.status === "approved";
+  const accessGranted = accessRequest.ok && accessRequest.data?.page_key === "routes" && accessRequest.data?.status === "approved";
 
   const recentCycleOptions = uniqueByKey(recentCycles.data?.items ?? [], (item) => item.cycle_id ?? "");
   const airlineOptions = uniqueByKey(airlines.data?.items ?? [], (item) => item.airline)
@@ -266,26 +279,69 @@ export default async function RoutesPage({ searchParams }: PageProps) {
         >
           <ReportAccessRequestPanel
             currentUser={user}
+            description="Submit the selected route scope and travel window first. After approval, this page unlocks the live route comparison view."
+            headline="Route access requires approval."
+            pageKey="routes"
             request={accessRequest.ok ? accessRequest.data : null}
-            scope={{
-              cycleId,
-              airlines: selectedAirlines,
-              routePairs: selectedRoutePairs,
-              origin,
-              destination,
-              cabin: cabin ?? undefined,
-              tripType,
-              returnScope,
-              returnDate: effectiveReturnDate,
+            requestWindow={{
               startDate,
-              endDate,
-              returnDateStart: effectiveReturnDateStart,
-              returnDateEnd: effectiveReturnDateEnd,
-              routeLimit,
-              historyLimit
+              endDate: requestedEndDate
             }}
+            resourceLabel="route"
+            scope={{
+              cycle_id: cycleId,
+              airline: selectedAirlines,
+              route_pair: selectedRoutePairs,
+              origin: selectedRoutePairs.length ? undefined : origin,
+              destination: selectedRoutePairs.length ? undefined : destination,
+              cabin: cabin ?? undefined,
+              trip_type: tripType,
+              return_scope: returnScope,
+              return_date: effectiveReturnDate,
+              start_date: startDate,
+              end_date: requestedEndDate,
+              return_date_start: effectiveReturnDateStart,
+              return_date_end: effectiveReturnDateEnd,
+              route_limit: routeLimit,
+              history_limit: historyLimit
+            }}
+            scopeSummary={[
+              selectedRoutePairs.length
+                ? `Routes: ${selectedRoutePairs.join(", ")}`
+                : `Route: ${origin || "any"} -> ${destination || "any"}`,
+              `Trip: ${tripType === "RT" ? "Round-trip" : "One-way"}`,
+              ...(selectedAirlines.length ? [`Airlines: ${selectedAirlines.join(", ")}`] : ["Airlines: all carriers"]),
+              ...(cabin ? [`Cabin: ${cabin}`] : []),
+              ...(cycleId ? ["Saved update selected"] : []),
+              startDate || requestedEndDate
+                ? `Outbound window: ${startDate ?? "any"} to ${requestedEndDate ?? "any"}`
+                : "Outbound window: all collected outbound dates",
+              ...(tripType === "RT"
+                ? [
+                    effectiveReturnDateStart || effectiveReturnDateEnd
+                      ? `Inbound window: ${effectiveReturnDateStart ?? "any"} to ${effectiveReturnDateEnd ?? "any"}`
+                      : "Inbound window: all collected inbound dates"
+                  ]
+                : []),
+              `View size: ${routeLimit} route blocks | ${historyLimit} history rows`
+            ]}
+            submitLabel="Submit route data request"
           />
         </DataPanel>
+
+        {routeSnapshot.ok ? (
+          <RouteSnapshotSection
+            cycleId={routeSnapshot.data?.cycle_id ?? cycleId}
+            rows={routeSnapshot.data?.rows ?? []}
+          />
+        ) : (
+          <DataPanel
+            title="Latest published route snapshot"
+            copy="The cached route snapshot could not be loaded right now."
+          >
+            <div className="empty-state error-state">API error: {routeSnapshot.error ?? "Unable to load the latest route snapshot."}</div>
+          </DataPanel>
+        )}
 
         {accessGranted && requestId && routeSelectionReady ? (
           <Suspense fallback={<RouteMonitorSectionFallback />}>

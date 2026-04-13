@@ -582,6 +582,8 @@ export type AuthenticatedUser = {
   session_expires_at_utc?: string | null;
 };
 
+export type ReportPageKey = "routes" | "operations" | "changes" | "penalties" | "taxes";
+
 type FetchResult<T> = {
   ok: boolean;
   data: T | null;
@@ -742,7 +744,7 @@ export async function getCurrentSnapshotPayload(query: SnapshotQuery) {
       cabin: query.cabins,
       limit: query.limit
     }),
-    60
+    SNAPSHOT_REVALIDATE_SECONDS
   );
 }
 
@@ -868,6 +870,7 @@ export async function getTaxPayload(
 }
 
 export async function getChangeEventsPayload(query: {
+  requestId?: string;
   airlines?: string[];
   origins?: string[];
   destinations?: string[];
@@ -880,6 +883,7 @@ export async function getChangeEventsPayload(query: {
 }) {
   return fetchJsonWithRevalidate<ChangeEventsPayload>(
     buildPath("/api/v1/reporting/change-events", {
+      request_id: query.requestId,
       airline: query.airlines,
       origin: query.origins,
       destination: query.destinations,
@@ -895,6 +899,7 @@ export async function getChangeEventsPayload(query: {
 }
 
 export async function getChangeDashboardPayload(query: {
+  requestId?: string;
   airlines?: string[];
   origins?: string[];
   destinations?: string[];
@@ -907,6 +912,7 @@ export async function getChangeDashboardPayload(query: {
 }) {
   return fetchJsonWithRevalidate<ChangeDashboardPayload>(
     buildPath("/api/v1/reporting/change-dashboard", {
+      request_id: query.requestId,
       airline: query.airlines,
       origin: query.origins,
       destination: query.destinations,

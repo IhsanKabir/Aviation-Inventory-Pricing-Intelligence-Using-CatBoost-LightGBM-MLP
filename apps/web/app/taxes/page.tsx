@@ -1,10 +1,12 @@
-import { LiveFilterControls } from "@/components/live-filter-controls";
 import { DataPanel } from "@/components/data-panel";
+import { LiveFilterControls } from "@/components/live-filter-controls";
 import { MetricCard } from "@/components/metric-card";
-import { getAirlines, getRecentCycles, getRoutes, getTaxPayload } from "@/lib/api";
+import { ReportAccessRequestPanel } from "@/components/report-access-request-panel";
+import { getAirlines, getRecentCycles, getReportAccessRequest, getRoutes, getTaxPayload } from "@/lib/api";
 import { buildReportingExportUrl } from "@/lib/export";
 import { formatDhakaDateTime, formatMoney, formatNumber, formatRouteGeo, formatRouteType } from "@/lib/format";
 import { firstParam, manyParams, parseLimit, type RawSearchParams } from "@/lib/query";
+import { getCurrentUserSession } from "@/lib/user-auth";
 
 type PageProps = {
   searchParams?: Promise<RawSearchParams>;
@@ -45,22 +47,6 @@ function renderTrendStrip(timeline?: Array<Record<string, unknown>>) {
 
 export default async function TaxesPage({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {};
-
-  const load = firstParam(params, "load");
-  if (!load) {
-    return (
-      <>
-        <h1 className="page-title">Tax Monitor</h1>
-        <p className="page-copy">Departure tax and fuel surcharge breakdown by route and airline.</p>
-        <div className="market-gate">
-          <p className="market-gate-title">Live market data — load on demand</p>
-          <p className="market-gate-copy">This view queries live data on each load. Click below only when you need current data.</p>
-          <a className="button-link" href="?load=1">Load Data</a>
-        </div>
-      </>
-    );
-  }
-
   const selectedAirlines = manyParams(params, "airline");
   const selectedRouteTypes = manyParams(params, "route_type");
   const origin = firstParam(params, "origin");
@@ -68,22 +54,31 @@ export default async function TaxesPage({ searchParams }: PageProps) {
   const cycleId = firstParam(params, "cycle_id") ?? undefined;
   const limit = parseLimit(firstParam(params, "limit"), 120);
   const trendLimit = parseLimit(firstParam(params, "trend_limit"), 8);
+  const requestId = firstParam(params, "request_id") ?? undefined;
   const routeKey = selectedRouteKey(origin, destination);
 
-  const [airlines, routes, recentCycles, taxes] = await Promise.all([
+  const [airlines, routes, recentCycles, accessRequest] = await Promise.all([
     getAirlines(),
     getRoutes(),
     getRecentCycles(8),
-    getTaxPayload({
-      cycleId,
-      airlines: selectedAirlines,
-      origins: origin ? [origin] : undefined,
-      destinations: destination ? [destination] : undefined,
-      routeTypes: selectedRouteTypes,
-      limit,
-      trendLimit,
-    }),
+    requestId ? getReportAccessRequest(requestId) : Promise.resolve({ ok: true, data: null as null, error: undefined }),
   ]);
+  const { user } = await getCurrentUserSession();
+  const accessGranted = accessRequest.ok && accessRequest.data?.page_key === "taxes" && accessRequest.data?.status === "approved";
+
+  const taxes =
+    accessGranted && requestId
+      ? await getTaxPayload({
+          requestId,
+          cycleId,
+          airlines: selectedAirlines,
+          origins: origin ? [origin] : undefined,
+          destinations: destination ? [destination] : undefined,
+          routeTypes: selectedRouteTypes,
+          limit,
+          trendLimit,
+        })
+      : { ok: true, data: null as null, error: undefined };
 
   const rows = taxes.data?.rows ?? [];
   const routeSummaries = taxes.data?.route_summaries ?? [];
@@ -129,7 +124,7 @@ export default async function TaxesPage({ searchParams }: PageProps) {
         <MetricCard
           label="Cycle"
           value={activeCycle?.cycle_completed_at_utc ? formatDhakaDateTime(activeCycle.cycle_completed_at_utc) : "Not available"}
-          footnote={taxes.ok ? "Latest warehouse-backed tax slice" : "No cycle loaded"}
+          footnote={taxes.ok && accessGranted ? "Latest warehouse-backed tax slice" : "Approval required for live data"}
         />
         <MetricCard label="Tax rows" value={rows.length.toLocaleString()} footnote={`Detail limit ${limit.toLocaleString()}`} />
         <MetricCard
@@ -192,101 +187,74 @@ export default async function TaxesPage({ searchParams }: PageProps) {
             selectedRouteKey={routeKey}
           />
 
-          <div className="button-row">
-            <a className="button-link ghost" href={exportHref}>
-              Download Excel
-            </a>
-          </div>
+          {accessGranted && requestId ? (
+            <div className="button-row">
+              <a className="button-link ghost" href={exportHref}>
+                Download Excel
+              </a>
+            </div>
+          ) : null}
         </DataPanel>
 
-        <div className="section-grid">
-          <DataPanel
-            title="Route spread"
-            copy={routeKey ? `Largest tax spreads within ${routeKey}.` : "Largest route-level tax spreads in the current filtered scope."}
-          >
-            {!taxes.ok ? (
-              <div className="empty-state error-state">API error: {taxes.error ?? "Unable to load taxes."}</div>
-            ) : topSpreadRoutes.length === 0 ? (
-              <div className="empty-state">No route tax summaries matched the current filter set.</div>
-            ) : (
-              <div className="table-list compact-list">
-                {topSpreadRoutes.map((row) => (
-                  <div className="table-row" key={`tax-route-${row.route_key}`}>
-                    <div>
-                      <strong>{row.route_key}</strong>
-                      <span className="route-inline-meta">
-                        <span className="route-type-pill" data-type={formatRouteType(row.route_type)}>
-                          {formatRouteType(row.route_type)}
-                        </span>
-                        <span>{formatRouteGeo(row.origin_country_code, row.destination_country_code)}</span>
-                      </span>
-                    </div>
-                    <div className="pill warn">{formatMoney(toNumber(row.spread_amount), "BDT")}</div>
-                    <span>{formatDelta(toNumber(row.avg_tax_change_amount))}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </DataPanel>
-
-          <DataPanel
-            title="Airline tax movement"
-            copy="Largest recent airline-level tax shifts with compact trend strips from recent cycles."
-          >
-            {!taxes.ok ? (
-              <div className="empty-state error-state">API error: {taxes.error ?? "Unable to load taxes."}</div>
-            ) : topAirlineMoves.length === 0 ? (
-              <div className="empty-state">No airline tax movement matched the current filter set.</div>
-            ) : (
-              <div className="table-list compact-list">
-                {topAirlineMoves.map((row) => (
-                  <div className="table-row" key={`tax-airline-${row.route_key}-${row.airline}`}>
-                    <div>
-                      <strong>{`${row.route_key} ${row.airline}`}</strong>
-                      <span>{renderTrendStrip(row.timeline)}</span>
-                    </div>
-                    <div className={`pill ${toNumber(row.avg_tax_change_amount) && Number(row.avg_tax_change_amount) > 0 ? "warn" : "good"}`}>
-                      {formatDelta(toNumber(row.avg_tax_change_amount))}
-                    </div>
-                    <span>{formatMoney(toNumber(row.avg_tax_amount), "BDT")}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </DataPanel>
-        </div>
-
         <DataPanel
-          title="Tax rows"
-          copy={routeKey ? `Showing tax rows for ${routeKey}.` : "Showing tax rows across the selected operational scope."}
+          title="Data access request"
+          copy="Approve the selected tax-monitor scope before loading the live tax comparison pages."
         >
-          {!taxes.ok ? (
-            <div className="empty-state error-state">API error: {taxes.error ?? "Unable to load taxes."}</div>
-          ) : rows.length === 0 ? (
-            <div className="empty-state">No tax rows matched the current filter set.</div>
-          ) : (
-            <div className="data-table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Route</th>
-                    <th>Airline</th>
-                    <th>Flight</th>
-                    <th>Departure</th>
-                    <th>Cabin</th>
-                    <th>Fare basis</th>
-                    <th>Tax amount</th>
-                    <th>Currency</th>
-                    <th>Captured</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, index) => (
-                    <tr
-                      key={`${row.route_key}-${row.airline}-${row.flight_number}-${row.departure_utc}-${row.fare_basis ?? ""}-${row.captured_at_utc ?? ""}-${index}`}
-                    >
-                      <td>
-                        <div className="table-cell-stack">
+          <ReportAccessRequestPanel
+            currentUser={user}
+            description="Submit this tax-monitor scope for approval. After approval, the route summaries, airline movements, detail rows, and workbook export unlock for the same filters."
+            headline="Tax access requires approval."
+            pageKey="taxes"
+            request={accessRequest.ok ? accessRequest.data : null}
+            requestWindow={undefined}
+            resourceLabel="tax"
+            scope={{
+              cycle_id: cycleId,
+              airline: selectedAirlines,
+              origin: origin ?? undefined,
+              destination: destination ?? undefined,
+              route_type: selectedRouteTypes,
+              limit,
+              trend_limit: trendLimit,
+            }}
+            scopeSummary={[
+              `Route: ${origin || "any"} -> ${destination || "any"}`,
+              selectedAirlines.length ? `Airlines: ${selectedAirlines.join(", ")}` : "Airlines: all carriers",
+              selectedRouteTypes.length ? `Route types: ${selectedRouteTypes.join(", ")}` : "Route types: all",
+              cycleId ? "Saved update selected" : "Latest available cycle",
+              `View size: ${limit.toLocaleString()} rows | ${trendLimit} trend cycles`,
+            ]}
+            submitLabel="Submit tax request"
+          />
+        </DataPanel>
+
+        {!accessGranted || !requestId ? (
+          <DataPanel
+            title="Tax monitor"
+            copy="This live tax monitor unlocks after the current request is approved."
+          >
+            <div className="empty-state">
+              {requestId
+                ? "This tax scope is not approved yet. Refresh after manual review, or adjust the filters and submit a new request."
+                : "Submit a tax access request above to unlock the live tax summaries for this scope."}
+            </div>
+          </DataPanel>
+        ) : (
+          <>
+            <div className="section-grid">
+              <DataPanel
+                title="Route spread"
+                copy={routeKey ? `Largest tax spreads within ${routeKey}.` : "Largest route-level tax spreads in the current filtered scope."}
+              >
+                {!taxes.ok ? (
+                  <div className="empty-state error-state">API error: {taxes.error ?? "Unable to load taxes."}</div>
+                ) : topSpreadRoutes.length === 0 ? (
+                  <div className="empty-state">No route tax summaries matched the current filter set.</div>
+                ) : (
+                  <div className="table-list compact-list">
+                    {topSpreadRoutes.map((row) => (
+                      <div className="table-row" key={`tax-route-${row.route_key}`}>
+                        <div>
                           <strong>{row.route_key}</strong>
                           <span className="route-inline-meta">
                             <span className="route-type-pill" data-type={formatRouteType(row.route_type)}>
@@ -295,22 +263,98 @@ export default async function TaxesPage({ searchParams }: PageProps) {
                             <span>{formatRouteGeo(row.origin_country_code, row.destination_country_code)}</span>
                           </span>
                         </div>
-                      </td>
-                      <td>{row.airline}</td>
-                      <td>{row.flight_number}</td>
-                      <td>{formatDhakaDateTime(row.departure_utc)}</td>
-                      <td>{row.cabin ?? "-"}</td>
-                      <td>{row.fare_basis ?? "-"}</td>
-                      <td>{formatMoney(row.tax_amount, row.currency ?? "BDT")}</td>
-                      <td>{row.currency ?? "-"}</td>
-                      <td>{formatDhakaDateTime(row.captured_at_utc)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        <div className="pill warn">{formatMoney(toNumber(row.spread_amount), "BDT")}</div>
+                        <span>{formatDelta(toNumber(row.avg_tax_change_amount))}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </DataPanel>
+
+              <DataPanel
+                title="Airline tax movement"
+                copy="Largest recent airline-level tax shifts with compact trend strips from recent cycles."
+              >
+                {!taxes.ok ? (
+                  <div className="empty-state error-state">API error: {taxes.error ?? "Unable to load taxes."}</div>
+                ) : topAirlineMoves.length === 0 ? (
+                  <div className="empty-state">No airline tax movement matched the current filter set.</div>
+                ) : (
+                  <div className="table-list compact-list">
+                    {topAirlineMoves.map((row) => (
+                      <div className="table-row" key={`tax-airline-${row.route_key}-${row.airline}`}>
+                        <div>
+                          <strong>{`${row.route_key} ${row.airline}`}</strong>
+                          <span>{renderTrendStrip(row.timeline)}</span>
+                        </div>
+                        <div className={`pill ${toNumber(row.avg_tax_change_amount) && Number(row.avg_tax_change_amount) > 0 ? "warn" : "good"}`}>
+                          {formatDelta(toNumber(row.avg_tax_change_amount))}
+                        </div>
+                        <span>{formatMoney(toNumber(row.avg_tax_amount), "BDT")}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </DataPanel>
             </div>
-          )}
-        </DataPanel>
+
+            <DataPanel
+              title="Tax rows"
+              copy={routeKey ? `Showing tax rows for ${routeKey}.` : "Showing tax rows across the selected operational scope."}
+            >
+              {!taxes.ok ? (
+                <div className="empty-state error-state">API error: {taxes.error ?? "Unable to load taxes."}</div>
+              ) : rows.length === 0 ? (
+                <div className="empty-state">No tax rows matched the current filter set.</div>
+              ) : (
+                <div className="data-table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Route</th>
+                        <th>Airline</th>
+                        <th>Flight</th>
+                        <th>Departure</th>
+                        <th>Cabin</th>
+                        <th>Fare basis</th>
+                        <th>Tax amount</th>
+                        <th>Currency</th>
+                        <th>Captured</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row, index) => (
+                        <tr
+                          key={`${row.route_key}-${row.airline}-${row.flight_number}-${row.departure_utc}-${row.fare_basis ?? ""}-${row.captured_at_utc ?? ""}-${index}`}
+                        >
+                          <td>
+                            <div className="table-cell-stack">
+                              <strong>{row.route_key}</strong>
+                              <span className="route-inline-meta">
+                                <span className="route-type-pill" data-type={formatRouteType(row.route_type)}>
+                                  {formatRouteType(row.route_type)}
+                                </span>
+                                <span>{formatRouteGeo(row.origin_country_code, row.destination_country_code)}</span>
+                              </span>
+                            </div>
+                          </td>
+                          <td>{row.airline}</td>
+                          <td>{row.flight_number}</td>
+                          <td>{formatDhakaDateTime(row.departure_utc)}</td>
+                          <td>{row.cabin ?? "-"}</td>
+                          <td>{row.fare_basis ?? "-"}</td>
+                          <td>{formatMoney(row.tax_amount, row.currency ?? "BDT")}</td>
+                          <td>{row.currency ?? "-"}</td>
+                          <td>{formatDhakaDateTime(row.captured_at_utc)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </DataPanel>
+          </>
+        )}
       </div>
     </>
   );

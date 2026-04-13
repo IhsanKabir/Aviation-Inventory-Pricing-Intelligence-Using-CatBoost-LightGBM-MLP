@@ -1,10 +1,12 @@
-import { LiveFilterControls } from "@/components/live-filter-controls";
 import { DataPanel } from "@/components/data-panel";
+import { LiveFilterControls } from "@/components/live-filter-controls";
 import { MetricCard } from "@/components/metric-card";
-import { getAirlines, getPenaltyPayload, getRecentCycles, getRoutes } from "@/lib/api";
+import { ReportAccessRequestPanel } from "@/components/report-access-request-panel";
+import { getAirlines, getPenaltyPayload, getRecentCycles, getReportAccessRequest, getRoutes } from "@/lib/api";
 import { buildReportingExportUrl } from "@/lib/export";
 import { formatBooleanFlag, formatDhakaDateTime, formatMoney, formatRouteGeo, formatRouteType, normalizeLongText, summarizePenaltyText } from "@/lib/format";
 import { firstParam, manyParams, parseLimit, type RawSearchParams } from "@/lib/query";
+import { getCurrentUserSession } from "@/lib/user-auth";
 
 type PageProps = {
   searchParams?: Promise<RawSearchParams>;
@@ -19,41 +21,34 @@ function selectedRouteKey(origin?: string, destination?: string) {
 
 export default async function PenaltiesPage({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {};
-
-  const load = firstParam(params, "load");
-  if (!load) {
-    return (
-      <>
-        <h1 className="page-title">Penalty Reference</h1>
-        <p className="page-copy">Change and cancel fee rules across airlines and routes, sourced from live fare data.</p>
-        <div className="market-gate">
-          <p className="market-gate-title">Live market data — load on demand</p>
-          <p className="market-gate-copy">This view queries live data on each load. Click below only when you need current data.</p>
-          <a className="button-link" href="?load=1">Load Data</a>
-        </div>
-      </>
-    );
-  }
-
   const selectedAirlines = manyParams(params, "airline");
   const origin = firstParam(params, "origin");
   const destination = firstParam(params, "destination");
   const cycleId = firstParam(params, "cycle_id") ?? undefined;
   const limit = parseLimit(firstParam(params, "limit"), 120);
+  const requestId = firstParam(params, "request_id") ?? undefined;
   const routeKey = selectedRouteKey(origin, destination);
 
-  const [airlines, routes, recentCycles, penalties] = await Promise.all([
+  const [airlines, routes, recentCycles, accessRequest] = await Promise.all([
     getAirlines(),
     getRoutes(),
     getRecentCycles(8),
-    getPenaltyPayload({
-      cycleId,
-      airlines: selectedAirlines,
-      origins: origin ? [origin] : undefined,
-      destinations: destination ? [destination] : undefined,
-      limit,
-    }),
+    requestId ? getReportAccessRequest(requestId) : Promise.resolve({ ok: true, data: null as null, error: undefined }),
   ]);
+  const { user } = await getCurrentUserSession();
+  const accessGranted = accessRequest.ok && accessRequest.data?.page_key === "penalties" && accessRequest.data?.status === "approved";
+
+  const penalties =
+    accessGranted && requestId
+      ? await getPenaltyPayload({
+          requestId,
+          cycleId,
+          airlines: selectedAirlines,
+          origins: origin ? [origin] : undefined,
+          destinations: destination ? [destination] : undefined,
+          limit,
+        })
+      : { ok: true, data: null as null, error: undefined };
 
   const rows = penalties.data?.rows ?? [];
   const airlineOptions = [...(airlines.data?.items ?? [])]
@@ -89,7 +84,7 @@ export default async function PenaltiesPage({ searchParams }: PageProps) {
         <MetricCard
           label="Cycle"
           value={activeCycle?.cycle_completed_at_utc ? formatDhakaDateTime(activeCycle.cycle_completed_at_utc) : "Not available"}
-          footnote={penalties.ok ? "Latest warehouse-backed penalty slice" : "No cycle loaded"}
+          footnote={penalties.ok && accessGranted ? "Latest warehouse-backed penalty slice" : "Approval required for live data"}
         />
         <MetricCard label="Penalty rows" value={rows.length.toLocaleString()} footnote={`Limit ${limit.toLocaleString()}`} />
         <MetricCard label="Airlines" value={airlineCount.toLocaleString()} footnote={selectedAirlines.length ? `${selectedAirlines.length} selected` : "All carriers"} />
@@ -132,92 +127,136 @@ export default async function PenaltiesPage({ searchParams }: PageProps) {
             selectedRouteKey={routeKey}
           />
 
-          <div className="button-row">
-            <a className="button-link ghost" href={exportHref}>
-              Download Excel
-            </a>
-          </div>
+          {accessGranted && requestId ? (
+            <div className="button-row">
+              <a className="button-link ghost" href={exportHref}>
+                Download Excel
+              </a>
+            </div>
+          ) : null}
         </DataPanel>
 
         <DataPanel
-          title="Penalty rows"
-          copy={routeKey ? `Showing penalty rows for ${routeKey}.` : "Showing penalty rows across the selected operational scope."}
+          title="Data access request"
+          copy="Approve the selected penalty scope before loading this live fee reference."
         >
-          {!penalties.ok ? (
-            <div className="empty-state error-state">API error: {penalties.error ?? "Unable to load penalties."}</div>
-          ) : rows.length === 0 ? (
-            <div className="empty-state">No penalty rows matched the current filter set.</div>
-          ) : (
-            <div className="data-table-wrap">
-              <table className="data-table compact-table">
-                <thead>
-                  <tr>
-                    <th>Route</th>
-                    <th>Airline</th>
-                    <th>Flight</th>
-                    <th>Departure</th>
-                    <th>Change fees</th>
-                    <th>Cancel fees</th>
-                    <th>Flags</th>
-                    <th>Rule text</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, index) => (
-                    <tr
-                      key={`${row.route_key}-${row.airline}-${row.flight_number}-${row.departure_utc}-${row.fare_basis ?? ""}-${row.captured_at_utc ?? ""}-${index}`}
-                    >
-                      <td>
-                        <div className="table-cell-stack">
-                          <strong>{row.route_key}</strong>
-                          <span className="route-inline-meta">
-                            <span className="route-type-pill" data-type={formatRouteType(row.route_type)}>
-                              {formatRouteType(row.route_type)}
-                            </span>
-                            <span>{formatRouteGeo(row.origin_country_code, row.destination_country_code)}</span>
-                          </span>
-                        </div>
-                      </td>
-                      <td>{row.airline}</td>
-                      <td>{row.flight_number}</td>
-                      <td>{formatDhakaDateTime(row.departure_utc)}</td>
-                      <td>
-                        <div className="table-cell-stack">
-                          <span>{`24h+: ${formatMoney(row.fare_change_fee_before_24h, row.penalty_currency ?? "BDT")}`}</span>
-                          <span>{`<24h: ${formatMoney(row.fare_change_fee_within_24h, row.penalty_currency ?? "BDT")}`}</span>
-                          <span>{`No-show: ${formatMoney(row.fare_change_fee_no_show, row.penalty_currency ?? "BDT")}`}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="table-cell-stack">
-                          <span>{`24h+: ${formatMoney(row.fare_cancel_fee_before_24h, row.penalty_currency ?? "BDT")}`}</span>
-                          <span>{`<24h: ${formatMoney(row.fare_cancel_fee_within_24h, row.penalty_currency ?? "BDT")}`}</span>
-                          <span>{`No-show: ${formatMoney(row.fare_cancel_fee_no_show, row.penalty_currency ?? "BDT")}`}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="table-cell-stack">
-                          <span>{`Changeable: ${formatBooleanFlag(row.fare_changeable)}`}</span>
-                          <span>{`Refundable: ${formatBooleanFlag(row.fare_refundable)}`}</span>
-                        </div>
-                      </td>
-                      <td className="long-text">
-                        {row.penalty_rule_text ? (
-                          <details className="expand-text">
-                            <summary>{summarizePenaltyText(row.penalty_rule_text)}</summary>
-                            <pre>{normalizeLongText(row.penalty_rule_text)}</pre>
-                          </details>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <ReportAccessRequestPanel
+            currentUser={user}
+            description="Submit this penalty scope for approval. After approval, the fee table and workbook export unlock for the same route and airline filters."
+            headline="Penalty access requires approval."
+            pageKey="penalties"
+            request={accessRequest.ok ? accessRequest.data : null}
+            requestWindow={undefined}
+            resourceLabel="penalty"
+            scope={{
+              cycle_id: cycleId,
+              airline: selectedAirlines,
+              origin: origin ?? undefined,
+              destination: destination ?? undefined,
+              limit,
+            }}
+            scopeSummary={[
+              `Route: ${origin || "any"} -> ${destination || "any"}`,
+              selectedAirlines.length ? `Airlines: ${selectedAirlines.join(", ")}` : "Airlines: all carriers",
+              cycleId ? "Saved update selected" : "Latest available cycle",
+              `Detail limit: ${limit.toLocaleString()} rows`,
+            ]}
+            submitLabel="Submit penalty request"
+          />
         </DataPanel>
+
+        {!accessGranted || !requestId ? (
+          <DataPanel
+            title="Penalty rows"
+            copy="This live penalty reference unlocks after the current request is approved."
+          >
+            <div className="empty-state">
+              {requestId
+                ? "This penalty scope is not approved yet. Refresh after manual review, or adjust the filters and submit a new request."
+                : "Submit a penalty access request above to unlock the live fee table for this scope."}
+            </div>
+          </DataPanel>
+        ) : (
+          <DataPanel
+            title="Penalty rows"
+            copy={routeKey ? `Showing penalty rows for ${routeKey}.` : "Showing penalty rows across the selected operational scope."}
+          >
+            {!penalties.ok ? (
+              <div className="empty-state error-state">API error: {penalties.error ?? "Unable to load penalties."}</div>
+            ) : rows.length === 0 ? (
+              <div className="empty-state">No penalty rows matched the current filter set.</div>
+            ) : (
+              <div className="data-table-wrap">
+                <table className="data-table compact-table">
+                  <thead>
+                    <tr>
+                      <th>Route</th>
+                      <th>Airline</th>
+                      <th>Flight</th>
+                      <th>Departure</th>
+                      <th>Change fees</th>
+                      <th>Cancel fees</th>
+                      <th>Flags</th>
+                      <th>Rule text</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, index) => (
+                      <tr
+                        key={`${row.route_key}-${row.airline}-${row.flight_number}-${row.departure_utc}-${row.fare_basis ?? ""}-${row.captured_at_utc ?? ""}-${index}`}
+                      >
+                        <td>
+                          <div className="table-cell-stack">
+                            <strong>{row.route_key}</strong>
+                            <span className="route-inline-meta">
+                              <span className="route-type-pill" data-type={formatRouteType(row.route_type)}>
+                                {formatRouteType(row.route_type)}
+                              </span>
+                              <span>{formatRouteGeo(row.origin_country_code, row.destination_country_code)}</span>
+                            </span>
+                          </div>
+                        </td>
+                        <td>{row.airline}</td>
+                        <td>{row.flight_number}</td>
+                        <td>{formatDhakaDateTime(row.departure_utc)}</td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span>{`24h+: ${formatMoney(row.fare_change_fee_before_24h, row.penalty_currency ?? "BDT")}`}</span>
+                            <span>{`<24h: ${formatMoney(row.fare_change_fee_within_24h, row.penalty_currency ?? "BDT")}`}</span>
+                            <span>{`No-show: ${formatMoney(row.fare_change_fee_no_show, row.penalty_currency ?? "BDT")}`}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span>{`24h+: ${formatMoney(row.fare_cancel_fee_before_24h, row.penalty_currency ?? "BDT")}`}</span>
+                            <span>{`<24h: ${formatMoney(row.fare_cancel_fee_within_24h, row.penalty_currency ?? "BDT")}`}</span>
+                            <span>{`No-show: ${formatMoney(row.fare_cancel_fee_no_show, row.penalty_currency ?? "BDT")}`}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span>{`Changeable: ${formatBooleanFlag(row.fare_changeable)}`}</span>
+                            <span>{`Refundable: ${formatBooleanFlag(row.fare_refundable)}`}</span>
+                          </div>
+                        </td>
+                        <td className="long-text">
+                          {row.penalty_rule_text ? (
+                            <details className="expand-text">
+                              <summary>{summarizePenaltyText(row.penalty_rule_text)}</summary>
+                              <pre>{normalizeLongText(row.penalty_rule_text)}</pre>
+                            </details>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </DataPanel>
+        )}
       </div>
     </>
   );

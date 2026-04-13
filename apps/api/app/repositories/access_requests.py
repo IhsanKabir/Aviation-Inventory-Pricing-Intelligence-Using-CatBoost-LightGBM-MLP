@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 
-VALID_PAGE_KEYS = {"routes"}
+VALID_PAGE_KEYS = {"routes", "operations", "changes", "penalties", "taxes"}
 VALID_STATUSES = {"pending", "approved", "rejected", "payment_required"}
 
 
@@ -83,11 +83,27 @@ def _normalize_scalar(value: Any) -> str | None:
 def _normalize_code_list(values: Any) -> list[str]:
     if not values:
         return []
+    if not isinstance(values, (list, tuple, set)):
+        values = [values]
     normalized = {
         str(value or "").strip().upper()
         for value in values
         if str(value or "").strip()
     }
+    return sorted(normalized)
+
+
+def _normalize_text_list(values: Any, *, upper: bool = False) -> list[str]:
+    if not values:
+        return []
+    if not isinstance(values, (list, tuple, set)):
+        values = [values]
+    normalized: set[str] = set()
+    for value in values:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            continue
+        normalized.add(cleaned.upper() if upper else cleaned)
     return sorted(normalized)
 
 
@@ -124,6 +140,11 @@ def normalize_request_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
         "route_pair": normalized_route_pairs,
         "cabin": _normalize_scalar(raw.get("cabin")),
         "trip_type": _normalize_scalar(raw.get("trip_type")),
+        "route_type": _normalize_text_list(raw.get("route_type"), upper=True),
+        "via_airport": _normalize_code_list(raw.get("via_airport")),
+        "domain": _normalize_text_list(raw.get("domain"), upper=True),
+        "change_type": _normalize_text_list(raw.get("change_type"), upper=True),
+        "direction": _normalize_text_list(raw.get("direction"), upper=True),
         "start_date": _normalize_scalar(raw.get("start_date")),
         "end_date": _normalize_scalar(raw.get("end_date")),
         "return_scope": _normalize_scalar(raw.get("return_scope")),
@@ -141,6 +162,18 @@ def normalize_request_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
     if history_limit is not None and str(history_limit).strip():
         try:
             normalized["history_limit"] = max(1, int(history_limit))
+        except Exception:
+            pass
+    limit = raw.get("limit")
+    trend_limit = raw.get("trend_limit")
+    if limit is not None and str(limit).strip():
+        try:
+            normalized["limit"] = max(1, int(limit))
+        except Exception:
+            pass
+    if trend_limit is not None and str(trend_limit).strip():
+        try:
+            normalized["trend_limit"] = max(1, int(trend_limit))
         except Exception:
             pass
 
@@ -422,15 +455,20 @@ def require_approved_request(
 
 
 def _scope_matches(approved_scope: dict[str, Any], current_scope: dict[str, Any]) -> bool:
-    approved_route_pairs = approved_scope.get("route_pair") or []
-    current_route_pairs = current_scope.get("route_pair") or []
-    if approved_route_pairs:
-        if not current_route_pairs:
+    def _matches_constrained_list(key: str) -> bool:
+        approved_values = approved_scope.get(key) or []
+        current_values = current_scope.get(key) or []
+        if not approved_values:
+            return True
+        if not current_values:
             return False
-        if not set(current_route_pairs).issubset(set(approved_route_pairs)):
+        return set(current_values).issubset(set(approved_values))
+
+    for key in ("route_pair", "airline", "route_type", "via_airport", "domain", "change_type", "direction"):
+        if not _matches_constrained_list(key):
             return False
 
-    for key in ("cycle_id", "origin", "destination", "cabin", "trip_type", "return_date"):
+    for key in ("cycle_id", "origin", "destination", "cabin", "trip_type", "return_date", "return_scope"):
         approved_value = approved_scope.get(key)
         if approved_value and current_scope.get(key) != approved_value:
             return False
@@ -459,11 +497,6 @@ def _scope_matches(approved_scope: dict[str, Any], current_scope: dict[str, Any]
         if not current_return_end or current_return_end > approved_return_end:
             return False
 
-    approved_airlines = approved_scope.get("airline") or []
-    current_airlines = current_scope.get("airline") or []
-    if approved_airlines and current_airlines != approved_airlines:
-        return False
-
     approved_route_limit = approved_scope.get("route_limit")
     current_route_limit = current_scope.get("route_limit")
     if approved_route_limit is not None and current_route_limit is not None and int(current_route_limit) > int(approved_route_limit):
@@ -472,6 +505,16 @@ def _scope_matches(approved_scope: dict[str, Any], current_scope: dict[str, Any]
     approved_history_limit = approved_scope.get("history_limit")
     current_history_limit = current_scope.get("history_limit")
     if approved_history_limit is not None and current_history_limit is not None and int(current_history_limit) > int(approved_history_limit):
+        return False
+
+    approved_limit = approved_scope.get("limit")
+    current_limit = current_scope.get("limit")
+    if approved_limit is not None and current_limit is not None and int(current_limit) > int(approved_limit):
+        return False
+
+    approved_trend_limit = approved_scope.get("trend_limit")
+    current_trend_limit = current_scope.get("trend_limit")
+    if approved_trend_limit is not None and current_trend_limit is not None and int(current_trend_limit) > int(approved_trend_limit):
         return False
 
     return True
