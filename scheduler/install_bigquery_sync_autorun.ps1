@@ -44,22 +44,30 @@ function Register-SyncTask {
     param(
         [string]$Name,
         [string]$TargetBatch,
-        [datetime]$At
+        [datetime]$At,
+        [int]$RepeatMinutes
     )
     $now = Get-Date
     $anchor = Get-Date -Hour $At.Hour -Minute $At.Minute -Second 0
+    # If today's anchor has already passed, anchor to today anyway — StartWhenAvailable
+    # will fire the first run immediately, then the repetition interval takes over.
     if ($anchor -lt $now) {
-        $anchor = $anchor.AddDays(1)
+        # Keep today's anchor so the repetition series is rooted to the configured time.
+        # Do not push to tomorrow — that would delay the first catch-up run unnecessarily.
     }
 
     if ($WhatIf) {
-        Write-Host "[WhatIf] Register-ScheduledTask -TaskName $Name (initial one-shot at $($anchor.ToString('yyyy-MM-dd HH:mm')))"
+        Write-Host "[WhatIf] Register-ScheduledTask -TaskName $Name (repeating every $RepeatMinutes min, anchored $($anchor.ToString('yyyy-MM-dd HH:mm')))"
         return
     }
 
     $arg = "/c `"$TargetBatch`""
     $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument $arg
-    $trigger = New-ScheduledTaskTrigger -Once -At $anchor
+    # Fixed repeating trigger — fires at anchor then every RepeatMinutes forever.
+    # No finish-driven reschedule needed; Task Scheduler owns the cadence.
+    $trigger = New-ScheduledTaskTrigger -Once -At $anchor `
+        -RepetitionInterval (New-TimeSpan -Minutes $RepeatMinutes) `
+        -RepetitionDuration (New-TimeSpan -Days 3650)
     $settings = New-ScheduledTaskSettingsSet `
         -WakeToRun `
         -StartWhenAvailable `
@@ -69,7 +77,7 @@ function Register-SyncTask {
 
     $task = New-ScheduledTask -Action $action -Trigger $trigger -Settings $settings
     Register-ScheduledTask -TaskName $Name -InputObject $task -Force | Out-Null
-    Write-Host "BigQuery sync task ensured: $Name"
+    Write-Host "BigQuery sync task registered: $Name (repeating every $RepeatMinutes min)"
 }
 
 function Show-TaskSummary {
@@ -95,15 +103,14 @@ if ($RepeatMinutes -lt 60) {
 }
 
 $startAt = Parse-Time $StartTime
-Register-SyncTask -Name $TaskName -TargetBatch $batchPath -At $startAt
+Register-SyncTask -Name $TaskName -TargetBatch $batchPath -At $startAt -RepeatMinutes $RepeatMinutes
 Show-TaskSummary -Name $TaskName
 
 if (-not $WhatIf) {
     Write-Host ""
     Write-Host "Done. BigQuery sync autorun is installed for current user context."
-    Write-Host "This task is finish-driven: the wrapper reschedules the next run after completion + buffer."
-    Write-Host "Reschedule buffer minutes:"
-    Write-Host "  $RepeatMinutes"
+    Write-Host "The task uses a fixed repeating trigger - Task Scheduler fires it every $RepeatMinutes minutes"
+    Write-Host "regardless of whether previous runs succeeded or failed. No finish-driven reschedule needed."
     Write-Host "Main command:"
     Write-Host "  $batchPath"
 }

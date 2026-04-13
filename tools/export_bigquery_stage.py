@@ -926,8 +926,12 @@ def main() -> int:
     engine = create_engine(get_database_url(), pool_pre_ping=True, future=True)
     stage_root = _stage_dir(Path(args.output_dir))
     tables = _parse_tables(args.tables)
+    from datetime import timedelta
     start_ts = f"{args.start_date}T00:00:00+00:00"
-    end_ts = f"{args.end_date}T00:00:00+00:00"
+    # end_ts is the start of the day *after* end_date so that all data scraped on
+    # end_date (00:00 – 23:59 UTC) is included. The window is [start_ts, end_ts).
+    _end_date_next = (date.fromisoformat(args.end_date) + timedelta(days=1)).isoformat()
+    end_ts = f"{_end_date_next}T00:00:00+00:00"
     params = {"start_ts": start_ts, "end_ts": end_ts}
     start_dt = datetime.fromisoformat(start_ts)
     end_dt = datetime.fromisoformat(end_ts)
