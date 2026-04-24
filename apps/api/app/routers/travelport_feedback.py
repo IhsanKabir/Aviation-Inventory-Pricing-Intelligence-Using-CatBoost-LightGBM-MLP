@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from google.cloud import bigquery
 from pydantic import BaseModel, Field
 
-from app.repositories import travelport_feedback as feedback_repo
+from ..repositories import travelport_feedback as feedback_repo
 
 router = APIRouter()
 
