@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # create_feedback_5xx_alert.sh
 #
-# Creates a Cloud Monitoring alert that fires when the travelport-agent/feedback
-# endpoint has a 5xx error rate > 1% over a 5-minute window.
+# Creates a Cloud Monitoring alert that fires when the Cloud Run service
+# emits any 5xx responses over a 5-minute window.
 #
 # Run once from any machine with gcloud authenticated to the project:
 #   bash deploy/gcp/create_feedback_5xx_alert.sh
@@ -43,32 +43,39 @@ if [[ -z "$channel_name" ]]; then
     echo "Warning: could not create notification channel. Alert will fire without email."
 fi
 
+# ── Build notification channels JSON fragment ────────────────────────────────
+if [[ -n "$channel_name" ]]; then
+    channels_json="\"notificationChannels\": [\"$channel_name\"],"
+else
+    channels_json=""
+fi
+
 # ── Build the alert policy JSON ──────────────────────────────────────────────
-# Metric: run.googleapis.com/request_count, filtered to 5xx on our service.
-# We compute a ratio: 5xx_count / total_count > 0.01 over 300s.
-# Cloud Monitoring does not support ratio conditions natively in gcloud CLI YAML,
-# so we use a MQL (Monitoring Query Language) condition instead.
+# Uses conditionThreshold (filter + aggregation) instead of MQL so there is
+# no requirement to produce an explicit boolean column.
+# Fires when the 5xx request rate is > 0 req/s over a 300s alignment window.
 
-MQL_QUERY="fetch cloud_run_revision
-| metric 'run.googleapis.com/request_count'
-| filter
-    resource.service_name == '$SERVICE'
-    && resource.location == '$REGION'
-    && metric.response_code_class == '5xx'
-| align rate(5m)
-| every 5m
-| group_by [resource.service_name], [value: sum(value.request_count)]
-| condition val() > 0"
-
-policy_json=$(cat <<EOF
+tmp=$(mktemp --suffix=.json)
+cat > "$tmp" <<EOF
 {
   "displayName": "$POLICY_NAME",
   "combiner": "OR",
+  $channels_json
   "conditions": [
     {
-      "displayName": "5xx rate on $SERVICE travelport-agent/feedback > 0 req/s for 5 min",
-      "conditionMonitoringQueryLanguage": {
-        "query": $(echo "$MQL_QUERY" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))"),
+      "displayName": "5xx responses on $SERVICE > 0 over 5 min",
+      "conditionThreshold": {
+        "filter": "resource.type = \"cloud_run_revision\" AND resource.labels.service_name = \"$SERVICE\" AND metric.type = \"run.googleapis.com/request_count\" AND metric.labels.response_code_class = \"5xx\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "groupByFields": ["resource.labels.service_name"]
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
         "duration": "300s",
         "trigger": {
           "count": 1
@@ -80,17 +87,11 @@ policy_json=$(cat <<EOF
     "autoClose": "604800s"
   },
   "documentation": {
-    "content": "The travelport-agent/feedback endpoint on Cloud Run service $SERVICE is returning 5xx errors. Check Cloud Run logs: https://console.cloud.google.com/run/detail/$REGION/$SERVICE/logs?project=$PROJECT",
+    "content": "Cloud Run service $SERVICE is returning 5xx errors. Check logs: https://console.cloud.google.com/run/detail/$REGION/$SERVICE/logs?project=$PROJECT",
     "mimeType": "text/markdown"
   }
-  $(if [[ -n "$channel_name" ]]; then echo ",\"notificationChannels\": [\"$channel_name\"]"; fi)
 }
 EOF
-)
-
-# Write to temp file and create
-tmp=$(mktemp --suffix=.json)
-echo "$policy_json" > "$tmp"
 
 created=$(gcloud alpha monitoring policies create \
     --project="$PROJECT" \
