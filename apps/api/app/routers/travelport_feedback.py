@@ -8,8 +8,11 @@ block naive scripts without a Redis dependency.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
+
+LOG = logging.getLogger(__name__)
 from collections import defaultdict, deque
 from typing import Any
 
@@ -31,10 +34,16 @@ _rl_buckets: dict[str, deque] = defaultdict(deque)
 
 
 def _client_ip(request: Request) -> str:
-    """Return the real client IP, respecting Cloud Run's X-Forwarded-For."""
+    """Return the real client IP from Cloud Run's X-Forwarded-For.
+
+    Cloud Run appends the genuine source IP as the *last* entry in
+    X-Forwarded-For.  Taking the first entry allows a caller to spoof an
+    arbitrary IP and bypass the rate limiter by setting the header themselves.
+    """
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        # Rightmost entry is appended by the trusted Cloud Run ingress.
+        return forwarded.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 
@@ -101,7 +110,8 @@ async def create_feedback(
         )
         return feedback_repo.create_feedback(client, payload_dict)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        LOG.exception("feedback POST failed: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/feedback")
@@ -114,4 +124,5 @@ async def list_feedback(
     try:
         return feedback_repo.list_feedback(client, limit=limit, status=status)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        LOG.exception("feedback GET failed: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
