@@ -57,7 +57,8 @@ MQL_QUERY="fetch cloud_run_revision
     && metric.response_code_class == '5xx'
 | align rate(5m)
 | every 5m
-| group_by [resource.service_name], [value: sum(value.request_count)]"
+| group_by [resource.service_name], [value: sum(value.request_count)]
+| condition val() > 0"
 
 policy_json=$(cat <<EOF
 {
