@@ -1,8 +1,8 @@
 /**
  * app/downloads/page.tsx - TravelportAuto release downloads
  *
- * Static page — no API call. Releases are hardcoded below.
- * Update RELEASES array when a new version ships.
+ * Fetches live releases from GitHub API with 1-hour ISR revalidation.
+ * Falls back to FALLBACK_RELEASES if the fetch fails at build/revalidate time.
  */
 
 interface Release {
@@ -14,153 +14,99 @@ interface Release {
   guide_url: string | null;
 }
 
-const RELEASES: Release[] = [
+interface GitHubRelease {
+  tag_name: string;
+  name: string;
+  published_at: string;
+  draft: boolean;
+  prerelease: boolean;
+  body: string;
+  assets: { name: string; browser_download_url: string }[];
+}
+
+const REPO = "IhsanKabir/Process_Optimization_Using_pywinauto";
+const GUIDE_URL = `https://github.com/${REPO}/blob/main/user_guide.md`;
+
+const FALLBACK_RELEASES: Release[] = [
+  {
+    version: "v1.4.0",
+    date: "2026-04-13",
+    label: "Latest",
+    notes: [
+      "FS two-window date schedule — rescues airlines whose first-month inventory has dried up",
+      "FZS precision preserved to 6 decimal places in currency reports",
+      "India K3 origin-sensitive tax correction for round-trip fares from non-Indian airports",
+    ],
+    exe_url: `https://github.com/${REPO}/releases/download/v1.4.0/TravelportAuto.exe`,
+    guide_url: GUIDE_URL,
+  },
   {
     version: "v1.3.8",
     date: "2026-04-13",
-    label: "Latest",
     notes: [
       "Performance: eliminated fixed sleeps, replaced with adaptive polling — 1-3 minutes faster per full run",
       "Startup connection 14s faster, FS freshness check and currency redirect no longer wait the full timeout when data arrives early",
     ],
-    exe_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.8/TravelportAuto.exe",
-    guide_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
-  },
-  {
-    version: "v1.3.7",
-    date: "2026-04-13",
-    notes: [
-      'Fixed "Application Window 1 not found" without admin rights — Win32 title matching works on IT-managed work laptops',
-    ],
-    exe_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.7/TravelportAuto.exe",
-    guide_url: null,
-  },
-  {
-    version: "v1.3.6",
-    date: "2026-04-13",
-    notes: [
-      "Fixed Smartpoint connection for elevated installs (superseded by v1.3.7)",
-    ],
-    exe_url: null,
-    guide_url: null,
-  },
-  {
-    version: "v1.3.5",
-    date: "2026-04-13",
-    notes: [
-      "Auto-detect Smartpoint window title across all known versions and install types",
-    ],
-    exe_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.5/TravelportAuto.exe",
-    guide_url: null,
-  },
-  {
-    version: "v1.3.4",
-    date: "2026-04-13",
-    notes: [
-      'Fixed "Failed to load Python DLL" crash on machines where the Windows username is longer than 8 characters',
-    ],
-    exe_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.4/TravelportAuto.exe",
-    guide_url: null,
-  },
-  {
-    version: "v1.3.3",
-    date: "2026-04-13",
-    notes: [
-      'Fixed "Failed to load Python DLL" crash on launch — UPX compression disabled',
-    ],
-    exe_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.3/TravelportAuto.exe",
-    guide_url: null,
-  },
-  {
-    version: "v1.3.2",
-    date: "2026-04-13",
-    notes: [
-      'Fixed "Failed to load Python DLL" crash after using the built-in auto-update',
-    ],
-    exe_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.2/TravelportAuto.exe",
-    guide_url: null,
-  },
-  {
-    version: "v1.3.1",
-    date: "2026-04-13",
-    notes: [
-      "Fixed crash in Manual (paste) mode — step-by-step clipboard wizard replaces stdin prompt",
-      'New "Compare against" field — leave blank for previous run or enter a date to compare a specific snapshot',
-      "Creator credit shown in title bar",
-    ],
-    exe_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.1/TravelportAuto.exe",
-    guide_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
-  },
-  {
-    version: "v1.3.0",
-    date: "2026-04-12",
-    notes: [
-      "Full fare extraction across all routes (85 routes, DAC hub)",
-      "BigQuery streaming push — fare + tax data synced to live dashboard",
-      "Tax extraction from Travelport FTAX commands (17 airports)",
-      "Penalty extraction from FQ/FQN commands",
-      "Excel reports with change tracking (new / removed / price change / sold out)",
-      "JSON archive snapshots for historical comparison",
-      "PostgreSQL persistence with full run history",
-      "Checkpoint resume — safely restart interrupted runs",
-      "--speed flag: safe | normal | fast profiles",
-      "New YQ-YR-Q Charges Excel sheet — GDS surcharge codes per route",
-      "Comprehensive user guide included",
-    ],
-    exe_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/releases/download/v1.3.0/TravelportAuto.exe",
-    guide_url:
-      "https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/blob/main/user_guide.md",
-  },
-  {
-    version: "v1.2.0",
-    date: "2026-03-28",
-    notes: [
-      "PostgreSQL database integration — fare records persisted per run",
-      "Unsaleable fare detection",
-      "End-of-data detection improvements",
-      "RBD sorting fix",
-    ],
-    exe_url: null,
-    guide_url: null,
-  },
-  {
-    version: "v1.1.0",
-    date: "2026-03-16",
-    notes: [
-      "Tax parsing (FTAX) with effective date tracking",
-      "Penalty parsing (FQ/FQN)",
-      "FS/FD page navigation fix",
-      "Black formatting enforced in CI",
-    ],
-    exe_url: null,
-    guide_url: null,
-  },
-  {
-    version: "v1.0.0",
-    date: "2026-02-20",
-    notes: [
-      "Initial release",
-      "Fare extraction via pywinauto + pyautogui",
-      "Excel report generation",
-      "Change detection vs JSON snapshots",
-    ],
-    exe_url: null,
-    guide_url: null,
+    exe_url: `https://github.com/${REPO}/releases/download/v1.3.8/TravelportAuto.exe`,
+    guide_url: GUIDE_URL,
   },
 ];
 
-const latest = RELEASES[0];
-const older = RELEASES.slice(1);
+function parseGitHubReleases(items: GitHubRelease[]): Release[] {
+  const releases: Release[] = [];
+
+  for (const item of items) {
+    if (item.draft) continue;
+
+    const version = item.tag_name.startsWith("v") ? item.tag_name : `v${item.tag_name}`;
+    const date = item.published_at.slice(0, 10);
+
+    const exeAsset = item.assets.find((a) => a.name.endsWith(".exe"));
+    const exe_url = exeAsset?.browser_download_url ?? null;
+
+    const hasGuide = item.body?.toLowerCase().includes("user guide") || item.assets.some((a) => a.name.includes("guide"));
+    const guide_url = hasGuide ? GUIDE_URL : null;
+
+    const notes = (item.body || "")
+      .split("\n")
+      .map((l) => l.replace(/^[-*•]\s*/, "").trim())
+      .filter((l) => l.length > 0 && !l.startsWith("#") && !l.startsWith("http"));
+
+    releases.push({
+      version,
+      date,
+      notes: notes.length > 0 ? notes : [item.name || version],
+      exe_url,
+      guide_url,
+    });
+  }
+
+  if (releases.length > 0) {
+    releases[0].label = "Latest";
+  }
+
+  return releases;
+}
+
+async function fetchReleases(): Promise<Release[]> {
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${REPO}/releases?per_page=30`,
+      {
+        next: { revalidate: 3600 },
+        headers: { Accept: "application/vnd.github+json" },
+      }
+    );
+
+    if (!res.ok) return FALLBACK_RELEASES;
+
+    const items: GitHubRelease[] = await res.json();
+    const parsed = parseGitHubReleases(items.filter((r) => !r.prerelease));
+    return parsed.length > 0 ? parsed : FALLBACK_RELEASES;
+  } catch {
+    return FALLBACK_RELEASES;
+  }
+}
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleDateString("en-GB", {
@@ -170,7 +116,11 @@ function fmt(iso: string) {
   });
 }
 
-export default function DownloadsPage() {
+export default async function DownloadsPage() {
+  const releases = await fetchReleases();
+  const latest = releases[0];
+  const older = releases.slice(1);
+
   return (
     <main className="shell" style={{ paddingBlock: "32px" }}>
       {/* Header */}
@@ -245,7 +195,7 @@ export default function DownloadsPage() {
             )}
             {latest.guide_url && (
               <a href={latest.guide_url} className="chip" style={{ fontSize: "0.85rem" }}>
-                User Guide (PDF)
+                User Guide
               </a>
             )}
           </div>

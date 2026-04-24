@@ -15,6 +15,7 @@ from .config import settings
 from .db import engine, get_optional_db
 from .repositories import access_requests, exporting, reporting, user_accounts
 from .routers import gds as gds_router
+from .routers import travelport_feedback as travelport_feedback_router
 
 LOG = logging.getLogger("api.http")
 
@@ -38,6 +39,11 @@ if settings.gzip_enabled:
     app.add_middleware(GZipMiddleware, minimum_size=settings.gzip_minimum_size)
 
 app.include_router(gds_router.router, prefix="/gds", tags=["GDS"])
+app.include_router(
+    travelport_feedback_router.router,
+    prefix="/travelport-agent",
+    tags=["Travelport Feedback"],
+)
 
 
 class AccessRequestCreateBody(BaseModel):
