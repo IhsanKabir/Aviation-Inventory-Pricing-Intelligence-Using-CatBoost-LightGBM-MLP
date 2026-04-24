@@ -1,12 +1,19 @@
 """
 routers/travelport_feedback.py - Desktop feedback endpoints
+
+Rate limiting: 10 POST requests per minute per IP (sliding-window, in-process).
+Cloud Run may run multiple instances so the limit is per-instance; good enough to
+block naive scripts without a Redis dependency.
 """
 
 from __future__ import annotations
 
+import threading
+import time
+from collections import defaultdict, deque
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from google.cloud import bigquery
 from pydantic import BaseModel, Field
 
@@ -14,6 +21,42 @@ from app.repositories import travelport_feedback as feedback_repo
 
 router = APIRouter()
 
+# ---------------------------------------------------------------------------
+# Rate limiter — sliding window, no external dependency
+# ---------------------------------------------------------------------------
+_RATE_LIMIT = 10       # max requests
+_RATE_WINDOW = 60.0    # per this many seconds
+_rl_lock = threading.Lock()
+_rl_buckets: dict[str, deque] = defaultdict(deque)
+
+
+def _client_ip(request: Request) -> str:
+    """Return the real client IP, respecting Cloud Run's X-Forwarded-For."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(ip: str) -> None:
+    """Raise 429 if the IP has exceeded _RATE_LIMIT requests in _RATE_WINDOW seconds."""
+    now = time.monotonic()
+    cutoff = now - _RATE_WINDOW
+    with _rl_lock:
+        bucket = _rl_buckets[ip]
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= _RATE_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Max {_RATE_LIMIT} feedback submissions per minute.",
+            )
+        bucket.append(now)
+
+
+# ---------------------------------------------------------------------------
+# BigQuery client factory
+# ---------------------------------------------------------------------------
 
 def get_bq_client() -> bigquery.Client:
     import os
@@ -21,6 +64,10 @@ def get_bq_client() -> bigquery.Client:
     project = os.environ.get("BIGQUERY_PROJECT_ID", "aeropulseintelligence")
     return bigquery.Client(project=project)
 
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
 
 class TravelportFeedbackCreate(BaseModel):
     category: str = Field(default="general", min_length=2, max_length=40)
@@ -36,12 +83,18 @@ class TravelportFeedbackCreate(BaseModel):
     context: dict[str, Any] | None = None
 
 
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
 @router.post("/feedback")
 async def create_feedback(
+    request: Request,
     payload: TravelportFeedbackCreate,
     client: bigquery.Client = Depends(get_bq_client),
 ):
     """Receive a feedback submission from the desktop GUI."""
+    _check_rate_limit(_client_ip(request))
     try:
         payload_dict = (
             payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
