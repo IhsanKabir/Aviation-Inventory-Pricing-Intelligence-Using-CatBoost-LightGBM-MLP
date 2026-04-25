@@ -61,7 +61,9 @@ function parseGitHubReleases(items: GitHubRelease[]): Release[] {
     const version = item.tag_name.startsWith("v") ? item.tag_name : `v${item.tag_name}`;
     const date = item.published_at.slice(0, 10);
 
-    const exeAsset = item.assets.find((a) => a.name.endsWith(".exe"));
+    const exeAsset = item.assets.find(
+      (a) => a.name.endsWith(".exe") || a.name.endsWith(".zip")
+    );
     const exe_url = exeAsset?.browser_download_url ?? null;
 
     const hasGuide = item.body?.toLowerCase().includes("user guide") || item.assets.some((a) => a.name.includes("guide"));
