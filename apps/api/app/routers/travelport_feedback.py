@@ -8,11 +8,49 @@ block naive scripts without a Redis dependency.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import smtplib
 import threading
 import time
+from email.mime.text import MIMEText
 
 LOG = logging.getLogger(__name__)
+
+_NOTIFY_TO = "ihsankabir999@gmail.com"
+_NOTIFY_FROM = "ihsankabir999@gmail.com"
+
+
+def _send_admin_email(row: dict) -> None:
+    """Fire-and-forget Gmail notification to admin. Silently skips if not configured."""
+    app_password = os.environ.get("GMAIL_NOTIFY_PASSWORD", "").strip()
+    if not app_password:
+        return
+    try:
+        context = {}
+        try:
+            context = json.loads(row.get("context_json") or "{}")
+        except Exception:
+            pass
+        user_email = context.get("user_email", "unknown")
+        body = (
+            f"Category : {row.get('category')}\n"
+            f"From     : {user_email}\n"
+            f"Version  : {row.get('app_version')}\n"
+            f"Device   : {row.get('device_name') or row.get('hostname')}\n\n"
+            f"Subject  : {row.get('subject')}\n\n"
+            f"{row.get('message')}\n"
+        )
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = f"[TravelportAuto Feedback] {row.get('subject', '')[:80]}"
+        msg["From"] = _NOTIFY_FROM
+        msg["To"] = _NOTIFY_TO
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as smtp:
+            smtp.login(_NOTIFY_FROM, app_password)
+            smtp.send_message(msg)
+    except Exception as exc:
+        LOG.warning("Admin email notification failed (non-critical): %s", exc)
 from collections import defaultdict, deque
 from typing import Any
 
@@ -108,7 +146,9 @@ async def create_feedback(
         payload_dict = (
             payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
         )
-        return feedback_repo.create_feedback(client, payload_dict)
+        row = feedback_repo.create_feedback(client, payload_dict)
+        threading.Thread(target=_send_admin_email, args=(row,), daemon=True).start()
+        return row
     except Exception as e:
         LOG.exception("feedback POST failed: %s", e)
         raise HTTPException(status_code=500, detail="Internal server error")
