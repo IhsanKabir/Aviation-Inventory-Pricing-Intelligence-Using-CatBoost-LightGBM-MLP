@@ -102,6 +102,5 @@ If the VM reboots:
 ## Operational continuity rules (unchanged)
 
 - Keep route-selection gate fixed: `beats_zero_folds`
-- Continue weekly workflow from `WEEKLY_MODEL_OPS_CHECKLIST.md`
+- Continue weekly model-ops workflow from the current project context and operations runbook.
 - Re-run comparative policy study only on trigger conditions
-

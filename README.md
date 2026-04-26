@@ -34,10 +34,9 @@ Current implemented scope:
 
 Core project decisions and operating policy live in:
 
+- [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) - Single new-chat handoff, current architecture snapshot, decisions, history, and update log
 - [PROJECT_DECISIONS.md](PROJECT_DECISIONS.md)
 - [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md)
-- [SYSTEM_IMPROVEMENT_ROADMAP.md](SYSTEM_IMPROVEMENT_ROADMAP.md) - Comprehensive improvement recommendations
-- [IMPROVEMENT_PRIORITIES.md](IMPROVEMENT_PRIORITIES.md) - Quick-win priorities and implementation order
 - [docs/WEB_PLATFORM_PLAN.md](docs/WEB_PLATFORM_PLAN.md)
 - [warehouse/bigquery/README.md](warehouse/bigquery/README.md)
 
