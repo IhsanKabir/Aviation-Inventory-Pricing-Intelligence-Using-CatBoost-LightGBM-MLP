@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -182,6 +185,41 @@ def _require_user_session(db: Session | None, x_user_session: str | None) -> dic
     return payload
 
 
+_TPA_TOKEN_PREFIX = "tpa."
+_TPA_TOKEN_TTL = 30 * 86400  # 30 days
+
+
+def _make_stateless_token(email: str, name: str | None, sub: str, secret: str) -> str:
+    payload_bytes = json.dumps(
+        {"email": email, "name": name, "sub": sub, "iat": int(time.time())},
+        separators=(",", ":"),
+    ).encode()
+    payload_b64 = base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode()
+    sig = hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+    return f"{_TPA_TOKEN_PREFIX}{payload_b64}.{sig}"
+
+
+def _verify_stateless_token(token: str, secret: str) -> dict | None:
+    if not token.startswith(_TPA_TOKEN_PREFIX):
+        return None
+    rest = token[len(_TPA_TOKEN_PREFIX):]
+    parts = rest.split(".", 1)
+    if len(parts) != 2:
+        return None
+    payload_b64, sig = parts
+    expected = hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        return None
+    try:
+        padding = (4 - len(payload_b64) % 4) % 4
+        data = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
+    except Exception:
+        return None
+    if time.time() - data.get("iat", 0) > _TPA_TOKEN_TTL:
+        return None
+    return data
+
+
 @app.get("/", include_in_schema=False)
 def root() -> RedirectResponse:
     return RedirectResponse(url="/docs", status_code=307)
@@ -305,8 +343,6 @@ def google_code_exchange(
             detail="Google sign-in is not configured on this server.",
         )
 
-    required_db = _require_access_request_db(db)
-
     # Exchange the auth code with Google
     token_payload = urllib.parse.urlencode({
         "grant_type": "authorization_code",
@@ -350,24 +386,33 @@ def google_code_exchange(
     if not email:
         raise HTTPException(status_code=400, detail="Google did not return an email address.")
 
-    try:
-        user = user_accounts.upsert_oauth_user(
-            required_db,
-            email=email,
-            full_name=userinfo.get("name"),
-            auth_provider="google",
-            provider_subject=userinfo.get("sub"),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    name = userinfo.get("name")
+    sub = userinfo.get("sub", "")
 
-    session_token, session_payload = user_accounts.create_session(
-        required_db,
-        user_id=user["user_id"],
-        user_agent=request.headers.get("user-agent"),
-        ip_address=request.client.host if request.client else None,
-    )
-    return {"user": user, "session_token": session_token, "session": session_payload}
+    # Prefer DB-backed session when a database is available; fall back to a
+    # stateless HMAC-signed token so sign-in works even without a SQL DB.
+    if db is not None:
+        try:
+            user = user_accounts.upsert_oauth_user(
+                db,
+                email=email,
+                full_name=name,
+                auth_provider="google",
+                provider_subject=sub,
+            )
+            session_token, session_payload = user_accounts.create_session(
+                db,
+                user_id=user["user_id"],
+                user_agent=request.headers.get("user-agent"),
+                ip_address=request.client.host if request.client else None,
+            )
+            return {"user": user, "session_token": session_token, "session": session_payload}
+        except Exception:
+            pass  # fall through to stateless path
+
+    session_token = _make_stateless_token(email, name, sub, client_secret)
+    user = {"email": email, "full_name": name, "user_id": None}
+    return {"user": user, "session_token": session_token, "session": {}}
 
 
 @app.get("/api/v1/user-auth/me")
@@ -375,6 +420,12 @@ def current_user(
     x_user_session: str | None = Header(default=None),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
+    if x_user_session and x_user_session.startswith(_TPA_TOKEN_PREFIX):
+        secret = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+        data = _verify_stateless_token(x_user_session, secret) if secret else None
+        if not data:
+            raise HTTPException(status_code=401, detail="Session token expired or invalid.")
+        return {"user": {"email": data["email"], "full_name": data.get("name"), "user_id": None}}
     user = _require_user_session(db, x_user_session)
     return {"user": user}
 
