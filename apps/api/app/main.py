@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import date
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -83,6 +88,13 @@ class UserOAuthLoginBody(BaseModel):
     full_name: str | None = None
     auth_provider: str
     provider_subject: str | None = None
+
+
+class GoogleCodeExchangeBody(BaseModel):
+    code: str
+    code_verifier: str
+    redirect_uri: str
+    client_id: str
 
 
 @app.on_event("startup")
@@ -261,6 +273,94 @@ def oauth_login_user(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    session_token, session_payload = user_accounts.create_session(
+        required_db,
+        user_id=user["user_id"],
+        user_agent=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"user": user, "session_token": session_token, "session": session_payload}
+
+
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
+
+@app.post("/api/v1/user-auth/google-code-exchange")
+def google_code_exchange(
+    body: GoogleCodeExchangeBody,
+    request: Request,
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    """Exchange a Google OAuth auth code for a TravelportAuto session token.
+
+    The desktop sends the raw auth code and PKCE verifier; this endpoint
+    completes the token exchange with Google using the server-stored
+    GOOGLE_CLIENT_SECRET so the secret never travels to the client.
+    """
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+    if not client_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="Google sign-in is not configured on this server.",
+        )
+
+    required_db = _require_access_request_db(db)
+
+    # Exchange the auth code with Google
+    token_payload = urllib.parse.urlencode({
+        "grant_type": "authorization_code",
+        "code": body.code,
+        "redirect_uri": body.redirect_uri,
+        "client_id": body.client_id,
+        "client_secret": client_secret,
+        "code_verifier": body.code_verifier,
+    }).encode("utf-8")
+    token_req = urllib.request.Request(
+        _GOOGLE_TOKEN_URL,
+        data=token_payload,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urllib.request.urlopen(token_req, timeout=30) as resp:
+            token_data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        raise HTTPException(status_code=400, detail=f"Google token exchange failed: {raw[:300]}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Google token exchange error: {exc}")
+
+    access_token = token_data.get("access_token", "")
+    if not access_token:
+        raise HTTPException(status_code=502, detail="Google did not return an access token.")
+
+    # Fetch userinfo
+    userinfo_req = urllib.request.Request(
+        _GOOGLE_USERINFO_URL,
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    try:
+        with urllib.request.urlopen(userinfo_req, timeout=20) as resp:
+            userinfo = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Google userinfo fetch failed: {exc}")
+
+    email = userinfo.get("email", "")
+    if not email:
+        raise HTTPException(status_code=400, detail="Google did not return an email address.")
+
+    try:
+        user = user_accounts.upsert_oauth_user(
+            required_db,
+            email=email,
+            full_name=userinfo.get("name"),
+            auth_provider="google",
+            provider_subject=userinfo.get("sub"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     session_token, session_payload = user_accounts.create_session(
         required_db,
         user_id=user["user_id"],
