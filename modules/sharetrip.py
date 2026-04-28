@@ -16,6 +16,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from core.source_switches import disabled_source_response, source_enabled, source_switch_status
 from modules.bdfare import fetch_flights_for_airline as fetch_from_bdfare
 from modules.requester import Requester, RequesterError
 
@@ -56,9 +57,11 @@ ENV_INIT_RETRY_SLEEP_SEC = "SHARETRIP_INIT_RETRY_SLEEP_SEC"
 ENV_SOURCE_POLICY = "SHARETRIP_SOURCE_POLICY"
 ENV_BDFARE_AIRLINES = "SHARETRIP_BDFARE_AIRLINES"
 ENV_SOURCE_OVERRIDES = "SHARETRIP_SOURCE_OVERRIDES"
+ENV_ENABLED = "SHARETRIP_ENABLED"
 
 
 def _safe_int(v: Any, default: Optional[int] = None) -> Optional[int]:
+    
     try:
         if v in (None, ""):
             return default
@@ -713,6 +716,9 @@ def fetch_flights_for_airline(
     cookies_path: Optional[str] = None,
     proxy_url: Optional[str] = None,
 ) -> Dict[str, Any]:
+    if not source_enabled("sharetrip"):
+        return disabled_source_response("sharetrip")
+
     policy = _sharetrip_source_policy(airline_code)
     airline = str(airline_code or "").upper().strip()
     can_try_bdfare = _bdfare_airline_scope_allows(airline)
@@ -839,6 +845,30 @@ def fetch_flights(
         chd=chd,
         inf=inf,
     )
+
+
+def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
+    from core.source_health import ok, warn
+
+    status = source_switch_status("sharetrip")
+    if not status.get("enabled"):
+        return warn(
+            "sharetrip",
+            message="; ".join(status.get("reasons") or []) or "ShareTrip connector is disabled",
+            blocking=False,
+            configured_enabled=False,
+        )
+
+    return ok(
+        "sharetrip",
+        message="OTA connector configured; live rate-limit/session health is measured per extraction attempt",
+        api_base=API_BASE,
+        has_access_token=bool(os.getenv(ENV_ACCESS_TOKEN) or DEFAULT_ACCESS_TOKEN),
+    )
+
+
+def check_session(*, dry_run: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    return check_source_health(dry_run=dry_run, **kwargs)
 
 
 def cli_main():

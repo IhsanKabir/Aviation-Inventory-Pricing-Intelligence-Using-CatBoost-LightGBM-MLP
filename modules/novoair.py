@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
+from core.source_switches import disabled_source_response, source_enabled
 from modules.requester import Requester
 from modules.novoair_parser import extract_offers_from_response
 
@@ -411,7 +412,24 @@ def fetch_flights(
     Unified contract for run_all.py:
     { raw, originalResponse, rows, ok }
     """
+    if not source_enabled("novoair"):
+        return disabled_source_response("novoair")
+
     return novo_search(origin, destination, date, cabin=cabin, adt=adt, chd=chd, inf=inf)
+
+
+def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
+    from core.source_health import ok
+
+    return ok(
+        "novoair",
+        message="direct web connector configured; live health is measured per extraction attempt",
+        endpoint=SEARCH_URL,
+    )
+
+
+def check_session(*, dry_run: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    return check_source_health(dry_run=dry_run, **kwargs)
 
 
 def cli_main():

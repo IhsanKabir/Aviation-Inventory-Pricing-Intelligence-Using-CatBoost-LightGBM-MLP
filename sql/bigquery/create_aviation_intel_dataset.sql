@@ -4,5 +4,7 @@
 
 CREATE SCHEMA IF NOT EXISTS `aeropulseintelligence.aviation_intel`
 OPTIONS (
-  description = 'Curated aviation intelligence warehouse for operational analytics, BI, and thesis reporting'
+  description = 'Bounded aviation intelligence hot cache for hosted reads, BI, and current operational reporting',
+  default_partition_expiration_days = 35,
+  max_time_travel_hours = 48
 );

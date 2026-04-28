@@ -598,28 +598,39 @@ type QueryValue =
   | undefined
   | Array<string | number | boolean | null | undefined>;
 
-export function getApiBaseUrl(): string {
-  const candidate =
-    process.env.API_BASE_URL ||
-    process.env.NEXT_PUBLIC_API_BASE_URL ||
-    "http://127.0.0.1:8000";
+const LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
 
-  const normalized = candidate.trim().replace(/\s+/g, "");
-  return normalized.replace(/\/+$/, "");
+function normalizeApiBaseUrl(raw: string): string {
+  return raw.trim().replace(/\s+/g, "").replace(/\/+$/, "");
+}
+
+function getConfiguredApiBaseUrl(): string | null {
+  const candidate = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "";
+  const normalized = normalizeApiBaseUrl(candidate);
+  return normalized || null;
+}
+
+export function getApiBaseUrl(): string {
+  return getConfiguredApiBaseUrl() ?? LOCAL_API_BASE_URL;
 }
 
 const DEFAULT_FETCH_TIMEOUT_MS = 12000;
 const SNAPSHOT_REVALIDATE_SECONDS = 60 * 60;
 
-async function fetchJson<T>(path: string): Promise<FetchResult<T>> {
-  return fetchJsonWithRevalidate<T>(path, 60);
-}
-
 async function fetchJsonWithRevalidate<T>(path: string, revalidateSeconds: number): Promise<FetchResult<T>> {
+  const configuredBaseUrl = getConfiguredApiBaseUrl();
+  if (!configuredBaseUrl && process.env.NODE_ENV === "production") {
+    return {
+      ok: false,
+      data: null,
+      error: "API_BASE_URL or NEXT_PUBLIC_API_BASE_URL is not configured"
+    };
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DEFAULT_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(`${getApiBaseUrl()}${path}`, {
+    const response = await fetch(`${configuredBaseUrl ?? LOCAL_API_BASE_URL}${path}`, {
       next: { revalidate: revalidateSeconds },
       signal: controller.signal
     });

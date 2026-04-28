@@ -37,15 +37,19 @@ function Load-ScheduleDefaults {
     catch {
         return @{}
     }
+    $timingGlobal = $schedule.scheduler_timing.global
     $repeatMinutes = 360
-    if ($schedule.task_windows.ingestion.repeat_minutes) {
+    if ($timingGlobal.repeat_minutes) {
+        $repeatMinutes = [int]$timingGlobal.repeat_minutes
+    }
+    elseif ($schedule.task_windows.ingestion.repeat_minutes) {
         $repeatMinutes = [int]$schedule.task_windows.ingestion.repeat_minutes
     }
     elseif ($schedule.auto_run_interval_hours) {
         $repeatMinutes = [int]$schedule.auto_run_interval_hours * 60
     }
     return @{
-        StartTime = [string]($schedule.task_windows.ingestion.start_time)
+        StartTime = if ($timingGlobal.start_time) { [string]$timingGlobal.start_time } else { [string]($schedule.task_windows.ingestion.start_time) }
         RepeatMinutes = $repeatMinutes
     }
 }

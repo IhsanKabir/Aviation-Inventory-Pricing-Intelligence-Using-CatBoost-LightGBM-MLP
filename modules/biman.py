@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Any, Dict
 
+from core.source_switches import disabled_source_response, source_enabled
 from modules.requester import Requester
 from modules import parser as parser_mod
 
@@ -233,6 +234,9 @@ def fetch_flights(
     MUST return a dict with keys:
     { raw, originalResponse, rows, ok }
     """
+    if not source_enabled("biman"):
+        return disabled_source_response("biman")
+
     return biman_search(
         origin,
         destination,
@@ -245,6 +249,20 @@ def fetch_flights(
         return_date=return_date,
         verbose=False,
     )
+
+
+def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
+    from core.source_health import ok
+
+    return ok(
+        "biman",
+        message="direct GraphQL connector configured; live health is measured per extraction attempt",
+        endpoint=GRAPHQL_URL,
+    )
+
+
+def check_session(*, dry_run: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    return check_source_health(dry_run=dry_run, **kwargs)
 
 
 def cli_main():

@@ -8,11 +8,13 @@ import signal
 import subprocess
 import sys
 import uuid
+import copy
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
+from core.source_switches import DEFAULT_SOURCE_SWITCHES_FILE, load_source_switches, source_switch_status
 from db import DATABASE_URL as DEFAULT_DATABASE_URL
 
 
@@ -22,6 +24,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 SCHEDULE_FILE = Path("config/schedule.json")
+AIRLINES_FILE = Path("config/airlines.json")
 RUN_ALL_DEFAULT_DATES_FILE = Path("config/dates.json")
 REPO_ROOT = Path(__file__).resolve().parent
 REPORTS_ROOT = REPO_ROOT / "output" / "reports"
@@ -29,6 +32,14 @@ RECOVERY_STATUS_FILE = REPORTS_ROOT / "accumulation_recovery_latest.json"
 CYCLE_STATE_FILE = REPORTS_ROOT / "accumulation_cycle_latest.json"
 HEARTBEAT_STATUS_FILE = REPORTS_ROOT / "run_all_accumulation_status_latest.json"
 PARALLEL_STATUS_FILE = REPORTS_ROOT / "scrape_parallel_latest.json"
+TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+def _env_flag_enabled(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in TRUTHY_ENV_VALUES
 
 
 def parse_args():
@@ -54,6 +65,11 @@ def parse_args():
     parser.add_argument("--date-offsets", help="Comma-separated day offsets from today")
     parser.add_argument("--dates-file", help="Optional dates config file path")
     parser.add_argument("--schedule-file", default=str(SCHEDULE_FILE), help="Optional scheduler config file for auto-run date defaults")
+    parser.add_argument(
+        "--source-switches-file",
+        default=str(DEFAULT_SOURCE_SWITCHES_FILE),
+        help="JSON file with runtime on/off switches for supplier/source modules.",
+    )
     parser.add_argument("--cabin")
     parser.add_argument("--adt", type=int, default=1, help="Adult passenger count for accumulation requests (default: 1)")
     parser.add_argument("--chd", type=int, default=0, help="Child passenger count for accumulation requests (default: 0)")
@@ -74,8 +90,8 @@ def parse_args():
     parser.add_argument(
         "--sharetrip-max-workers",
         type=int,
-        default=int(os.getenv("PARALLEL_SHARETRIP_MAX_WORKERS", "3")),
-        help="Max concurrent workers for ShareTrip-backed airlines (default: 3, override via PARALLEL_SHARETRIP_MAX_WORKERS env).",
+        default=int(os.getenv("PARALLEL_SHARETRIP_MAX_WORKERS", "1")),
+        help="Max concurrent workers for ShareTrip-backed airlines (default: 1, override via PARALLEL_SHARETRIP_MAX_WORKERS env).",
     )
     parser.add_argument(
         "--sharetrip-cooldown-sec",
@@ -112,6 +128,15 @@ def parse_args():
         help="Optional shared cycle UUID. Reuse this to resume an interrupted accumulation cycle.",
     )
     parser.add_argument("--profile-runtime", action="store_true", help="Enable runtime profiling output from run_all")
+    parser.add_argument("--skip-preflight", action="store_true", help="Skip local connector/session/capture preflight checks.")
+    parser.add_argument("--preflight-strict", action="store_true", help="Treat blocking preflight findings as a pipeline failure.")
+    parser.add_argument("--fail-on-extraction-gate", action="store_true", help="Return non-zero when extraction health gate is FAIL.")
+    parser.add_argument("--retry-missing-airlines", action="store_true", help="Run one same-cycle retry for airlines missing from extraction health coverage.")
+    parser.add_argument(
+        "--extraction-attempt-output-dir",
+        default=os.getenv("EXTRACTION_ATTEMPT_OUTPUT_DIR", "output/reports"),
+        help="Directory for extraction health reports.",
+    )
     parser.add_argument(
         "--skip-scrape",
         "--skip-accumulation",
@@ -220,8 +245,8 @@ def parse_args():
     parser.add_argument(
         "--bigquery-sync-lookback-days",
         type=int,
-        default=max(1, int(os.getenv("BIGQUERY_SYNC_LOOKBACK_DAYS", "7"))),
-        help="Rolling UTC capture-date window exported to BigQuery after a successful run (default: 7 days).",
+        default=max(1, int(os.getenv("BIGQUERY_SYNC_LOOKBACK_DAYS", "2"))),
+        help="Rolling UTC capture-date window exported to BigQuery after a successful run (default: 2 days).",
     )
     parser.add_argument(
         "--bigquery-sync-output-dir",
@@ -237,6 +262,18 @@ def parse_args():
         "--bigquery-dataset",
         default=os.getenv("BIGQUERY_DATASET", "").strip() or None,
         help="BigQuery dataset for automatic warehouse sync.",
+    )
+    parser.add_argument(
+        "--bigquery-sync-enabled",
+        action="store_true",
+        default=_env_flag_enabled("BIGQUERY_SYNC_ENABLED"),
+        help="Enable automatic BigQuery sync after successful runs. Set BIGQUERY_SYNC_ENABLED=1 for scheduled use.",
+    )
+    parser.add_argument(
+        "--bigquery-load-mode",
+        choices=["append", "partition-refresh", "replace"],
+        default=os.getenv("BIGQUERY_LOAD_MODE", "partition-refresh").strip() or "partition-refresh",
+        help="BigQuery load behavior for automatic sync (default: partition-refresh).",
     )
     parser.add_argument(
         "--fail-on-bigquery-sync-error",
@@ -639,6 +676,37 @@ def _collect_expected_airlines_from_routes(routes_file: Path) -> list[str]:
     return sorted(out)
 
 
+def _collect_runtime_enabled_airlines(airlines_file: Path, source_switches_file: str | Path | None) -> list[str]:
+    if not airlines_file.exists():
+        return []
+    try:
+        obj = json.loads(airlines_file.read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        LOG.warning("Failed to parse airlines file %s: %s", airlines_file, exc)
+        return []
+    if not isinstance(obj, list):
+        return []
+
+    try:
+        switches = load_source_switches(source_switches_file)
+    except Exception as exc:
+        LOG.warning("Failed to parse source switches file %s: %s", source_switches_file, exc)
+        switches = {}
+
+    out = []
+    for row in obj:
+        if not isinstance(row, dict) or not row.get("enabled"):
+            continue
+        code = str(row.get("code") or "").upper().strip()
+        module_name = str(row.get("module") or "").strip()
+        if not code or not module_name:
+            continue
+        if not source_switch_status(module_name, switches=switches).get("enabled"):
+            continue
+        out.append(code)
+    return sorted(dict.fromkeys(out))
+
+
 def _collect_observed_airline_row_counts(combined_csv: Path) -> dict:
     counts = {}
     if not combined_csv.exists():
@@ -695,7 +763,7 @@ def _collect_observed_airline_row_counts_db(*, db_url: str, cycle_id: str | None
         return {}
 
 
-def _compute_all_airline_coverage(plan: dict, *, db_url: str) -> dict:
+def _compute_all_airline_coverage(plan: dict, *, db_url: str, source_switches_file: str | Path | None = None) -> dict:
     gate = plan.get("coverage_gate") if isinstance(plan.get("coverage_gate"), dict) else {}
     enabled = bool(gate.get("enabled"))
 
@@ -711,6 +779,10 @@ def _compute_all_airline_coverage(plan: dict, *, db_url: str) -> dict:
     min_rows = max(1, min_rows)
 
     expected = _collect_expected_airlines_from_routes(routes_file)
+    airlines_file = REPO_ROOT / AIRLINES_FILE
+    runtime_enabled = set(_collect_runtime_enabled_airlines(airlines_file, source_switches_file))
+    if runtime_enabled:
+        expected = [airline for airline in expected if airline in runtime_enabled]
     cycle_id = _read_latest_cycle_id()
     observed_counts = _collect_observed_airline_row_counts_db(db_url=db_url, cycle_id=cycle_id)
     observed_source = "db_cycle"
@@ -733,6 +805,7 @@ def _compute_all_airline_coverage(plan: dict, *, db_url: str) -> dict:
     return {
         "enabled": enabled,
         "routes_file": str(routes_file),
+        "source_switches_file": str(source_switches_file or DEFAULT_SOURCE_SWITCHES_FILE),
         "minimum_rows_per_airline": min_rows,
         "expected_airlines": expected,
         "observed_row_counts": observed_counts,
@@ -1199,6 +1272,8 @@ def build_scrape_cmd(args):
             str(args.parallel_airlines),
             "--output-dir",
             args.report_output_dir,
+            "--extraction-attempt-output-dir",
+            args.extraction_attempt_output_dir,
         ]
         if args.quick:
             cmd.append("--quick")
@@ -1211,6 +1286,7 @@ def build_scrape_cmd(args):
         _add_arg(cmd, "--date-offsets", args.date_offsets)
         _add_arg(cmd, "--dates-file", args.dates_file)
         _add_arg(cmd, "--schedule-file", args.schedule_file)
+        _add_arg(cmd, "--source-switches-file", args.source_switches_file)
         _add_arg(cmd, "--trip-plan-mode", args.trip_plan_mode)
         _add_arg(cmd, "--cycle-id", args.cycle_id)
         _add_arg(cmd, "--cabin", args.cabin)
@@ -1246,6 +1322,7 @@ def build_scrape_cmd(args):
     _add_arg(cmd, "--date-offsets", args.date_offsets)
     _add_arg(cmd, "--dates-file", args.dates_file)
     _add_arg(cmd, "--schedule-file", args.schedule_file)
+    _add_arg(cmd, "--source-switches-file", args.source_switches_file)
     _add_arg(cmd, "--trip-plan-mode", args.trip_plan_mode)
     _add_arg(cmd, "--cycle-id", args.cycle_id)
     _add_arg(cmd, "--cabin", args.cabin)
@@ -1260,6 +1337,7 @@ def build_scrape_cmd(args):
     _add_arg(cmd, "--limit-routes", args.limit_routes)
     _add_arg(cmd, "--limit-dates", args.limit_dates)
     _add_arg(cmd, "--query-timeout-seconds", args.query_timeout_seconds)
+    _add_arg(cmd, "--extraction-attempt-output-dir", args.extraction_attempt_output_dir)
     if args.profile_runtime:
         cmd.append("--profile-runtime")
         _add_arg(cmd, "--profile-output-dir", args.report_output_dir)
@@ -1377,7 +1455,15 @@ def build_intelligence_hub_cmd(args):
 
 
 def _bigquery_sync_is_configured(args) -> bool:
-    return bool((args.bigquery_project_id or "").strip() and (args.bigquery_dataset or "").strip())
+    return bool(
+        getattr(args, "bigquery_sync_enabled", False)
+        and (args.bigquery_project_id or "").strip()
+        and (args.bigquery_dataset or "").strip()
+    )
+
+
+def _extraction_gate_allows_bigquery(status: str | None) -> bool:
+    return str(status or "UNKNOWN").upper() != "FAIL"
 
 
 def _bigquery_sync_window(args) -> tuple[str, str]:
@@ -1402,7 +1488,63 @@ def build_bigquery_sync_cmd(args) -> list[str]:
         str(args.bigquery_project_id),
         "--dataset",
         str(args.bigquery_dataset),
+        "--load-mode",
+        args.bigquery_load_mode,
     ]
+    return cmd
+
+
+def build_preflight_cmd(args):
+    cmd = [
+        args.python_exe,
+        str(REPO_ROOT / "tools" / "pre_flight_session_check.py"),
+        "--output-dir",
+        args.report_output_dir,
+        "--source-switches-file",
+        str(args.source_switches_file),
+        "--dry-run",
+    ]
+    if args.preflight_strict:
+        cmd.append("--strict")
+    return cmd
+
+
+def _load_extraction_health(output_dir: str | Path) -> dict:
+    path = Path(output_dir) / "extraction_health_latest.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "summary": {
+                "status": "UNKNOWN",
+                "status_reasons": [f"extraction health report missing or unreadable: {path}"],
+            }
+        }
+    if not isinstance(payload, dict):
+        return {"summary": {"status": "UNKNOWN", "status_reasons": ["extraction health report is not a JSON object"]}}
+    if "summary" not in payload:
+        payload = {"summary": payload}
+    return payload
+
+
+def _build_missing_airline_retry_cmd(args, missing_airlines: list[str]) -> list[str]:
+    retry_args = copy.copy(args)
+    retry_args.airline = ",".join(missing_airlines)
+    retry_args.parallel_airlines = 1
+    return build_scrape_cmd(retry_args)
+
+
+def build_extraction_health_report_cmd(args, expected_airlines: list[str] | None = None) -> list[str]:
+    cmd = [
+        args.python_exe,
+        str(REPO_ROOT / "tools" / "extraction_health_report.py"),
+        "--cycle-id",
+        str(args.cycle_id),
+        "--output-dir",
+        args.extraction_attempt_output_dir,
+    ]
+    if expected_airlines:
+        cmd.extend(["--expected-airlines", ",".join(expected_airlines)])
     return cmd
 
 
@@ -1422,10 +1564,20 @@ def main():
     before_count = _count_column_events(args.db_url)
 
     pipeline_rc = 0
+    extraction_gate_status = "UNKNOWN"
+    extraction_gate_summary: dict = {}
 
     if not args.skip_scrape:
         if not args.cycle_id:
             args.cycle_id = str(uuid.uuid4())
+        if not args.skip_preflight:
+            preflight_rc = _run_step("preflight_session_check", build_preflight_cmd(args))
+            if preflight_rc != 0:
+                pipeline_rc = preflight_rc
+                if args.fail_fast or args.preflight_strict:
+                    return pipeline_rc
+        else:
+            LOG.info("Skipping preflight session/source check by request.")
         resolved_scrape_dates = _resolve_scrape_dates_for_log(args)
         LOG.info("Resolved accumulation dates (%d): %s", len(resolved_scrape_dates), resolved_scrape_dates)
         LOG.info("Accumulation passenger mix: ADT=%d CHD=%d INF=%d", args.adt, args.chd, args.inf)
@@ -1457,8 +1609,48 @@ def main():
             pipeline_rc = rc
             if args.fail_fast:
                 return pipeline_rc
+        health_payload = _load_extraction_health(args.extraction_attempt_output_dir)
+        extraction_gate_summary = health_payload.get("summary") or {}
+        extraction_gate_status = str(extraction_gate_summary.get("status") or "UNKNOWN").upper()
+        missing_airlines = list(extraction_gate_summary.get("missing_airlines") or [])
+        if args.retry_missing_airlines and rc == 0 and missing_airlines:
+            expected_airlines = list(extraction_gate_summary.get("expected_airlines") or [])
+            retry_cmd = _build_missing_airline_retry_cmd(args, missing_airlines)
+            LOG.warning(
+                "Extraction health is missing airlines; retrying same cycle once: %s",
+                ",".join(missing_airlines),
+            )
+            retry_rc = _run_step("retry_missing_airlines", retry_cmd)
+            if retry_rc != 0:
+                pipeline_rc = retry_rc or pipeline_rc
+                if args.fail_fast:
+                    return pipeline_rc
+            report_rc = _run_step("extraction_health_report", build_extraction_health_report_cmd(args, expected_airlines))
+            if report_rc not in (0, 2):
+                pipeline_rc = report_rc or pipeline_rc
+                if args.fail_fast:
+                    return pipeline_rc
+            health_payload = _load_extraction_health(args.extraction_attempt_output_dir)
+            extraction_gate_summary = health_payload.get("summary") or {}
+            extraction_gate_status = str(extraction_gate_summary.get("status") or "UNKNOWN").upper()
+        LOG.info(
+            "extraction_gate status=%s attempts=%s failures=%s manual=%s retry=%s reasons=%s",
+            extraction_gate_status,
+            extraction_gate_summary.get("attempt_count"),
+            extraction_gate_summary.get("failure_count"),
+            extraction_gate_summary.get("manual_action_required_count"),
+            extraction_gate_summary.get("retry_recommended_count"),
+            "; ".join(extraction_gate_summary.get("status_reasons") or []) or "-",
+        )
+        if extraction_gate_status == "FAIL" and args.fail_on_extraction_gate:
+            pipeline_rc = pipeline_rc or 2
+            if args.fail_fast:
+                return pipeline_rc
     else:
         LOG.info("Skipping accumulation step.")
+        health_payload = _load_extraction_health(args.extraction_attempt_output_dir)
+        extraction_gate_summary = health_payload.get("summary") or {}
+        extraction_gate_status = str(extraction_gate_summary.get("status") or "UNKNOWN").upper()
 
     if not args.skip_reports:
         rc = _run_step("reports", build_report_cmd(args))
@@ -1492,16 +1684,17 @@ def main():
             if args.fail_fast:
                 return pipeline_rc
 
-    if pipeline_rc == 0 and not args.skip_bigquery_sync:
+    if pipeline_rc == 0 and _extraction_gate_allows_bigquery(extraction_gate_status) and not args.skip_bigquery_sync:
         if _bigquery_sync_is_configured(args):
             start_date, end_date = _bigquery_sync_window(args)
             LOG.info(
-                "Automatic BigQuery sync enabled: project=%s dataset=%s window=%s..%s output_dir=%s",
+                "Automatic BigQuery sync enabled: project=%s dataset=%s window=%s..%s output_dir=%s load_mode=%s",
                 args.bigquery_project_id,
                 args.bigquery_dataset,
                 start_date,
                 end_date,
                 args.bigquery_sync_output_dir,
+                args.bigquery_load_mode,
             )
             rc = _run_step("bigquery_sync", build_bigquery_sync_cmd(args))
             if rc != 0:
@@ -1516,9 +1709,12 @@ def main():
                         rc,
                     )
         else:
-            LOG.info(
-                "Skipping automatic BigQuery sync because BIGQUERY project/dataset are not configured."
-            )
+            if not args.bigquery_sync_enabled:
+                LOG.info("Skipping automatic BigQuery sync because BIGQUERY_SYNC_ENABLED=1 is not set.")
+            else:
+                LOG.info("Skipping automatic BigQuery sync because BigQuery project/dataset are not configured.")
+    elif extraction_gate_status == "FAIL" and not args.skip_bigquery_sync:
+        LOG.warning("Skipping automatic BigQuery sync because extraction gate is FAIL.")
     elif args.skip_bigquery_sync:
         LOG.info("Skipping automatic BigQuery sync by request.")
 
@@ -1528,7 +1724,11 @@ def main():
 
     route_audit_path = _resolve_route_audit_report_path(args.report_output_dir)
     _log_per_airline_row_counts(args.report_output_dir, db_url=args.db_url)
-    coverage = _compute_all_airline_coverage(execution_plan, db_url=args.db_url)
+    coverage = _compute_all_airline_coverage(
+        execution_plan,
+        db_url=args.db_url,
+        source_switches_file=args.source_switches_file,
+    )
     if execution_plan and coverage.get("enabled"):
         LOG.info(
             "all_airline_coverage expected=%d covered=%d missing=%d pct=%.2f pass=%s",

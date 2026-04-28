@@ -430,7 +430,13 @@ export function RouteScopeControls({
       return exactRouteMatch;
     }
     return false;
-  }, [airportCodesAreValid, exactRouteMatch, normalizedDestination, normalizedOrigin]);
+  }, [
+    airportCodesAreValid,
+    exactRouteMatch,
+    normalizedDestination,
+    normalizedOrigin,
+    normalizedSelectedRoutePairs.length,
+  ]);
   const availabilityScopeReady = useMemo(() => {
     if (!accessGranted || !airportCodesAreValid) {
       return false;

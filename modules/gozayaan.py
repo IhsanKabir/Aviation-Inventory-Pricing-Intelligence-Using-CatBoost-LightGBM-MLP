@@ -29,6 +29,8 @@ from urllib.request import Request, urlopen
 import uuid
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from core.source_switches import disabled_source_response, source_enabled, source_switch_status
+
 try:
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import padding
@@ -1479,6 +1481,29 @@ def _capture_result(saved_capture: Dict[str, Any], *, airline_code: str) -> Dict
     rows = list(saved_capture.get("rows") or [])
     payload_items = saved_capture.get("payload_items")
     summary = saved_capture.get("summary") or {}
+    from core.source_health import capture_is_stale, max_capture_age_hours
+
+    staleness = capture_is_stale(
+        generated_at=summary.get("generated_at_utc") or summary.get("captured_at_utc"),
+        path=saved_capture.get("summary_path"),
+        max_age_hours=max_capture_age_hours("GOZAYAAN_MAX_CAPTURE_AGE_HOURS"),
+    )
+    if staleness.get("stale"):
+        return {
+            "raw": {
+                "source": "gozayaan_capture",
+                "airline": str(airline_code).upper(),
+                "capture_summary_path": saved_capture.get("summary_path"),
+                "capture_generated_at": summary.get("generated_at_utc"),
+                "capture_age_hours": staleness.get("age_hours"),
+                "max_capture_age_hours": staleness.get("max_age_hours"),
+                "error": "stale_capture",
+                "hint": "Saved Gozayaan capture is stale. Refresh the browser/HAR capture before retrying.",
+            },
+            "originalResponse": None,
+            "rows": [],
+            "ok": False,
+        }
     return {
         "raw": {
             "source": "gozayaan_capture",
@@ -1512,6 +1537,9 @@ def fetch_flights_for_airline(
     Unified run_all.py contract:
     { raw, originalResponse, rows, ok }
     """
+    if not source_enabled("gozayaan"):
+        return disabled_source_response("gozayaan")
+
     search_payload = build_search_payload(
         origin=origin,
         destination=destination,
@@ -1963,6 +1991,33 @@ def fetch_flights_for_airline(
     out["ok"] = True
     _clear_rate_limit_state()
     return out
+
+
+def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
+    from core.source_health import ok, warn
+
+    status = source_switch_status("gozayaan")
+    if not status.get("enabled"):
+        return warn(
+            "gozayaan",
+            message="; ".join(status.get("reasons") or []) or "GoZayaan connector is disabled",
+            blocking=False,
+            configured_enabled=False,
+        )
+
+    token_cache = _token_cache_file()
+    return ok(
+        "gozayaan",
+        message="token/session connector configured; token freshness and capture fallback are measured per extraction attempt",
+        source_mode=_source_mode(),
+        token_cache_file=token_cache,
+        token_cache_exists=Path(token_cache).exists(),
+        manual_action_required=True,
+    )
+
+
+def check_session(*, dry_run: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    return check_source_health(dry_run=dry_run, **kwargs)
 
 
 def cli_main():

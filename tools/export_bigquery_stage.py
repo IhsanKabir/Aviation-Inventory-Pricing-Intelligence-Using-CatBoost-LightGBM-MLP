@@ -21,6 +21,10 @@ from core.runtime_config import get_database_url
 
 
 REPORTS_ROOT = REPO_ROOT / "output" / "reports"
+LOAD_MODE_PARTITION_REFRESH = "partition-refresh"
+LOAD_MODE_APPEND = "append"
+LOAD_MODE_REPLACE = "replace"
+LOAD_MODES = {LOAD_MODE_PARTITION_REFRESH, LOAD_MODE_APPEND, LOAD_MODE_REPLACE}
 PREDICTION_EVAL_RE = re.compile(r"^prediction_eval_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
 PREDICTION_NEXT_RE = re.compile(r"^prediction_next_day_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
 PREDICTION_ROUTE_EVAL_RE = re.compile(r"^prediction_eval_by_route_(?P<target>.+)_(?P<stamp>\d{8}_\d{6})\.csv$")
@@ -62,6 +66,56 @@ def _parse_tables(raw: str) -> list[str]:
             "fact_backtest_split",
         ]
     return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+DIMENSION_TABLES = {"dim_airline", "dim_route"}
+
+PARTITION_REFRESH_COLUMNS = {
+    "fact_cycle_run": ("cycle_completed_at_utc", "TIMESTAMP"),
+    "fact_offer_snapshot": ("captured_at_utc", "TIMESTAMP"),
+    "fact_change_event": ("report_day", "DATE"),
+    "fact_penalty_snapshot": ("captured_at_utc", "TIMESTAMP"),
+    "fact_tax_snapshot": ("captured_at_utc", "TIMESTAMP"),
+    "fact_forecast_bundle": ("bundle_created_at_utc", "TIMESTAMP"),
+    "fact_forecast_model_eval": ("bundle_created_at_utc", "TIMESTAMP"),
+    "fact_forecast_route_eval": ("bundle_created_at_utc", "TIMESTAMP"),
+    "fact_forecast_route_winner": ("bundle_created_at_utc", "TIMESTAMP"),
+    "fact_forecast_next_day": ("predicted_for_day", "DATE"),
+    "fact_backtest_eval": ("bundle_created_at_utc", "TIMESTAMP"),
+    "fact_backtest_route_winner": ("bundle_created_at_utc", "TIMESTAMP"),
+    "fact_backtest_split": ("bundle_created_at_utc", "TIMESTAMP"),
+}
+
+
+def _parse_export_window(start_date_raw: str, end_date_raw: str) -> tuple[date, date, str, str]:
+    start_day = date.fromisoformat(start_date_raw)
+    end_day = date.fromisoformat(end_date_raw)
+    if end_day <= start_day:
+        raise ValueError("--end-date must be after --start-date")
+    start_ts = f"{start_day.isoformat()}T00:00:00+00:00"
+    end_ts = f"{end_day.isoformat()}T00:00:00+00:00"
+    return start_day, end_day, start_ts, end_ts
+
+
+def _effective_load_mode(table_name: str, load_mode: str, replace: bool = False) -> str:
+    if replace or load_mode == LOAD_MODE_REPLACE:
+        return LOAD_MODE_REPLACE
+    if load_mode == LOAD_MODE_PARTITION_REFRESH and table_name in DIMENSION_TABLES:
+        return LOAD_MODE_REPLACE
+    return load_mode
+
+
+def _build_partition_delete_sql(project_id: str, dataset: str, table_name: str) -> str:
+    column_info = PARTITION_REFRESH_COLUMNS.get(table_name)
+    if not column_info:
+        raise ValueError(f"Table does not support partition-refresh: {table_name}")
+    column_name, column_type = column_info
+    partition_expr = column_name if column_type == "DATE" else f"DATE({column_name})"
+    return f"""
+        DELETE FROM `{project_id}.{dataset}.{table_name}`
+        WHERE {partition_expr} >= @partition_start_date
+          AND {partition_expr} < @partition_end_date
+    """
 
 
 def _query_fact_offer_snapshot() -> str:
@@ -873,16 +927,41 @@ def _load_bigquery(
     project_id: str,
     dataset: str,
     replace: bool,
+    load_mode: str,
+    partition_start_date: date,
+    partition_end_date: date,
     df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     from google.cloud import bigquery
 
     client = bigquery.Client(project=project_id)
     table_id = f"{project_id}.{dataset}.{table_name}"
+    effective_load_mode = _effective_load_mode(table_name, load_mode, replace=replace)
+
+    if effective_load_mode == LOAD_MODE_PARTITION_REFRESH:
+        delete_job = client.query(
+            _build_partition_delete_sql(project_id, dataset, table_name),
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("partition_start_date", "DATE", partition_start_date),
+                    bigquery.ScalarQueryParameter("partition_end_date", "DATE", partition_end_date),
+                ]
+            ),
+        )
+        delete_job.result()
+        if df is not None and df.empty:
+            table = client.get_table(table_id)
+            return {
+                "table_id": table_id,
+                "rows": table.num_rows,
+                "loaded_rows": 0,
+                "load_mode": effective_load_mode,
+            }
+
     job_config = bigquery.LoadJobConfig(
         write_disposition=(
             bigquery.WriteDisposition.WRITE_TRUNCATE
-            if replace
+            if effective_load_mode == LOAD_MODE_REPLACE
             else bigquery.WriteDisposition.WRITE_APPEND
         ),
     )
@@ -904,7 +983,12 @@ def _load_bigquery(
             job.result()
 
     table = client.get_table(table_id)
-    return {"table_id": table_id, "rows": table.num_rows}
+    return {
+        "table_id": table_id,
+        "rows": table.num_rows,
+        "loaded_rows": int(len(df)) if df is not None else None,
+        "load_mode": effective_load_mode,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -916,6 +1000,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--load-bigquery", action="store_true", help="Load parquet outputs directly into BigQuery after staging.")
     parser.add_argument("--project-id", help="BigQuery project id. Fallback: BIGQUERY_PROJECT_ID")
     parser.add_argument("--dataset", help="BigQuery dataset. Fallback: BIGQUERY_DATASET")
+    parser.add_argument(
+        "--load-mode",
+        choices=sorted(LOAD_MODES),
+        default=os.getenv("BIGQUERY_LOAD_MODE", LOAD_MODE_PARTITION_REFRESH).strip() or LOAD_MODE_PARTITION_REFRESH,
+        help="BigQuery load behavior. Default: partition-refresh.",
+    )
     parser.add_argument("--replace", action="store_true", help="Replace destination tables instead of append.")
     return parser
 
@@ -926,12 +1016,10 @@ def main() -> int:
     engine = create_engine(get_database_url(), pool_pre_ping=True, future=True)
     stage_root = _stage_dir(Path(args.output_dir))
     tables = _parse_tables(args.tables)
-    from datetime import timedelta
-    start_ts = f"{args.start_date}T00:00:00+00:00"
-    # end_ts is the start of the day *after* end_date so that all data scraped on
-    # end_date (00:00 – 23:59 UTC) is included. The window is [start_ts, end_ts).
-    _end_date_next = (date.fromisoformat(args.end_date) + timedelta(days=1)).isoformat()
-    end_ts = f"{_end_date_next}T00:00:00+00:00"
+    try:
+        partition_start_date, partition_end_date, start_ts, end_ts = _parse_export_window(args.start_date, args.end_date)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     params = {"start_ts": start_ts, "end_ts": end_ts}
     start_dt = datetime.fromisoformat(start_ts)
     end_dt = datetime.fromisoformat(end_ts)
@@ -972,6 +1060,9 @@ def main() -> int:
                 project_id=project_id,
                 dataset=dataset,
                 replace=args.replace,
+                load_mode=args.load_mode,
+                partition_start_date=partition_start_date,
+                partition_end_date=partition_end_date,
                 df=export_frames.get(exported["table"]),
             )
             bq_results.append(result)
@@ -980,6 +1071,7 @@ def main() -> int:
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "start_date": args.start_date,
         "end_date": args.end_date,
+        "load_mode": args.load_mode,
         "tables": exports,
         "bigquery_loads": bq_results,
     }

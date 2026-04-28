@@ -23,6 +23,7 @@ import re
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin
 
+from core.source_switches import disabled_source_response, source_enabled
 from modules.amybd import fetch_flights_for_airline as fetch_from_amybd
 from modules.bdfare import fetch_flights_for_airline as fetch_from_bdfare
 from modules.gozayaan import fetch_flights_for_airline as fetch_from_gozayaan
@@ -729,6 +730,9 @@ def fetch_flights(
     Unified contract for run_all.py:
     { raw, originalResponse, rows, ok }
     """
+    if not source_enabled("airastra"):
+        return disabled_source_response("airastra")
+
     source_mode = (os.getenv(ENV_SOURCE_MODE) or "auto").strip().lower()
     if source_mode in {"auto", "bdfare_first"}:
         return _run_auto_source_chain(
@@ -824,6 +828,22 @@ def fetch_flights(
         cookies_path=cookies_path,
         proxy_url=proxy_url,
     )
+
+
+def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
+    from core.source_health import ok
+
+    return ok(
+        "airastra",
+        message="TTInteractive wrapper configured; WAF/manual capture needs are measured per extraction attempt",
+        mode=(os.getenv(ENV_SOURCE_MODE) or "auto").strip().lower(),
+        cookies_path=os.getenv(ENV_COOKIES_PATH),
+        manual_action_required=True,
+    )
+
+
+def check_session(*, dry_run: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    return check_source_health(dry_run=dry_run, **kwargs)
 
 
 def cli_main():

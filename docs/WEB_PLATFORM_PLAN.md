@@ -125,7 +125,7 @@ Priority order for the next implementation cycle:
 
 ## Success Condition
 
-The web application becomes the main interactive monitor, Excel remains a downloadable operational artifact, local PostgreSQL remains the collection/training store, and BigQuery becomes both the historical analytics layer and the hosted read layer.
+The web application becomes the main interactive monitor, Excel remains a downloadable operational artifact, local PostgreSQL remains the collection/training/history store, and BigQuery becomes the bounded hosted hot-cache read layer.
 
 ## Round-Trip Note
 

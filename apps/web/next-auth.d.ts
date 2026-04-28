@@ -1,5 +1,4 @@
 import type { DefaultSession } from "next-auth";
-import type { JWT } from "next-auth/jwt";
 
 import type { AuthenticatedUser } from "@/lib/api";
 

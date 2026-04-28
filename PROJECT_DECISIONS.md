@@ -1,6 +1,6 @@
 ﻿# Airline Intelligence System Decisions (Thesis Track)
 
-Last updated: 2026-03-20
+Last updated: 2026-04-27
 
 ## 1) Program Vision
 
@@ -1130,3 +1130,71 @@ no alert, making data gaps impossible to diagnose post-hoc.
 - Modules to expose: `modules/amybd.py::check_session()`, `modules/gozayaan.py::check_session()`
 - Gate logic: block pipeline only if critical source fails AND no fallback available
 - `run_pipeline.py` hook: `--skip-preflight` flag to bypass for manual/debugging runs
+
+---
+
+### Extraction Health Gate Decision (2026-04-27)
+
+**Decision**: Treat extraction quality as a first-class gate separate from process exit.
+
+**Rationale**: A scrape process can exit `0` while a source silently returns zero rows,
+hits rate limits, uses stale captures, or misses whole airlines in parallel execution.
+Publication and operator review should be based on measured extraction attempts, not
+only return codes.
+
+**Policy**:
+- Every query records an `extraction_attempts` row.
+- Latest health artifacts are `output/reports/extraction_health_latest.json`,
+  `output/reports/extraction_health_latest.md`, and
+  `output/reports/extraction_health_latest.csv`.
+- Gate statuses are:
+  - `PASS`: attempts recorded, expected airlines covered, no source failures.
+  - `WARN`: no blocking failures, but clean zero-row/no-inventory attempts need review.
+  - `FAIL`: missing expected airlines, rate limits, expired sessions, stale/missing
+    captures, WAF/manual-required cases, timeouts, or source exceptions.
+- Capture-backed/manual sources stay human-in-the-loop. The system reports manual
+  action needed; it does not automate WAF/challenge bypass.
+- `SHARETRIP_ENABLED=false` is the temporary kill switch for ShareTrip-backed airline
+  rows and ShareTrip fallbacks when the source is too costly or rate-limited.
+- BigQuery auto-sync is skipped when extraction gate is `FAIL`.
+- Use `--fail-on-extraction-gate` when a scheduler should return non-zero for
+  extraction `FAIL`.
+
+**Implementation files**:
+- `models/extraction_attempt.py`
+- `alembic/versions/45ef31c8a9f2_add_extraction_attempts.py`
+- `core/extraction_health.py`
+- `core/source_health.py`
+- `run_all.py`
+- `tools/parallel_airline_runner.py`
+- `run_pipeline.py`
+- `tools/pre_flight_session_check.py`
+- `tools/extraction_health_report.py`
+
+---
+
+### BigQuery Hot-Cache Cost Control Decision (2026-04-27)
+
+**Decision**: BigQuery is a bounded hosted hot cache, not the long-term historical store.
+
+**Rationale**: Hosted website/API reads need fresh operational slices, while full history is
+cheaper and safer in local PostgreSQL, database backups, and ignored Parquet exports.
+Routine BigQuery sync must avoid duplicate append growth and must not run unless explicitly
+enabled.
+
+**Policy**:
+- High-volume core scraper website/read fact tables retain 35 days.
+- GDS fare/change/tax fact tables are excluded for now because their storage footprint is small.
+- Partitioned forecast/backtest fact tables retain 90 days.
+- Currently unpartitioned tiny winner tables are excluded for now because their storage footprint is small.
+- Dimension tables remain unexpired.
+- Automatic sync requires `BIGQUERY_SYNC_ENABLED=1`.
+- Automatic sync defaults to `BIGQUERY_SYNC_LOOKBACK_DAYS=2` and `BIGQUERY_LOAD_MODE=partition-refresh`.
+- One-off historical BI should use temporary/scratch BigQuery datasets with short expiration.
+
+**Implementation files**:
+- `run_pipeline.py`
+- `tools/export_bigquery_stage.py`
+- `tools/bigquery_apply_retention.py`
+- `tools/bigquery_storage_audit.py`
+- `sql/bigquery/apply_hot_cache_retention.sql`

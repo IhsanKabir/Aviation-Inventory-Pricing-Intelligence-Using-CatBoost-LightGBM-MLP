@@ -8,16 +8,25 @@
 // Internal fetch helper (mirrors the pattern used in api.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function getApiBase(): string {
-  const base =
-    process.env.API_BASE_URL ||
-    process.env.NEXT_PUBLIC_API_BASE_URL ||
-    "http://127.0.0.1:8000";
-  return base.trim().replace(/\/+$/, "");
+const LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
+
+function normalizeApiBaseUrl(raw: string): string {
+  return raw.trim().replace(/\s+/g, "").replace(/\/+$/, "");
+}
+
+function getConfiguredApiBase(): string | null {
+  const base = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "";
+  const normalized = normalizeApiBaseUrl(base);
+  return normalized || null;
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${getApiBase()}${path}`, {
+  const apiBase = getConfiguredApiBase() ?? (process.env.NODE_ENV === "production" ? null : LOCAL_API_BASE_URL);
+  if (!apiBase) {
+    throw new Error("API_BASE_URL or NEXT_PUBLIC_API_BASE_URL is not configured");
+  }
+
+  const res = await fetch(`${apiBase}${path}`, {
     next: { revalidate: 60 },
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);

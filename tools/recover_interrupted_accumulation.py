@@ -870,11 +870,24 @@ def _enabled_airline_codes(root: Path) -> list[str]:
     data = _read_json(airlines_file)
     if not isinstance(data, list):
         return []
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from core.source_switches import load_source_switches, source_switch_status
+
+        source_switches_file = root / "config" / "source_switches.json"
+        switches = load_source_switches(source_switches_file)
+    except Exception:
+        source_switch_status = None
+        switches = {}
     codes: list[str] = []
     for row in data:
         if not isinstance(row, dict) or not row.get("enabled"):
             continue
         code = str(row.get("code") or "").strip().upper()
+        module_name = str(row.get("module") or "").strip()
+        if source_switch_status and not source_switch_status(module_name, switches=switches).get("enabled"):
+            continue
         if code:
             codes.append(code)
     return codes

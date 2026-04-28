@@ -5,6 +5,7 @@ Safely parallelize scrapes by running one process per airline.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import subprocess
 import sys
@@ -15,6 +16,13 @@ from pathlib import Path
 import time
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core.extraction_health import load_attempts_from_db, write_health_reports
+from core.source_switches import DEFAULT_SOURCE_SWITCHES_FILE, load_source_switches, source_switch_status
+from db import DATABASE_URL
+
 SHARETRIP_MODULES = {"sharetrip"}
 WRAPPER_MODULES = {"airastra", "bs"}
 PROTECTED_DIRECT_MODULES = {"indigo"}
@@ -25,6 +33,11 @@ def parse_args():
     p = argparse.ArgumentParser(description="Parallel run_all by airline")
     p.add_argument("--python-exe", default=sys.executable)
     p.add_argument("--airlines-config", default="config/airlines.json")
+    p.add_argument(
+        "--source-switches-file",
+        default=str(DEFAULT_SOURCE_SWITCHES_FILE),
+        help="JSON file with runtime on/off switches for supplier/source modules.",
+    )
     p.add_argument(
         "--max-workers",
         type=int,
@@ -59,6 +72,7 @@ def parse_args():
     p.add_argument("--limit-routes", type=int)
     p.add_argument("--limit-dates", type=int)
     p.add_argument("--output-dir", default="output/reports")
+    p.add_argument("--extraction-attempt-output-dir", default="output/reports")
     p.add_argument(
         "--fragile-max-workers",
         type=int,
@@ -123,22 +137,26 @@ def parse_args():
     return p.parse_args()
 
 
-def _load_enabled_airlines(path: Path):
+def _load_enabled_airlines(path: Path, source_switches_file: str | Path | None = None):
     if not path.exists():
         return []
     # Use utf-8-sig so Windows-edited JSON files with BOM are accepted.
     data = json.loads(path.read_text(encoding="utf-8-sig"))
     airlines = []
+    switches = load_source_switches(source_switches_file)
     for row in data:
         if not isinstance(row, dict) or not row.get("enabled"):
             continue
         code = str(row.get("code", "")).upper().strip()
+        module = str(row.get("module", "")).strip().lower()
         if not code:
+            continue
+        if not source_switch_status(module, switches=switches).get("enabled"):
             continue
         airlines.append(
             {
                 "code": code,
-                "module": str(row.get("module", "")).strip().lower(),
+                "module": module,
             }
         )
     return airlines
@@ -160,6 +178,7 @@ def _build_cmd(args, airline: str, cycle_id: str):
         ("--date-offsets", args.date_offsets),
         ("--dates-file", args.dates_file),
         ("--schedule-file", args.schedule_file),
+        ("--source-switches-file", args.source_switches_file),
         ("--cabin", args.cabin),
         ("--adt", args.adt),
         ("--chd", args.chd),
@@ -170,6 +189,7 @@ def _build_cmd(args, airline: str, cycle_id: str):
         ("--limit-routes", args.limit_routes),
         ("--limit-dates", args.limit_dates),
         ("--query-timeout-seconds", args.query_timeout_seconds),
+        ("--extraction-attempt-output-dir", args.extraction_attempt_output_dir),
     ]:
         if value is not None:
             cmd.extend([flag, str(value)])
@@ -287,6 +307,71 @@ def _run_batches_concurrently(grouped_airlines: dict[str, list[dict]], args, cyc
     return results
 
 
+def _write_combined_csv(path: Path, rows: list[dict]) -> None:
+    if not rows:
+        path.write_text("", encoding="utf-8")
+        return
+    keys = sorted({k for row in rows for k in row.keys()})
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=keys)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, "") for k in keys})
+
+
+def _aggregate_worker_exports(cycle_id: str) -> dict:
+    latest_dir = REPO_ROOT / "output" / "latest"
+    files = sorted(latest_dir.glob(f"combined_results_{cycle_id}_*.json"))
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for path in files:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, list):
+            continue
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            try:
+                key = json.dumps(item, sort_keys=True, ensure_ascii=True, default=str)
+            except Exception:
+                key = repr(sorted(item.items()))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(item)
+
+    json_path = latest_dir / "combined_results.json"
+    csv_path = latest_dir / "combined_results.csv"
+    json_path.write_text(json.dumps(rows, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    _write_combined_csv(csv_path, rows)
+    return {
+        "worker_export_files": [str(p) for p in files],
+        "rows": len(rows),
+        "json_path": str(json_path),
+        "csv_path": str(csv_path),
+    }
+
+
+def _aggregate_extraction_health(cycle_id: str, args, expected_airlines: list[str]) -> dict:
+    try:
+        attempts = load_attempts_from_db(DATABASE_URL, cycle_id=cycle_id)
+        return write_health_reports(
+            attempts,
+            output_dir=args.extraction_attempt_output_dir,
+            cycle_id=cycle_id,
+            expected_airlines=expected_airlines,
+        )
+    except Exception as exc:
+        return {
+            "status": "FAIL",
+            "status_reasons": [f"failed to aggregate extraction attempts: {exc}"],
+            "attempt_count": 0,
+        }
+
+
 def _read_json(path: Path) -> dict:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -324,7 +409,7 @@ def main():
         cycle_id = str(uuid.UUID(cycle_id))
     except Exception:
         raise SystemExit(f"Invalid --cycle-id (must be UUID): {cycle_id}")
-    airlines = _load_enabled_airlines(Path(args.airlines_config))
+    airlines = _load_enabled_airlines(Path(args.airlines_config), args.source_switches_file)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
@@ -335,11 +420,18 @@ def main():
         "sharetrip": [],
         "wrapper": [],
         "indigo": [],
+        "gozayaan": [],
     }
     for airline in airlines:
         grouped_airlines[_module_family(airline.get("module"))].append(airline)
 
     results = _run_batches_concurrently(grouped_airlines, args, cycle_id)
+    combined_export = _aggregate_worker_exports(cycle_id)
+    extraction_health = _aggregate_extraction_health(
+        cycle_id,
+        args,
+        expected_airlines=[row["code"] for row in airlines],
+    )
 
     results = sorted(results, key=lambda x: x["airline"])
     failed = [r for r in results if r["rc"] != 0]
@@ -350,6 +442,7 @@ def main():
         "completed_at_utc": ended.isoformat(),
         "duration_sec": float((ended - started).total_seconds()),
         "cycle_id": cycle_id,
+        "source_switches_file": str(args.source_switches_file),
         "airline_count": len(airlines),
         "max_workers": args.max_workers,
         "direct_airline_count": len(grouped_airlines["direct"]),
@@ -360,6 +453,10 @@ def main():
         "indigo_airline_count": len(grouped_airlines["indigo"]),
         "indigo_max_workers": args.indigo_max_workers,
         "failed_count": len(failed),
+        "combined_export": combined_export,
+        "extraction_health": {
+            k: v for k, v in extraction_health.items() if k != "by_airline"
+        },
         "results": results,
     }
 
@@ -376,6 +473,8 @@ def main():
     run.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     print(f"parallel_scrape_done airlines={len(airlines)} failed={len(failed)} cycle_id={cycle_id}")
+    print(f"combined_rows={combined_export.get('rows')} combined_json={combined_export.get('json_path')}")
+    print(f"extraction_health_status={extraction_health.get('status')} attempts={extraction_health.get('attempt_count')}")
     print(f"latest={latest}")
     print(f"run={run}")
     if args.strict and failed:

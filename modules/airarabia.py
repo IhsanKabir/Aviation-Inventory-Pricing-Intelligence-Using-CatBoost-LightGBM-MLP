@@ -18,6 +18,8 @@ except ModuleNotFoundError:
         sys.path.insert(0, repo_root)
     from modules.sharetrip import fetch_flights_for_airline as fetch_from_sharetrip
 
+from core.source_switches import disabled_source_response, source_enabled
+
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -350,6 +352,24 @@ def _fetch_from_capture(*, origin: str, destination: str, date: str, cabin: str,
         out["raw"]["error"] = "capture_not_found"
         out["raw"]["hint"] = _hint(origin, destination, date)
         return out
+    from core.source_health import capture_is_stale, max_capture_age_hours
+
+    staleness = capture_is_stale(
+        generated_at=summary.get("captured_at_utc") or summary.get("generated_at_utc"),
+        path=capture_path,
+        max_age_hours=max_capture_age_hours("AIRARABIA_MAX_CAPTURE_AGE_HOURS"),
+    )
+    out["raw"].update(
+        {
+            "captured_at_utc": summary.get("captured_at_utc") or summary.get("generated_at_utc"),
+            "capture_age_hours": staleness.get("age_hours"),
+            "max_capture_age_hours": staleness.get("max_age_hours"),
+        }
+    )
+    if staleness.get("stale"):
+        out["raw"]["error"] = "stale_capture"
+        out["raw"]["hint"] = _hint(origin, destination, date)
+        return out
     payload = _response_payload_from_summary(summary)
     out["originalResponse"] = payload
     out["rows"] = parse_fare_response(payload, requested_cabin=cabin, adt=adt, chd=chd, inf=inf)
@@ -357,7 +377,26 @@ def _fetch_from_capture(*, origin: str, destination: str, date: str, cabin: str,
     return out
 
 
+def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
+    from core.source_health import ok
+
+    return ok(
+        "airarabia",
+        message="capture-backed connector; fresh per-route captures are validated during extraction",
+        mode=str(os.getenv(ENV_SOURCE_MODE, "auto") or "auto"),
+        capture_root=str(_capture_root_path()),
+        manual_action_required=True,
+    )
+
+
+def check_session(*, dry_run: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    return check_source_health(dry_run=dry_run, **kwargs)
+
+
 def fetch_flights(origin: str, destination: str, date: str, cabin: str = "Economy", adt: int = 1, chd: int = 0, inf: int = 0):
+    if not source_enabled("airarabia"):
+        return disabled_source_response("airarabia")
+
     mode = str(os.getenv(ENV_SOURCE_MODE, "auto") or "auto").strip().lower()
     if mode == "sharetrip":
         return fetch_from_sharetrip(airline_code=AIRLINE_CODE, origin=origin, destination=destination, date=date, cabin=cabin, adt=adt, chd=chd, inf=inf)

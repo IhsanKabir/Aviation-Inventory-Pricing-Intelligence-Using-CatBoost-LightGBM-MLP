@@ -26,7 +26,10 @@ set "CYCLE_STATE=%ROOT%\output\reports\accumulation_cycle_latest.json"
 set "RESCHEDULER=%ROOT%\scheduler\reschedule_finish_driven_task.ps1"
 set "TASK_NAME=AirlineIntel_Ingestion4H"
 set "ENVFILE=%ROOT%\.env"
+set "SCHEDULE_FILE=%ROOT%\config\schedule.json"
 set "OPERATIONAL_SKIP_BIGQUERY_SYNC="
+set "OPERATIONAL_START_TIME="
+set "OPERATIONAL_REPEAT_MINUTES="
 
 if not exist "%PYEXE%" (
   echo [%date% %time%] python exe not found: %PYEXE%>> "%LOGFILE%"
@@ -41,6 +44,8 @@ if exist "%ENVFILE%" (
     if /I "%%~A"=="OPERATIONAL_COMPLETION_BUFFER_MINUTES" set "OPERATIONAL_COMPLETION_BUFFER_MINUTES=%%~B"
     if /I "%%~A"=="ACCUMULATION_COMPLETION_BUFFER_MINUTES" set "ACCUMULATION_COMPLETION_BUFFER_MINUTES=%%~B"
     if /I "%%~A"=="OPERATIONAL_SKIP_BIGQUERY_SYNC" set "OPERATIONAL_SKIP_BIGQUERY_SYNC=%%~B"
+    if /I "%%~A"=="OPERATIONAL_START_TIME" set "OPERATIONAL_START_TIME=%%~B"
+    if /I "%%~A"=="OPERATIONAL_REPEAT_MINUTES" set "OPERATIONAL_REPEAT_MINUTES=%%~B"
     if /I "%%~A"=="PARALLEL_QUERY_TIMEOUT_SECONDS" set "PARALLEL_QUERY_TIMEOUT_SECONDS=%%~B"
     if /I "%%~A"=="PARALLEL_SHARETRIP_MAX_WORKERS" set "PARALLEL_SHARETRIP_MAX_WORKERS=%%~B"
     if /I "%%~A"=="PARALLEL_SHARETRIP_COOLDOWN_SEC" set "PARALLEL_SHARETRIP_COOLDOWN_SEC=%%~B"
@@ -51,7 +56,19 @@ if exist "%ENVFILE%" (
   )
 )
 
+if not defined OPERATIONAL_START_TIME if exist "%SCHEDULE_FILE%" (
+  for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "$s = Get-Content -Raw '%SCHEDULE_FILE%' | ConvertFrom-Json; $v = $s.scheduler_timing.global.start_time; if (-not $v) { $v = $s.task_windows.ingestion.start_time }; if ($v) { [string]$v }" 2^>nul`) do set "OPERATIONAL_START_TIME=%%A"
+)
+if not defined OPERATIONAL_REPEAT_MINUTES if exist "%SCHEDULE_FILE%" (
+  for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "$s = Get-Content -Raw '%SCHEDULE_FILE%' | ConvertFrom-Json; $v = $s.scheduler_timing.global.repeat_minutes; if (-not $v) { $v = $s.task_windows.ingestion.repeat_minutes }; if (-not $v -and $s.auto_run_interval_hours) { $v = [int]$s.auto_run_interval_hours * 60 }; if ($v) { [int]$v }" 2^>nul`) do set "OPERATIONAL_REPEAT_MINUTES=%%A"
+)
+if not defined OPERATIONAL_START_TIME set "OPERATIONAL_START_TIME=12:00"
+if not defined OPERATIONAL_REPEAT_MINUTES set "OPERATIONAL_REPEAT_MINUTES=1440"
+
 if not defined OPERATIONAL_COMPLETION_BUFFER_MINUTES set "OPERATIONAL_COMPLETION_BUFFER_MINUTES=%ACCUMULATION_COMPLETION_BUFFER_MINUTES%"
+if not defined OPERATIONAL_COMPLETION_BUFFER_MINUTES if exist "%SCHEDULE_FILE%" (
+  for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "$s = Get-Content -Raw '%SCHEDULE_FILE%' | ConvertFrom-Json; $v = $s.scheduler_timing.global.completion_buffer_minutes; if (-not $v) { $v = $s.scheduler_timing.global.repeat_minutes }; if ($v) { [int]$v }" 2^>nul`) do set "OPERATIONAL_COMPLETION_BUFFER_MINUTES=%%A"
+)
 if not defined OPERATIONAL_COMPLETION_BUFFER_MINUTES set "OPERATIONAL_COMPLETION_BUFFER_MINUTES=90"
 if not defined OPERATIONAL_SKIP_BIGQUERY_SYNC set "OPERATIONAL_SKIP_BIGQUERY_SYNC=1"
 
@@ -75,7 +92,7 @@ if exist "%RECOVERY_HELPER%" (
   set "RC=%ERRORLEVEL%"
   set "RESCHEDULED=0"
   if exist "%RESCHEDULER%" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%RESCHEDULER%" -TaskName "%TASK_NAME%" -BatchPath "%~f0" -DelayMinutes %OPERATIONAL_COMPLETION_BUFFER_MINUTES% -ExecutionTimeLimitHours 8 >> "%LOGFILE%" 2>&1
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%RESCHEDULER%" -TaskName "%TASK_NAME%" -BatchPath "%~f0" -DelayMinutes %OPERATIONAL_COMPLETION_BUFFER_MINUTES% -AnchorTime "%OPERATIONAL_START_TIME%" -RepeatMinutes %OPERATIONAL_REPEAT_MINUTES% -ExecutionTimeLimitHours 8 >> "%LOGFILE%" 2>&1
     if "!ERRORLEVEL!"=="0" set "RESCHEDULED=1"
   )
   if exist "%RECOVERY_STATUS%" if exist "%CYCLE_STATE%" (
@@ -110,9 +127,9 @@ if /I "%OPERATIONAL_SKIP_BIGQUERY_SYNC%"=="1" (
 set "RC=%ERRORLEVEL%"
 set "RESCHEDULED=0"
 if exist "%RESCHEDULER%" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%RESCHEDULER%" -TaskName "%TASK_NAME%" -BatchPath "%~f0" -DelayMinutes %OPERATIONAL_COMPLETION_BUFFER_MINUTES% -ExecutionTimeLimitHours 8 >> "%LOGFILE%" 2>&1
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%RESCHEDULER%" -TaskName "%TASK_NAME%" -BatchPath "%~f0" -DelayMinutes %OPERATIONAL_COMPLETION_BUFFER_MINUTES% -AnchorTime "%OPERATIONAL_START_TIME%" -RepeatMinutes %OPERATIONAL_REPEAT_MINUTES% -ExecutionTimeLimitHours 8 >> "%LOGFILE%" 2>&1
   if "!ERRORLEVEL!"=="0" set "RESCHEDULED=1"
 )
-echo [%date% %time%] ingestion cycle rescheduled=!RESCHEDULED! next_delay_min=%OPERATIONAL_COMPLETION_BUFFER_MINUTES%>> "%LOGFILE%"
+echo [%date% %time%] ingestion cycle rescheduled=!RESCHEDULED! next_anchor=%OPERATIONAL_START_TIME% repeat_min=%OPERATIONAL_REPEAT_MINUTES% min_gap_min=%OPERATIONAL_COMPLETION_BUFFER_MINUTES%>> "%LOGFILE%"
 echo [%date% %time%] ingestion cycle finished rc=!RC!>> "%LOGFILE%"
 exit /b !RC!

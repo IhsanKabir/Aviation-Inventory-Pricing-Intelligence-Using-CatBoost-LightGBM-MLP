@@ -10,6 +10,8 @@ import subprocess
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.source_switches import disabled_source_response, source_enabled
+
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -461,12 +463,46 @@ def _fetch_from_capture(*, origin: str, destination: str, date: str, cabin: str,
         out["raw"]["error"] = "capture_not_found"
         out["raw"]["hint"] = _hint(origin, destination, date)
         return out
+    from core.source_health import capture_is_stale, max_capture_age_hours
+
+    staleness = capture_is_stale(
+        generated_at=summary.get("captured_at_utc") or summary.get("generated_at_utc"),
+        path=capture_path,
+        max_age_hours=max_capture_age_hours("SALAMAIR_MAX_CAPTURE_AGE_HOURS"),
+    )
+    out["raw"].update(
+        {
+            "captured_at_utc": summary.get("captured_at_utc") or summary.get("generated_at_utc"),
+            "capture_age_hours": staleness.get("age_hours"),
+            "max_capture_age_hours": staleness.get("max_age_hours"),
+        }
+    )
+    if staleness.get("stale"):
+        out["raw"]["error"] = "stale_capture"
+        out["raw"]["hint"] = _hint(origin, destination, date)
+        return out
     fares_payload = _payload_from_summary(summary, "flight_fares_response_body")
     confirm_payload = _payload_from_summary(summary, "confirm_response_body")
     out["originalResponse"] = fares_payload
     out["rows"] = parse_flight_fares_payload(fares_payload, requested_cabin=cabin, adt=adt, chd=chd, inf=inf, confirm_payload=confirm_payload if isinstance(confirm_payload, dict) else None)
     out["ok"] = bool(out["rows"])
     return out
+
+
+def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
+    from core.source_health import ok
+
+    return ok(
+        "salamair",
+        message="capture-backed connector; fresh per-route captures are validated during extraction",
+        mode=_source_mode(),
+        capture_root=str(_capture_root_path()),
+        manual_action_required=True,
+    )
+
+
+def check_session(*, dry_run: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    return check_source_health(dry_run=dry_run, **kwargs)
 
 
 def salamair_search(origin: str, dest: str, date: str, cabin: str = "Economy", adt: int = 1, chd: int = 0, inf: int = 0, cookies_path: Optional[str] = None, proxy_url: Optional[str] = None) -> Dict[str, Any]:
@@ -493,6 +529,7 @@ def salamair_search(origin: str, dest: str, date: str, cabin: str = "Economy", a
                 "hint": _hint(origin, dest, date),
                 "cookies_path": cookies_path,
                 "proxy_url": proxy_url,
+                "capture": saved.get("raw", {}),
                 "browser_capture": attempted.get("capture_meta"),
             },
             "originalResponse": None,
@@ -500,7 +537,14 @@ def salamair_search(origin: str, dest: str, date: str, cabin: str = "Economy", a
             "ok": False,
         }
     return {
-        "raw": {"source": "salamair_capture", "error": "search_flow_not_implemented", "hint": _hint(origin, dest, date), "cookies_path": cookies_path, "proxy_url": proxy_url},
+        "raw": {
+            "source": "salamair_capture",
+            "error": "search_flow_not_implemented",
+            "hint": _hint(origin, dest, date),
+            "cookies_path": cookies_path,
+            "proxy_url": proxy_url,
+            "capture": saved.get("raw", {}),
+        },
         "originalResponse": None,
         "rows": [],
         "ok": False,
@@ -508,6 +552,9 @@ def salamair_search(origin: str, dest: str, date: str, cabin: str = "Economy", a
 
 
 def fetch_flights(origin: str, destination: str, date: str, cabin: str = "Economy", adt: int = 1, chd: int = 0, inf: int = 0):
+    if not source_enabled("salamair"):
+        return disabled_source_response("salamair")
+
     return salamair_search(origin=origin, dest=destination, date=date, cabin=cabin, adt=adt, chd=chd, inf=inf, cookies_path=os.getenv(ENV_COOKIES_PATH) or None, proxy_url=os.getenv(ENV_PROXY_URL) or None)
 
 

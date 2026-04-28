@@ -3,3 +3,5 @@ from models.flight_offer import FlightOfferORM
 from models.change_event import ChangeEventORM
 from models.flight_offer_raw_meta import FlightOfferRawMetaORM
 from models.raw_offer_payload_store import RawOfferPayloadStoreORM
+from models.strategy_signal import StrategySignal
+from models.extraction_attempt import ExtractionAttemptORM

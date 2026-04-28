@@ -35,7 +35,8 @@ Dataset settings:
 1. Dataset ID: `aviation_intel`
 2. Location: one fixed region
 3. Default table expiration: none
-4. Partition expiration: none for now
+4. Default partition expiration: `35` days
+5. Time travel window: `48` hours
 
 ## Step 4: Create service account
 
@@ -57,6 +58,9 @@ PowerShell:
 ```powershell
 $env:BIGQUERY_PROJECT_ID="aeropulseintelligence"
 $env:BIGQUERY_DATASET="aviation_intel"
+$env:BIGQUERY_SYNC_ENABLED="1"
+$env:BIGQUERY_SYNC_LOOKBACK_DAYS="2"
+$env:BIGQUERY_LOAD_MODE="partition-refresh"
 $env:GOOGLE_APPLICATION_CREDENTIALS="C:\\path\\to\\aero-pulse-bq-loader.json"
 ```
 
@@ -92,6 +96,15 @@ Direct from script:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\export_bigquery_stage.py --output-dir output\warehouse\bigquery --start-date 2026-03-01 --end-date 2026-03-08 --load-bigquery --project-id aeropulseintelligence --dataset aviation_intel
+```
+
+Default direct loads use `partition-refresh`: dimensions are replaced, exported fact partitions are refreshed, and routine syncs avoid unbounded append growth.
+
+Apply cost-safe retention after table creation:
+
+```powershell
+.\.venv\Scripts\python.exe tools\bigquery_apply_retention.py --project-id aeropulseintelligence --dataset aviation_intel --hot-days 35 --forecast-days 90 --time-travel-hours 48 --apply
+.\.venv\Scripts\python.exe tools\bigquery_storage_audit.py --project-id aeropulseintelligence --dataset aviation_intel
 ```
 
 If the dataset already exists and you are applying new additive columns to a live table set, run this first:
@@ -186,14 +199,14 @@ Live forecast review report already created:
 Automatic post-cycle sync controls:
 
 ```powershell
-.\.venv\Scripts\python.exe run_pipeline.py --bigquery-sync-lookback-days 7
+.\.venv\Scripts\python.exe run_pipeline.py --bigquery-sync-enabled --bigquery-sync-lookback-days 2 --bigquery-load-mode partition-refresh
 .\.venv\Scripts\python.exe run_pipeline.py --skip-bigquery-sync
 .\.venv\Scripts\python.exe run_pipeline.py --fail-on-bigquery-sync-error
 ```
 
 Default behavior after this integration:
 
-- if `BIGQUERY_PROJECT_ID` and `BIGQUERY_DATASET` are configured, successful pipeline runs also refresh BigQuery
+- if `BIGQUERY_SYNC_ENABLED=1`, `BIGQUERY_PROJECT_ID`, and `BIGQUERY_DATASET` are configured, successful pipeline runs refresh the bounded BigQuery hot cache
 - the sync window is recent UTC capture dates, not just the single latest cycle id
 - manual `tools/export_bigquery_stage.py --load-bigquery ...` remains available for backfills
 

@@ -29,6 +29,7 @@ from db import (
     save_column_change_events,
     get_session,
     bulk_insert_raw_meta,
+    bulk_insert_extraction_attempts,
     normalize_raw_meta,
     infer_via_airports,
 )
@@ -58,6 +59,12 @@ from core.trip_config import (
     resolve_route_trip_plan,
 )
 from modules.penalties import apply_penalty_inference
+from core.extraction_health import build_attempt_row, classify_attempt, write_health_reports
+from core.source_switches import (
+    DEFAULT_SOURCE_SWITCHES_FILE,
+    load_source_switches,
+    source_switch_status,
+)
 
 ENABLE_STRATEGY_ENGINE = os.getenv("ENABLE_STRATEGY_ENGINE", "0").strip().lower() in {
     "1",
@@ -131,6 +138,11 @@ def parse_args():
     parser.add_argument("--dates-file", default="config/dates.json", help="Optional JSON file for dynamic date settings")
     parser.add_argument("--schedule-file", default=str(SCHEDULE_FILE), help="Optional scheduler config file for auto-run date defaults")
     parser.add_argument(
+        "--source-switches-file",
+        default=str(DEFAULT_SOURCE_SWITCHES_FILE),
+        help="JSON file with runtime on/off switches for supplier/source modules.",
+    )
+    parser.add_argument(
         "--route-trip-config",
         default=str(ROUTE_TRIP_CONFIG_FILE),
         help="Optional JSON file with route-wise OW/RT and return-date overrides.",
@@ -203,6 +215,11 @@ def parse_args():
         type=float,
         default=180.0,
         help="Soft timeout for a single fetch query (seconds). Timed-out queries are skipped as soft-fail.",
+    )
+    parser.add_argument(
+        "--extraction-attempt-output-dir",
+        default="output/reports",
+        help="Directory for extraction health JSON/MD/CSV reports.",
     )
     return parser.parse_args()
 
@@ -592,6 +609,20 @@ def _prepare_public_export_rows(rows: list[dict]) -> list[dict]:
     return redacted
 
 
+def _write_public_export_csv(path: Path, rows: list[dict]) -> None:
+    if not rows:
+        path.write_text("", encoding="utf-8")
+        return
+    import csv
+
+    keys = sorted({k for row in rows for k in row.keys()})
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=keys)
+        w.writeheader()
+        for row in rows:
+            w.writerow({k: row.get(k, "") for k in keys})
+
+
 def _load_schedule_date_defaults(path: Path) -> dict:
     """
     Supported schedule.json shape (only relevant keys shown):
@@ -947,20 +978,47 @@ def preload_previous_snapshots(
 
     return by_day
 
-def load_airlines() -> Dict[str, Dict[str, Any]]:
+def _source_status_note(status: dict[str, Any]) -> str:
+    reasons = [str(x).strip() for x in (status.get("reasons") or []) if str(x).strip()]
+    return "; ".join(reasons) if reasons else "disabled in source switches"
+
+
+def load_airlines(source_switches_file: str | Path | None = None) -> Dict[str, Dict[str, Any]]:
     with AIRLINES_FILE.open("r", encoding="utf-8") as f:
         items = json.load(f)
     airlines = {}
+    switches = load_source_switches(source_switches_file)
+    skipped_by_source: list[str] = []
+    skipped_fallbacks: list[str] = []
     for a in items:
         if not a.get("enabled", False):
             continue
         code = a["code"]
+        module_name = str(a["module"]).strip()
+        primary_status = source_switch_status(module_name, switches=switches)
+        if not primary_status.get("enabled"):
+            skipped_by_source.append(f"{code}:{module_name} ({_source_status_note(primary_status)})")
+            continue
+        fallback_modules = []
+        for fallback_module in (a.get("fallback_modules") or []):
+            fallback_name = str(fallback_module).strip()
+            if not fallback_name:
+                continue
+            fallback_status = source_switch_status(fallback_name, switches=switches)
+            if not fallback_status.get("enabled"):
+                skipped_fallbacks.append(f"{code}:{fallback_name} ({_source_status_note(fallback_status)})")
+                continue
+            fallback_modules.append(fallback_name)
         airlines[code] = {
-            "module": a["module"],
+            "module": module_name,
             "throttle": a.get("throttle_per_minute", 30),
             "cabins": a.get("cabin_classes", ["Economy"]),
-            "fallback_modules": [str(m).strip() for m in (a.get("fallback_modules") or []) if str(m).strip()],
+            "fallback_modules": fallback_modules,
         }
+    if skipped_by_source:
+        LOG.info("Source switches skipped primary airline sources: %s", ", ".join(skipped_by_source))
+    if skipped_fallbacks:
+        LOG.info("Source switches skipped fallback sources: %s", ", ".join(skipped_fallbacks))
     LOG.info("Enabled airlines: %s", list(airlines.keys()))
     return airlines
 
@@ -1562,6 +1620,45 @@ def _resolve_module_query_workers(module_name: str) -> int:
     return _safe_positive_int(MODULE_QUERY_WORKER_DEFAULTS.get(normalized, 1), default=1)
 
 
+def _throttle_interval_seconds(throttle_per_minute: Any) -> float:
+    try:
+        per_minute = float(throttle_per_minute)
+    except Exception:
+        per_minute = 0.0
+    if per_minute <= 0:
+        return 0.0
+    return 60.0 / per_minute
+
+
+def _sleep_for_throttle(last_started_at: float | None, interval_seconds: float) -> float:
+    if interval_seconds <= 0 or last_started_at is None:
+        return time.perf_counter()
+    elapsed = time.perf_counter() - last_started_at
+    remaining = interval_seconds - elapsed
+    if remaining > 0:
+        time.sleep(remaining)
+    return time.perf_counter()
+
+
+def _source_retry_enabled() -> bool:
+    return str(os.getenv("RUN_ALL_SOURCE_RETRY_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_retry_fetched(fetched: Dict[str, Any]) -> tuple[bool, str]:
+    resp = fetched.get("resp") if isinstance(fetched, dict) else {}
+    rows = fetched.get("rows") if isinstance(fetched.get("rows"), list) else []
+    classification = classify_attempt(resp if isinstance(resp, dict) else {}, row_count=len(rows))
+    return bool(classification.get("retry_recommended")), str(classification.get("error_class") or "")
+
+
+def _record_extraction_attempt(attempt_rows: list[dict], attempt: dict) -> None:
+    attempt_rows.append(attempt)
+    try:
+        bulk_insert_extraction_attempts([attempt])
+    except Exception as exc:
+        LOG.warning("Failed to persist extraction_attempts row (continuing): %s", exc)
+
+
 def _fetch_query_execution(
     *,
     airline_code: str,
@@ -1985,12 +2082,13 @@ def main():
         "started_at_utc": now_utc.isoformat(),
         "accumulation_started_at_utc": now_utc.isoformat(),
         "query_timeout_seconds": float(args.query_timeout_seconds or 0),
+        "source_switches_file": str(args.source_switches_file),
         "search_passengers": {"adt": int(args.adt), "chd": int(args.chd), "inf": int(args.inf)},
         "search_trip": {"trip_type": args.trip_type, "return_date": args.return_date},
         "probe_group_id": (str(args.probe_group_id).strip() if args.probe_group_id else None),
     }
     _write_run_status(run_status, latest_path=heartbeat_latest, run_path=heartbeat_run)
-    airlines = load_airlines()
+    airlines = load_airlines(args.source_switches_file)
     all_enabled_airline_codes = sorted(list(airlines.keys()))
 
     selected_airlines = parse_csv_upper_codes(args.airline) if args.airline else []
@@ -2110,6 +2208,7 @@ def main():
 
     all_rows = []
     runtime_records = []
+    extraction_attempt_rows = []
     overall_query_completed = 0
     overall_started = time.perf_counter()
     overall_query_total = 0
@@ -2168,6 +2267,7 @@ def main():
                 "return_dates": return_dates,
                 "return_date_offsets": return_offsets,
             },
+            "source_switches_file": str(args.source_switches_file),
             "probe_group_id": (str(args.probe_group_id).strip() if args.probe_group_id else None),
         }
     )
@@ -2375,10 +2475,21 @@ def main():
                     )
 
                 fetched_results = []
+                throttle_interval = _throttle_interval_seconds(cfg.get("throttle"))
+                if throttle_interval > 0:
+                    LOG.info(
+                        "[%s] Throttle active: throttle_per_minute=%s interval=%.2fs",
+                        code,
+                        cfg.get("throttle"),
+                        throttle_interval,
+                    )
+                last_query_started_at = None
                 if query_workers > 1:
                     with ThreadPoolExecutor(max_workers=query_workers) as ex:
-                        future_map = {
-                            ex.submit(
+                        future_map = {}
+                        for task in pending_query_tasks:
+                            last_query_started_at = _sleep_for_throttle(last_query_started_at, throttle_interval)
+                            future = ex.submit(
                                 _fetch_query_execution,
                                 airline_code=code,
                                 module_name=cfg["module"],
@@ -2387,13 +2498,13 @@ def main():
                                 fallback_fetchers=fallback_fetchers,
                                 args=args,
                                 task=task,
-                            ): task
-                            for task in pending_query_tasks
-                        }
+                            )
+                            future_map[future] = task
                         for fut in as_completed(future_map):
                             fetched_results.append(fut.result())
                 else:
                     for task in pending_query_tasks:
+                        last_query_started_at = _sleep_for_throttle(last_query_started_at, throttle_interval)
                         fetched_results.append(
                             _fetch_query_execution(
                                 airline_code=code,
@@ -2406,6 +2517,46 @@ def main():
                             )
                         )
 
+                if _source_retry_enabled():
+                    retried_results = []
+                    retry_count = 0
+                    for fetched in fetched_results:
+                        should_retry, error_class = _should_retry_fetched(fetched)
+                        if not should_retry:
+                            retried_results.append(fetched)
+                            continue
+                        retry_count += 1
+                        retry_delay = min(30.0, max(2.0, throttle_interval))
+                        LOG.info(
+                            "[%s] Retrying source failure once for %s->%s %s (%s): error_class=%s delay=%.1fs",
+                            code,
+                            fetched.get("origin"),
+                            fetched.get("destination"),
+                            fetched.get("date"),
+                            fetched.get("cabin"),
+                            error_class,
+                            retry_delay,
+                        )
+                        time.sleep(retry_delay)
+                        retried = _fetch_query_execution(
+                            airline_code=code,
+                            module_name=cfg["module"],
+                            fetch_fn=fetch_fn,
+                            biman_fn=biman_fn,
+                            fallback_fetchers=fallback_fetchers,
+                            args=args,
+                            task=fetched,
+                        )
+                        raw = retried.get("resp", {}).setdefault("raw", {}) if isinstance(retried.get("resp"), dict) else {}
+                        if isinstance(raw, dict):
+                            raw["retry_previous_error_class"] = error_class
+                            raw["retry_previous_rows"] = len(fetched.get("rows") or [])
+                            raw["retry_attempted"] = True
+                        retried_results.append(retried)
+                    if retry_count:
+                        LOG.info("[%s] Source retry pass completed: retried=%d", code, retry_count)
+                    fetched_results = retried_results
+
                 for fetched in fetched_results:
                     dt = fetched["date"]
                     return_date = fetched.get("return_date")
@@ -2415,6 +2566,12 @@ def main():
                     elapsed = fetched["elapsed_sec"]
                     checkpoint_key = fetched["checkpoint_key"]
                     previous_by_day = fetched["previous_by_day"]
+                    inserted_core_count = 0
+                    inserted_raw_meta_count = 0
+                    raw_meta_matched = 0
+                    raw_meta_unmatched = 0
+                    raw_meta_match_modes = {}
+                    no_rows_reason = ""
                     airline_query_completed += 1
                     overall_query_completed += 1
                     run_status.update(
@@ -2578,12 +2735,13 @@ def main():
 
                         core_rows = dedupe_core_rows(core_rows)
                         if core_rows:
-                            bulk_insert_offers(core_rows)
+                            inserted_core_count = bulk_insert_offers(core_rows)
 
                         LOG.info(
-                            "[%s] CORE normalization: %d valid rows inserted, %d skipped",
+                            "[%s] CORE normalization: %d valid rows, %d inserted, %d skipped",
                             code,
                             len(core_rows),
+                            inserted_core_count,
                             skipped,
                         )
 
@@ -2722,7 +2880,7 @@ def main():
                                         continue
                                     seen_raw_meta.add(hk)
                                     deduped_raw_meta.append(item)
-                                bulk_insert_raw_meta(deduped_raw_meta)
+                                inserted_raw_meta_count = bulk_insert_raw_meta(deduped_raw_meta)
                                 raw_meta_to_insert = deduped_raw_meta
 
                         finally:
@@ -2733,7 +2891,7 @@ def main():
                             "[%s] Persisted %d core rows + %d raw-meta rows (matched=%d unmatched=%d exact=%d no_brand=%d no_fare_basis=%d core=%d)",
                             code,
                             len(core_rows),
-                            len(raw_meta_to_insert),
+                            inserted_raw_meta_count,
                             raw_meta_matched,
                             raw_meta_unmatched,
                             raw_meta_match_modes.get("exact", 0),
@@ -2787,12 +2945,26 @@ def main():
                         )
                         _write_run_status(run_status, latest_path=heartbeat_latest, run_path=heartbeat_run)
 
+                        attempt = build_attempt_row(
+                            scrape_id=str(scrape_id),
+                            cycle_id=str(scrape_id),
+                            airline=code,
+                            module_name=cfg["module"],
+                            fetched=fetched,
+                            inserted_core_count=inserted_core_count,
+                            inserted_raw_meta_count=inserted_raw_meta_count,
+                            raw_meta_matched=raw_meta_matched,
+                            raw_meta_unmatched=raw_meta_unmatched,
+                            raw_meta_match_modes=raw_meta_match_modes,
+                        )
+                        _record_extraction_attempt(extraction_attempt_rows, attempt)
 
 
                     else:
                         # Friendly message — we don't error out here.
                         # Distinguish genuinely empty markets from source-family failures.
                         reason_bits = _no_rows_reason_bits(resp)
+                        no_rows_reason = " | ".join(reason_bits)
 
                         if reason_bits:
                             LOG.info(
@@ -2822,6 +2994,16 @@ def main():
                         )
                         _write_run_status(run_status, latest_path=heartbeat_latest, run_path=heartbeat_run)
 
+                        attempt = build_attempt_row(
+                            scrape_id=str(scrape_id),
+                            cycle_id=str(scrape_id),
+                            airline=code,
+                            module_name=cfg["module"],
+                            fetched=fetched,
+                            no_rows_reason=no_rows_reason,
+                        )
+                        _record_extraction_attempt(extraction_attempt_rows, attempt)
+
     # ----------------------------
     # Save results
     # ----------------------------
@@ -2829,6 +3011,9 @@ def main():
     csv_path = OUTPUT_DIR / "combined_results.csv"
     json_path = OUTPUT_DIR / "combined_results.json"
     archive_path = OUTPUT_DIR / f"combined_results_{scrape_id}.json"
+    scope_label = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(args.airline or "all").strip() or "all")
+    scoped_json_path = OUTPUT_DIR / f"combined_results_{scrape_id}_{scope_label}.json"
+    scoped_csv_path = OUTPUT_DIR / f"combined_results_{scrape_id}_{scope_label}.csv"
 
     if json_path.exists():
         try:
@@ -2843,26 +3028,40 @@ def main():
     try:
         with json_path.open("w", encoding="utf-8") as f:
             json.dump(export_rows, f, indent=2)
+        with scoped_json_path.open("w", encoding="utf-8") as f:
+            json.dump(export_rows, f, indent=2)
     except Exception as e:
         LOG.error("Failed to write combined results JSON: %s", e)
 
     # Save CSV
-    if export_rows:
-        try:
-            import csv
-            keys = sorted({k for row in export_rows for k in row.keys()})
-            with csv_path.open("w", newline="", encoding="utf-8") as f:
-                w = csv.DictWriter(f, fieldnames=keys)
-                w.writeheader()
-                for row in export_rows:
-                    # ensure fields match header
-                    safe_row = {k: row.get(k, "") for k in keys}
-                    w.writerow(safe_row)
-            LOG.info("Saved CSV: %s (%d rows)", csv_path, len(export_rows))
-        except Exception as e:
-            LOG.error("Failed to write CSV: %s", e)
-    else:
-        LOG.warning("No rows to write.")
+    try:
+        _write_public_export_csv(csv_path, export_rows)
+        _write_public_export_csv(scoped_csv_path, export_rows)
+        LOG.info("Saved CSV: %s (%d rows)", csv_path, len(export_rows))
+        LOG.info("Saved worker-scoped exports: %s / %s", scoped_json_path, scoped_csv_path)
+        if not export_rows:
+            LOG.warning("No rows to write.")
+    except Exception as e:
+        LOG.error("Failed to write CSV: %s", e)
+
+    try:
+        health = write_health_reports(
+            extraction_attempt_rows,
+            output_dir=args.extraction_attempt_output_dir,
+            cycle_id=str(scrape_id),
+            expected_airlines=sorted(airlines.keys()),
+        )
+        LOG.info(
+            "Extraction health: status=%s attempts=%s failures=%s manual=%s retry=%s report=%s",
+            health.get("status"),
+            health.get("attempt_count"),
+            health.get("failure_count"),
+            health.get("manual_action_required_count"),
+            health.get("retry_recommended_count"),
+            (health.get("artifacts") or {}).get("latest_json"),
+        )
+    except Exception as exc:
+        LOG.warning("Failed to write extraction health report (continuing): %s", exc)
 
     LOG.info("Done. Total rows: %d", len(all_rows))
     run_status.update(

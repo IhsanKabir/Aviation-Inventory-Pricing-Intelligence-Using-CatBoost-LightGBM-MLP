@@ -34,6 +34,8 @@ except ModuleNotFoundError:
         sys.path.insert(0, repo_root)
     from modules.requester import Requester
 
+from core.source_switches import disabled_source_response, source_enabled
+
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(
@@ -870,6 +872,25 @@ def maldivian_search(
         inf=int(inf or 0),
     )
     if saved_capture:
+        from core.source_health import capture_is_stale, max_capture_age_hours
+
+        capture_summary_path = saved_capture["summary_path"]
+        staleness = capture_is_stale(
+            generated_at=(saved_capture.get("summary") or {}).get("captured_at_utc")
+            or (saved_capture.get("summary") or {}).get("generated_at_utc"),
+            path=capture_summary_path,
+            max_age_hours=max_capture_age_hours("MALDIVIAN_MAX_CAPTURE_AGE_HOURS"),
+        )
+        if staleness.get("stale"):
+            output["raw"]["source"] = "maldivian_capture"
+            output["raw"]["capture_summary_path"] = capture_summary_path
+            output["raw"]["capture_age_hours"] = staleness.get("age_hours")
+            output["raw"]["max_capture_age_hours"] = staleness.get("max_age_hours")
+            output["raw"]["error"] = "stale_capture"
+            output["raw"]["hint"] = (
+                "Saved Maldivian capture is stale. Run the Q2 manual capture flow and retry."
+            )
+            return output
         output["raw"]["source"] = "maldivian_capture"
         output["raw"]["capture_summary_path"] = saved_capture["summary_path"]
         output["raw"]["capture_fare_json_path"] = saved_capture["fare_json_path"]
@@ -927,6 +948,9 @@ def fetch_flights(
     Unified contract for run_all.py:
     { raw, originalResponse, rows, ok }
     """
+    if not source_enabled("maldivian"):
+        return disabled_source_response("maldivian")
+
     cookies_path = os.getenv(ENV_COOKIES_PATH) or None
     proxy_url = os.getenv(ENV_PROXY_URL) or None
     return maldivian_search(
@@ -940,6 +964,21 @@ def fetch_flights(
         cookies_path=cookies_path,
         proxy_url=proxy_url,
     )
+
+
+def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
+    from core.source_health import ok
+
+    return ok(
+        "maldivian",
+        message="manual PLNext capture connector; fresh per-route captures are validated during extraction",
+        runs_dir=str(RUNS_DIR),
+        manual_action_required=True,
+    )
+
+
+def check_session(*, dry_run: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    return check_source_health(dry_run=dry_run, **kwargs)
 
 
 def cli_main() -> None:

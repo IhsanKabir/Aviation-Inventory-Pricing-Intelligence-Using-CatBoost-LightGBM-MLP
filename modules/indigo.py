@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.source_switches import disabled_source_response, source_enabled
 from modules.requester import Requester
 from modules.sharetrip import fetch_flights_for_airline as fetch_from_sharetrip
 
@@ -535,6 +536,9 @@ def fetch_flights(
     Unified contract for run_all.py:
     { raw, originalResponse, rows, ok }
     """
+    if not source_enabled("indigo"):
+        return disabled_source_response("indigo")
+
     requested_code = str(airline_code or "6E").upper().strip()
     if requested_code != "6E":
         return {
@@ -598,6 +602,24 @@ def fetch_flights(
         "ok": bool(fallback.get("ok")),
     }
     return wrapped
+
+
+def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
+    from core.source_health import ok
+
+    headers_file = Path(os.getenv(ENV_HEADERS_FILE, DEFAULT_HEADERS_FILE))
+    return ok(
+        "indigo",
+        message="protected direct connector configured; direct session health is measured during extraction with ShareTrip fallback",
+        mode=str(os.getenv(ENV_SOURCE_MODE, "auto") or "auto"),
+        headers_file=str(headers_file),
+        headers_file_exists=headers_file.exists(),
+        manual_action_required=True,
+    )
+
+
+def check_session(*, dry_run: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    return check_source_health(dry_run=dry_run, **kwargs)
 
 
 def cli_main():

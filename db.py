@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 from models.flight_offer import FlightOfferORM
 from models.flight_offer_raw_meta import FlightOfferRawMetaORM
 from models.raw_offer_payload_store import RawOfferPayloadStoreORM
+from models.extraction_attempt import ExtractionAttemptORM
 from core.runtime_config import get_database_url
 from collections import Counter
 import hashlib
@@ -78,6 +79,75 @@ def _ensure_schema_extensions():
         "CREATE INDEX IF NOT EXISTS ix_flight_offer_raw_meta_trip_request_id ON flight_offer_raw_meta (trip_request_id)",
         "CREATE INDEX IF NOT EXISTS ix_flight_offer_raw_meta_offer_trip_filters ON flight_offer_raw_meta (flight_offer_id, search_trip_type, requested_return_date)",
         "CREATE INDEX IF NOT EXISTS ix_flight_offer_raw_meta_trip_scope_lookup ON flight_offer_raw_meta (search_trip_type, trip_origin, trip_destination, requested_return_date, flight_offer_id)",
+        """
+        CREATE TABLE IF NOT EXISTS extraction_attempts (
+            id SERIAL PRIMARY KEY,
+            scrape_id VARCHAR NOT NULL,
+            cycle_id VARCHAR,
+            query_key VARCHAR,
+            airline VARCHAR NOT NULL,
+            module_name VARCHAR,
+            source_family VARCHAR,
+            final_source VARCHAR,
+            fallback_used BOOLEAN DEFAULT FALSE,
+            origin VARCHAR,
+            destination VARCHAR,
+            departure_date VARCHAR,
+            return_date VARCHAR,
+            trip_type VARCHAR,
+            cabin VARCHAR,
+            adt_count INTEGER,
+            chd_count INTEGER,
+            inf_count INTEGER,
+            ok BOOLEAN DEFAULT FALSE,
+            row_count INTEGER DEFAULT 0,
+            inserted_core_count INTEGER DEFAULT 0,
+            inserted_raw_meta_count INTEGER DEFAULT 0,
+            raw_meta_matched INTEGER DEFAULT 0,
+            raw_meta_unmatched INTEGER DEFAULT 0,
+            raw_meta_match_modes JSONB,
+            elapsed_sec DOUBLE PRECISION,
+            error_class VARCHAR,
+            no_rows_reason VARCHAR,
+            manual_action_required BOOLEAN DEFAULT FALSE,
+            retry_recommended BOOLEAN DEFAULT FALSE,
+            capture_state JSONB,
+            session_state JSONB,
+            source_attempts JSONB,
+            meta JSONB,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+        """,
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS cycle_id VARCHAR",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS query_key VARCHAR",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS source_family VARCHAR",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS final_source VARCHAR",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS fallback_used BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS adt_count INTEGER",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS chd_count INTEGER",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS inf_count INTEGER",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS inserted_core_count INTEGER DEFAULT 0",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS inserted_raw_meta_count INTEGER DEFAULT 0",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS raw_meta_matched INTEGER DEFAULT 0",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS raw_meta_unmatched INTEGER DEFAULT 0",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS raw_meta_match_modes JSONB",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS manual_action_required BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS retry_recommended BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS capture_state JSONB",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS session_state JSONB",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS source_attempts JSONB",
+        "ALTER TABLE IF EXISTS extraction_attempts ADD COLUMN IF NOT EXISTS meta JSONB",
+        "CREATE INDEX IF NOT EXISTS ix_extraction_attempts_scrape_id ON extraction_attempts (scrape_id)",
+        "CREATE INDEX IF NOT EXISTS ix_extraction_attempts_cycle_id ON extraction_attempts (cycle_id)",
+        "CREATE INDEX IF NOT EXISTS ix_extraction_attempts_airline ON extraction_attempts (airline)",
+        "CREATE INDEX IF NOT EXISTS ix_extraction_attempts_module_name ON extraction_attempts (module_name)",
+        "CREATE INDEX IF NOT EXISTS ix_extraction_attempts_source_family ON extraction_attempts (source_family)",
+        "CREATE INDEX IF NOT EXISTS ix_extraction_attempts_error_class ON extraction_attempts (error_class)",
+        "CREATE INDEX IF NOT EXISTS ix_extraction_attempts_manual_action_required ON extraction_attempts (manual_action_required)",
+        "CREATE INDEX IF NOT EXISTS ix_extraction_attempts_query_key ON extraction_attempts (query_key)",
+        "CREATE INDEX IF NOT EXISTS ix_extraction_attempts_scrape_airline ON extraction_attempts (scrape_id, airline)",
+        "CREATE INDEX IF NOT EXISTS ix_extraction_attempts_route_window ON extraction_attempts (airline, origin, destination, departure_date, cabin)",
+        "CREATE INDEX IF NOT EXISTS ix_extraction_attempts_gate ON extraction_attempts (scrape_id, error_class, manual_action_required)",
     ]
     with engine.begin() as conn:
         for stmt in ddl:
@@ -440,6 +510,20 @@ def bulk_insert_raw_meta(rows):
         )
         session.commit()
         return len(prepared_rows)
+    finally:
+        session.close()
+
+
+def bulk_insert_extraction_attempts(rows):
+    if not rows:
+        return 0
+    allowed_columns = {c.name for c in ExtractionAttemptORM.__table__.columns}
+    prepared = [{k: v for k, v in dict(row).items() if k in allowed_columns} for row in rows]
+    session = get_session()
+    try:
+        session.bulk_insert_mappings(ExtractionAttemptORM, prepared)
+        session.commit()
+        return len(prepared)
     finally:
         session.close()
 

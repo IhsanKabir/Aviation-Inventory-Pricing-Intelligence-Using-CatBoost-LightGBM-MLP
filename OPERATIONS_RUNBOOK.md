@@ -25,7 +25,11 @@
    - `output/backups/db_restore_drill_latest.json`
 8. Confirm unified operator view:
    - `output/reports/operator_dashboard_latest.md`
-9. Confirm scheduled task entries are still present:
+9. Confirm latest extraction health:
+   - `output/reports/extraction_health_latest.md`
+   - `output/reports/extraction_health_latest.json`
+   - Expected status: `PASS` or explainable `WARN`; `FAIL` blocks BigQuery auto-sync.
+10. Confirm scheduled task entries are still present:
    - `AirlineIntel_DailyOps`
    - `AirlineIntel_WeeklyPack`
    - `AirlineIntel_MaintenancePulse`
@@ -59,6 +63,7 @@ Get-Content output\reports\smoke_check_latest.md
 Get-Content output\reports\data_sla_latest.md
 Get-Content output\reports\model_drift_latest.md
 Get-Content output\reports\operator_dashboard_latest.md
+Get-Content output\reports\extraction_health_latest.md
 Get-Content output\backups\db_backup_latest.json
 Get-Content output\backups\db_restore_test_latest.json
 Get-Content output\backups\db_restore_drill_latest.json
@@ -90,6 +95,7 @@ schtasks /Query /TN AirlineIntel_IngestionOnLogon /FO LIST /V | findstr /I /C:"S
 - `model_drift_latest.md`:
   - Drift groups reviewed when status is WARN/FAIL
 - `system_status_latest.md` points to current-day `ops_health_*` file.
+- `extraction_health_latest.md` shows `status: PASS` for a healthy publishable cycle, with no manual-action or retry-required source failures.
 - Pulse task repeats every 30 minutes.
 - Ingestion wrapper skips launches when:
   - a pipeline process is still active
@@ -147,7 +153,9 @@ Recommended checks:
 ```powershell
 Get-Service *postgres*
 .\.venv\Scripts\python.exe -c "import db; s=db.get_session(); print('db_ok'); s.close()"
+.\.venv\Scripts\python.exe tools\pre_flight_session_check.py --dry-run
 Get-Content output\reports\scrape_parallel_latest.json -TotalCount 120
+Get-Content output\reports\extraction_health_latest.md -TotalCount 120
 Get-Content output\reports\run_all_status_latest.json -TotalCount 80
 Get-Content output\reports\accumulation_wrapper_lock.json
 Get-Content output\reports\run_all_accumulation_status_latest.json -TotalCount 80
@@ -156,9 +164,39 @@ Get-Content output\reports\run_all_accumulation_status_latest.json -TotalCount 8
 Interpretation:
 
 - `scrape_parallel_latest.json` is the better source for whole-cycle airline coverage and worker outcomes.
+- `extraction_health_latest.json/md/csv` is the best source for source quality. It records per-query outcomes and should be checked before trusting a cycle for publication.
 - `run_all_status_latest.json` may only reflect the last worker heartbeat, not the full parallel cycle.
 - `run_all_accumulation_status_latest.json` is the wrapper/accumulation heartbeat, not the final source of whole-cycle truth.
 - `postgres_unreachable` from the recovery helper means do not launch or recover yet; restore PostgreSQL service health first.
+
+## Scheduler Timing
+
+Main timing config lives in `config/schedule.json` under `scheduler_timing`.
+
+- `global`: normal full ingestion timing.
+- `sources`: source/supplier timing for all airlines whose primary module is that source.
+- `airlines`: airline-specific timing.
+- `routes`: route-specific timing with `airline`, `origin`, and `destination`.
+
+Preview current timing:
+
+```powershell
+.\.venv\Scripts\python.exe tools\scheduler_timing_plan.py
+Get-Content output\reports\scheduler_timing_plan_latest.md
+```
+
+Install/update tasks:
+
+```powershell
+# Global all-source ingestion task
+powershell -ExecutionPolicy Bypass -File scheduler\install_ingestion_autorun.ps1
+
+# Optional source/airline/route scoped tasks
+powershell -ExecutionPolicy Bypass -File scheduler\install_scoped_ingestion_autorun.ps1 -WhatIf
+powershell -ExecutionPolicy Bypass -File scheduler\install_scoped_ingestion_autorun.ps1
+```
+
+Scoped source timing uses the airline's primary `module` in `config/airlines.json`; fallback-only suppliers are controlled with airline or route timing plus source modes/switches.
 
 ## Operational vs Training Cycles
 
@@ -769,15 +807,51 @@ SalamAir has two capture modes — choose based on environment:
 
 ---
 
-## Pre-Flight Session Check (AMYBD / GoZayaan)
+## Pre-Flight Session Check
 
-Before a pipeline run, validate that session-dependent OTA sources are live:
+Before a pipeline run, validate connector/session readiness:
 
 ```powershell
-# When tools/pre_flight_session_check.py is built:
-.\.venv\Scripts\python.exe tools\pre_flight_session_check.py
+.\.venv\Scripts\python.exe tools\pre_flight_session_check.py --dry-run
+```
 
-# Manual validation in the meantime:
+The pipeline runs this preflight by default. Use `--skip-preflight` only for manual debugging, and `--preflight-strict` when blocking findings should fail immediately.
+
+## Extraction Health Gate
+
+Extraction health is separate from process return code. A cycle can complete as a process but still be a bad data cycle.
+
+Key artifacts:
+
+- `output/reports/extraction_health_latest.json`
+- `output/reports/extraction_health_latest.md`
+- `output/reports/extraction_health_latest.csv`
+
+Useful commands:
+
+```powershell
+.\.venv\Scripts\python.exe run_pipeline.py --fail-on-extraction-gate --skip-bigquery-sync
+.\.venv\Scripts\python.exe run_pipeline.py --retry-missing-airlines
+.\.venv\Scripts\python.exe tools\extraction_health_report.py --cycle-id YOUR-CYCLE-ID --expected-airlines BG,VQ,BS,2A
+```
+
+Gate interpretation:
+
+- `PASS`: publishable, assuming downstream report/prediction checks pass.
+- `WARN`: publishable with review; usually clean no-inventory/zero-row attempts.
+- `FAIL`: do not publish to BigQuery. Review `Manual Action Needed` and `Retry Recommended` sections in the health report.
+
+Capture/session controls:
+
+- Default stale-capture limit: `MAX_CAPTURE_AGE_HOURS=8`.
+- Per-source overrides: `AIRARABIA_MAX_CAPTURE_AGE_HOURS`, `SALAMAIR_MAX_CAPTURE_AGE_HOURS`, `MALDIVIAN_MAX_CAPTURE_AGE_HOURS`, `GOZAYAAN_MAX_CAPTURE_AGE_HOURS`, `AIRASIA_MAX_CAPTURE_AGE_HOURS`.
+- ShareTrip-backed scheduled concurrency defaults to `PARALLEL_SHARETRIP_MAX_WORKERS=1`.
+- To temporarily remove any supplier/source from a run, edit `config/source_switches.json` and set that source's `"enabled": false`.
+- The source switch file disables primary airline modules and nested fallback suppliers. `SHARETRIP_ENABLED=false` still works as a legacy ShareTrip-only override.
+
+Manual session checks:
+
+```powershell
 # AMYBD session check
 .\.venv\Scripts\python.exe -m modules.amybd --airline BS --origin DAC --destination CGP --date 2026-04-20 --cabin Economy
 

@@ -8,7 +8,7 @@ This repository is an end-to-end airline intelligence pipeline, from data collec
 
 End-to-end pipeline:
 
-`Airline + OTA collection -> normalization -> PostgreSQL cycle snapshots -> Excel/report outputs -> ML/DL forecasting -> BigQuery curated warehouse -> FastAPI -> Next.js web app`
+`Airline + OTA collection -> normalization -> PostgreSQL cycle snapshots -> Excel/report outputs -> ML/DL forecasting -> BigQuery hot cache -> FastAPI -> Next.js web app`
 
 It is built around:
 
@@ -20,7 +20,7 @@ It is built around:
 
 ## What This Project Does
 
-This project captures flight offer data from airline-direct and OTA channels, stores normalized cycle snapshots in local PostgreSQL for operational collection/training, generates operational Excel workbooks, and publishes curated analytics plus ML/DL outputs into BigQuery for hosted reads and BI.
+This project captures flight offer data from airline-direct and OTA channels, stores normalized cycle snapshots in local PostgreSQL for operational collection/training, generates operational Excel workbooks, and publishes a bounded recent slice plus ML/DL outputs into BigQuery for hosted reads and current BI.
 
 Current implemented scope:
 
@@ -30,7 +30,7 @@ Current implemented scope:
 - penalty and tax comparison sheets
 - ML/DL prediction pipeline with optional `catboost`, `lightgbm`, and `mlp`
 - FastAPI reporting API for the web phase
-- BigQuery-backed hosted analytics, forecasting, and BI handoff
+- BigQuery-backed hosted hot-cache analytics, forecasting, and BI handoff
 
 Core project decisions and operating policy live in:
 
@@ -67,7 +67,8 @@ Core project decisions and operating policy live in:
 3. Group parallel airline runs into one shared `cycle_id`.
 4. Compare current vs previous cycle snapshots.
 5. Generate operational Excel outputs, API-ready reporting views, and forecasting artifacts.
-6. After successful pipeline runs, export/load a rolling recent capture window into BigQuery for hosted reads, BI, and long-horizon analytics.
+6. Write extraction health artifacts so source quality is measured separately from process exit.
+7. After successful pipeline runs with extraction health not `FAIL`, export/load a rolling recent capture window into BigQuery for hosted reads and current BI.
 
 ## Target Platform Split
 
@@ -77,8 +78,11 @@ Core project decisions and operating policy live in:
 - Hosted application:
   FastAPI reporting API + Next.js frontend on top of BigQuery curated reads.
 
-- Historical analytics and BI:
-  BigQuery curated warehouse + Looker Studio dashboards.
+- Historical analytics:
+  local PostgreSQL, database backups, and ignored Parquet exports.
+
+- Current hosted BI:
+  bounded BigQuery hot-cache tables + Looker Studio dashboards.
 
 - Excel:
   Keep as export and delivery format, not as the primary interactive analysis surface.
@@ -116,22 +120,77 @@ Run the full pipeline:
 
 Automatic BigQuery sync now runs after a successful `run_pipeline.py` execution when:
 
+- `BIGQUERY_SYNC_ENABLED=1` is set or `--bigquery-sync-enabled` is passed
 - `BIGQUERY_PROJECT_ID` is configured
 - `BIGQUERY_DATASET` is configured
 - `--skip-bigquery-sync` is not used
+- extraction health is not `FAIL`
 
 Useful controls:
 
 ```powershell
-.\.venv\Scripts\python.exe run_pipeline.py --bigquery-sync-lookback-days 7
+.\.venv\Scripts\python.exe run_pipeline.py --bigquery-sync-enabled --bigquery-sync-lookback-days 2 --bigquery-load-mode partition-refresh
 .\.venv\Scripts\python.exe run_pipeline.py --skip-bigquery-sync
 .\.venv\Scripts\python.exe run_pipeline.py --fail-on-bigquery-sync-error
+.\.venv\Scripts\python.exe run_pipeline.py --fail-on-extraction-gate
+```
+
+Extraction health and preflight:
+
+```powershell
+.\.venv\Scripts\python.exe tools\pre_flight_session_check.py --dry-run
+Get-Content output\reports\extraction_health_latest.md
+```
+
+Temporarily disable a supplier/source by editing [config/source_switches.json](config/source_switches.json):
+
+```json
+{
+  "sources": {
+    "sharetrip": { "enabled": false, "reason": "temporary upstream issue" }
+  }
+}
+```
+
+The source switch file is applied by `run_pipeline.py`, `run_all.py`, the parallel airline runner, preflight checks, and nested OTA fallback calls. `SHARETRIP_ENABLED=false` is still supported as a legacy ShareTrip-only override.
+
+```powershell
+$env:SHARETRIP_ENABLED="false"
+.\.venv\Scripts\python.exe run_pipeline.py --skip-bigquery-sync
 ```
 
 Manual operational run on a laptop:
 
 ```powershell
 cmd /c scheduler\run_ingestion_4h_once.bat
+```
+
+Scheduler timing:
+
+Edit `config/schedule.json` -> `scheduler_timing`.
+
+- `scheduler_timing.global` sets the normal all-source ingestion start time and cadence.
+- `scheduler_timing.sources` can schedule all airlines whose primary module is a supplier/source.
+- `scheduler_timing.airlines` can schedule one airline.
+- `scheduler_timing.routes` can schedule one airline route.
+
+Preview the resolved plan:
+
+```powershell
+.\.venv\Scripts\python.exe tools\scheduler_timing_plan.py
+```
+
+Apply the global Windows task:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scheduler\install_ingestion_autorun.ps1
+```
+
+Apply enabled source/airline/route Windows tasks:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scheduler\install_scoped_ingestion_autorun.ps1 -WhatIf
+powershell -ExecutionPolicy Bypass -File scheduler\install_scoped_ingestion_autorun.ps1
 ```
 
 Disable operational autorun on intermittently powered laptops:
@@ -168,6 +227,13 @@ Stage BigQuery export files:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\export_bigquery_stage.py --output-dir output\warehouse\bigquery --start-date 2026-03-01 --end-date 2026-03-07
+```
+
+Apply and audit BigQuery hot-cache retention:
+
+```powershell
+.\.venv\Scripts\python.exe tools\bigquery_apply_retention.py --project-id aeropulseintelligence --dataset aviation_intel --hot-days 35 --forecast-days 90 --time-travel-hours 48 --apply
+.\.venv\Scripts\python.exe tools\bigquery_storage_audit.py --project-id aeropulseintelligence --dataset aviation_intel
 ```
 
 Run local CI checks:

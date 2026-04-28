@@ -18,6 +18,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
+from core.source_switches import disabled_source_response, source_enabled
 from modules.requester import Requester
 
 
@@ -365,6 +366,9 @@ def fetch_flights_for_airline(
     cookies_path: Optional[str] = None,
     proxy_url: Optional[str] = None,
 ) -> Dict[str, Any]:
+    if not source_enabled("bdfare"):
+        return disabled_source_response("bdfare")
+
     cookies = cookies_path or os.getenv(ENV_COOKIES_PATH) or None
     proxy = proxy_url or os.getenv(ENV_PROXY_URL) or None
     req = Requester(cookies_path=cookies, user_agent=USER_AGENT, proxy_url=proxy)

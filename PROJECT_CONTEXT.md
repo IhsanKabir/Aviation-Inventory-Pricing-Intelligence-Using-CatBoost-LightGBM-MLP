@@ -1,6 +1,6 @@
 # Project Context - Aero Pulse Intelligence Platform
 
-Last updated: 2026-04-26
+Last updated: 2026-04-27
 
 This is the single handoff file for future chats and future work. Read this first, then use the linked source docs when deeper detail is needed. Keep this file updated whenever architecture, behavior, commands, deployment, data contracts, or product decisions change.
 
@@ -14,24 +14,43 @@ This is the single handoff file for future chats and future work. Read this firs
 
 ## One-Sentence Summary
 
-Aero Pulse is a Python + PostgreSQL airline fare/inventory intelligence pipeline with reporting, forecasting, BigQuery warehouse export, FastAPI reporting endpoints, and a Next.js operational web monitor.
+Aero Pulse is a Python + PostgreSQL airline fare/inventory intelligence pipeline with reporting, forecasting, bounded BigQuery hot-cache export, FastAPI reporting endpoints, and a Next.js operational web monitor.
 
 Core flow:
 
 ```text
-Airline/OTA connectors -> normalized PostgreSQL cycle snapshots -> comparisons/change events -> Excel reports + ML/DL forecasting -> BigQuery curated warehouse -> FastAPI -> Next.js + Looker Studio
+Airline/OTA connectors -> normalized PostgreSQL cycle snapshots -> comparisons/change events -> Excel reports + ML/DL forecasting -> BigQuery hot cache -> FastAPI -> Next.js + Looker Studio
 ```
 
 ## Current Repo State
 
 - Worktree reviewed clean on 2026-04-26 before creating this file.
+- Cleanup/verification pass completed on 2026-04-27; see **Current Known Verification Status**.
 - Main runtime language: Python.
 - Web app: Next.js 15, React 19, TypeScript, Vercel-ready.
+- Node engine warnings during local web installs are expected if the workstation Node differs from the deployed/Vercel runtime; `apps/web/package.json` currently pins the intended engine and verification should rely on lint/build results.
 - API: FastAPI, BigQuery-first hosted reads with PostgreSQL fallback/transitional endpoints.
 - Operational data store: local PostgreSQL.
-- Hosted analytics/read store: BigQuery sandbox/curated warehouse.
+- Hosted analytics/read cache: BigQuery sandbox/curated hot-cache tables with bounded retention.
 - BI layer: Looker Studio.
 - Excel remains an export/delivery artifact, not the intended primary interactive UI.
+
+## Current Known Verification Status
+
+As of the 2026-04-27 cleanup pass:
+
+- Python compile passed for the tracked source surface.
+- `pytest -q` passed: 122 tests.
+- `tools/validate_trip_config.py` passed with 0 warnings and 0 errors.
+- `tools/ci_checks.py --allow-db-skip --reports-dir output\reports --timestamp-tz local` passed with `ci_ok=True`.
+- `alembic heads` and `alembic current` both report `ce8cc3cd3452 (head)`.
+- `npm run lint` and `npm run build` pass in `apps/web`; production build no longer logs `ECONNREFUSED 127.0.0.1:8000` when API env vars are absent.
+- `tools/db_backup.py`, `tools/db_restore_test.py --mode toc`, and `tools/smoke_check.py` passed locally; restore TOC validation saw 90 entries.
+- BigQuery cost-control implementation passed `pytest -q` with 130 tests, full compileall, retention DDL dry-run, no-load partition-refresh export staging, web lint, and web build.
+- Live BigQuery follow-up on 2026-04-27 succeeded: enabled `INFORMATION_SCHEMA.TABLE_STORAGE` for `region-asia-south1`, applied 35-day retention to core scraper fact tables and 90-day retention to partitioned forecast/backtest tables, excluded tiny GDS facts and unpartitioned winner tables, and confirmed `tools/bigquery_storage_audit.py` reports `partition_retention_warnings=0`.
+- Data extraction reliability focused checks passed on 2026-04-27: compileall over `core`, `models`, `modules`, `tools`, `run_all.py`, `run_pipeline.py`, and `db.py`; focused extraction/preflight/gate tests passed with 7 tests; `tools\pre_flight_session_check.py --dry-run` returned `status=PASS` for 22 enabled airlines.
+- ShareTrip kill switch was verified on 2026-04-27: with `SHARETRIP_ENABLED=false`, `run_all.load_airlines()` resolves 9 active non-ShareTrip airlines (`2A,6E,AK,BG,BS,G9,OV,Q2,VQ`), strips ShareTrip fallbacks, and preflight returns `status=PASS` for those 9.
+- Backup/report artifacts under `output/` remain generated runtime output and should stay uncommitted.
 
 ## Main Entry Points
 
@@ -54,6 +73,10 @@ Airline/OTA connectors -> normalized PostgreSQL cycle snapshots -> comparisons/c
 - Market/holiday templates live in `config/market_priors.json` and `config/holiday_calendar.json`.
 - Collection supports `operational`, `training`, and `deep` trip-plan modes.
 - A shared `cycle_id`/`scrape_id` groups parallel airline runs into one comparable snapshot.
+- Extraction quality is gated separately from process exit. `run_all.py` records per-query `extraction_attempts` and writes `output/reports/extraction_health_latest.{json,md,csv}` with `PASS`, `WARN`, or `FAIL`.
+- `run_pipeline.py` runs `tools/pre_flight_session_check.py --dry-run` before extraction unless `--skip-preflight` is used; `--preflight-strict` makes blocking preflight findings fatal.
+- `throttle_per_minute` in `config/airlines.json` is honored at query launch time. ShareTrip-backed scheduled concurrency defaults to `PARALLEL_SHARETRIP_MAX_WORKERS=1`.
+- Capture/manual sources reject stale captures by default through `MAX_CAPTURE_AGE_HOURS=8`; per-source overrides exist for Air Arabia, SalamAir, Maldivian, GoZayaan, and AirAsia.
 
 ### Normalization and Storage
 
@@ -61,6 +84,7 @@ Airline/OTA connectors -> normalized PostgreSQL cycle snapshots -> comparisons/c
 - Extended raw/search metadata is stored in `flight_offer_raw_meta` via `models/flight_offer_raw_meta.py`.
 - Change events are stored in `change_events` via `models/change_event.py`.
 - Raw payload storage and raw meta helpers preserve source detail for later audit/feature work.
+- Extraction telemetry is stored in `extraction_attempts` via `models/extraction_attempt.py`; each attempt captures source family, final source, fallback use, row/insert counts, raw-meta match stats, elapsed time, error class, no-row reason, manual/retry flags, and capture/session state.
 - `db.py` owns local engine/session setup, additive schema safeguards, bulk inserts, raw metadata normalization, and via-airport inference.
 
 ### Change Detection and Reporting
@@ -81,9 +105,13 @@ Airline/OTA connectors -> normalized PostgreSQL cycle snapshots -> comparisons/c
 ### Warehouse and Hosted Reads
 
 - Local PostgreSQL remains the operational/training store.
-- BigQuery is the hosted analytics/read layer.
+- BigQuery is the hosted website/read hot cache, not the long-term source of truth.
 - Curated warehouse tables include airline/route dimensions, cycle runs, offer snapshots, change events, penalties, taxes, forecast bundles, forecast evals, route winners, next-day forecasts, and backtest outputs.
 - BigQuery export/loading is handled through `tools/export_bigquery_stage.py`, `tools/load_bigquery_latest.ps1`, and SQL under `sql/bigquery/`.
+- Default BigQuery policy: explicit opt-in sync with `BIGQUERY_SYNC_ENABLED=1`, `BIGQUERY_SYNC_LOOKBACK_DAYS=2`, `BIGQUERY_LOAD_MODE=partition-refresh`, 35-day core scraper hot fact retention, and 90-day retention for partitioned forecast/backtest tables. GDS facts and currently unpartitioned tiny winner tables are intentionally excluded for now because their storage footprint is small.
+- Automatic BigQuery sync is skipped when the extraction gate is `FAIL`, even if the scrape process returned `0`. Use `--fail-on-extraction-gate` when scheduled runs should return non-zero for that condition.
+- Live dataset `aeropulseintelligence.aviation_intel` is in `asia-south1`; storage metrics collection is enabled through `region-asia-south1.enable_info_schema_storage`.
+- Long-term history remains in local PostgreSQL, database backups, and ignored Parquet exports under `output/warehouse/`.
 
 ### API
 
@@ -242,6 +270,36 @@ Stage BigQuery export:
 .\.venv\Scripts\python.exe tools\export_bigquery_stage.py --output-dir output\warehouse\bigquery --start-date 2026-03-01 --end-date 2026-03-07
 ```
 
+Apply BigQuery hot-cache retention:
+
+```powershell
+.\.venv\Scripts\python.exe tools\bigquery_apply_retention.py --project-id aeropulseintelligence --dataset aviation_intel --hot-days 35 --forecast-days 90 --time-travel-hours 48 --apply
+```
+
+Audit BigQuery storage:
+
+```powershell
+.\.venv\Scripts\python.exe tools\bigquery_storage_audit.py --project-id aeropulseintelligence --dataset aviation_intel
+```
+
+Preflight and extraction health:
+
+```powershell
+.\.venv\Scripts\python.exe tools\pre_flight_session_check.py --dry-run
+.\.venv\Scripts\python.exe run_pipeline.py --skip-reports --skip-prediction --skip-bigquery-sync --limit-routes 1 --limit-dates 1
+.\.venv\Scripts\python.exe run_pipeline.py --fail-on-extraction-gate --retry-missing-airlines
+.\.venv\Scripts\python.exe tools\extraction_health_report.py --cycle-id YOUR-CYCLE-ID --expected-airlines BG,VQ,BS,2A
+Get-Content output\reports\extraction_health_latest.md
+```
+
+Temporarily disable ShareTrip-backed collection and fallbacks:
+
+```powershell
+$env:SHARETRIP_ENABLED="false"
+.\.venv\Scripts\python.exe tools\pre_flight_session_check.py --dry-run
+.\.venv\Scripts\python.exe tools\audit_airline_source_plan.py
+```
+
 ## Source Directory Map
 
 - `.github/`: GitHub workflows and automation metadata.
@@ -263,8 +321,8 @@ Stage BigQuery export:
 - `parsers/`: parser utilities.
 - `scheduler/`: Windows/Linux scheduler wrappers and always-on maintenance.
 - `sql/`: PostgreSQL/BigQuery schema and view SQL.
-- `tests/`: pytest coverage for trip config, route classification, parsers/connectors, retry policy, prediction monitor, imputation, offer identity, booking curve, route characteristics, fleet mapping, and related behavior.
-- `tools/`: diagnostics, export/load, manual capture, HAR import, training, monitoring, maintenance, deployment, hygiene, and recovery helpers.
+- `tests/`: pytest coverage for trip config, route classification, parsers/connectors, retry policy, extraction health/preflight gates, prediction monitor, imputation, offer identity, booking curve, route characteristics, fleet mapping, and related behavior.
+- `tools/`: diagnostics, export/load, manual capture, HAR import, extraction health/preflight, training, monitoring, maintenance, deployment, hygiene, and recovery helpers.
 - `warehouse/bigquery/`: BigQuery setup, Looker, forecasting dashboard, and bootstrap documentation.
 - `workflows/`: n8n/manual-assisted workflow JSON.
 
@@ -313,7 +371,7 @@ Stage BigQuery export:
 - Some airline-direct endpoints are protected by WAF/anti-bot systems.
 - BS/2A TTInteractive remains DataDome-protected; OTA fallback chain exists but is fragile.
 - Q2/Maldivian and some other sources are session/UI-state sensitive.
-- AMYBD/GoZayaan sessions can expire silently; a pre-flight session check is desired.
+- AMYBD/GoZayaan sessions can expire silently; preflight contracts now exist, but route/date-level validity is still proven by extraction attempts.
 - OV/SalamAir validation and route expansion remain noted in daily tracking.
 - G9/Air Arabia direct connector/HAR workflow was noted as newly upgraded around 2026-04-09.
 - Accumulation runtime is the main bottleneck; parallel execution should be conservative and family-aware.
@@ -328,13 +386,18 @@ Stage BigQuery export:
 | 2026-03-09 | Keep one-way facts canonical; represent round-trip as search-intent/raw-meta link metadata first. | `docs/ROUND_TRIP_ARCHITECTURE.md`, `core/trip_context.py`, `run_all.py`, `models/flight_offer_raw_meta.py` |
 | 2026-03-09 | Runtime bottleneck is accumulation/search time, not prediction or BigQuery sync. | `OPERATIONS_RUNBOOK.md`, `run_pipeline.py`, scheduler wrappers |
 | 2026-03-20 | Platform vision confirmed: monitoring, pricing intelligence, revenue prediction, benchmarking, later semi-automation. | `PROJECT_DECISIONS.md` |
-| 2026-03-20 | Local PostgreSQL remains operational/training store; BigQuery becomes hosted analytics/read layer. | `README.md`, `PROJECT_DECISIONS.md`, `warehouse/bigquery/README.md` |
+| 2026-03-20 | Local PostgreSQL remains operational/training store; BigQuery became the hosted read layer; superseded on 2026-04-27 to bounded hot-cache scope. | `README.md`, `PROJECT_DECISIONS.md`, `warehouse/bigquery/README.md` |
 | 2026-03-20 | Scheduler should be finish-driven/sequential with completion buffers and DB fail-fast behavior. | `PROJECT_DECISIONS.md`, `OPERATIONS_RUNBOOK.md`, `scheduler/` |
 | 2026-03-22 | Bangladesh domestic trip-profile membership bug identified and corrected; OW baseline must appear in both candidate and active profile lists. | `PROJECT_DECISIONS.md`, `config/route_trip_windows.json`, `config/TRIP_PROFILE_GUIDE.md` |
 | 2026-03-23 | Six quick-win forecasting improvements verified; Phase 2 integration path defined. | Historical status docs later consolidated into `PROJECT_CONTEXT.md`. |
 | 2026-04-09 | Hard-source reliability plan added for session-dependent OTA/manual/browser-capture sources. | Historical tracking docs later consolidated into `PROJECT_CONTEXT.md`. |
 | 2026-04-09 | Parallel execution strategy should group source families and profile before expansion. | `tools/parallel_airline_runner.py`, `run_pipeline.py`, and historical roadmap notes consolidated here. |
 | 2026-04-26 | Created this single new-chat handoff and living update file. | `PROJECT_CONTEXT.md` |
+| 2026-04-27 | Repair Alembic history in place when autogenerated migrations contain accidental destructive operations, while preserving revision IDs. | `alembic/versions/`, `alembic/env.py`, `models/__init__.py` |
+| 2026-04-27 | Web data helpers must skip production static-build API fetches when no API base URL is configured, while retaining localhost fallback for local development. | `apps/web/lib/api.ts`, `apps/web/lib/gds.ts` |
+| 2026-04-27 | BigQuery is a bounded hosted hot cache, not the long-term history store; history remains in PostgreSQL, backups, and Parquet exports. | `run_pipeline.py`, `tools/export_bigquery_stage.py`, `tools/bigquery_apply_retention.py`, `tools/bigquery_storage_audit.py`, `warehouse/bigquery/README.md` |
+| 2026-04-27 | Live BigQuery retention was applied manually through BigQuery SQL console because the local loader service account lacked `bigquery.datasets.update`. | `aeropulseintelligence.aviation_intel`, BigQuery SQL console |
+| 2026-04-27 | Extraction quality is a first-class gate separate from process exit; BigQuery auto-sync must not publish when extraction health is `FAIL`. | `run_all.py`, `run_pipeline.py`, `models/extraction_attempt.py`, `core/extraction_health.py`, `tools/pre_flight_session_check.py` |
 
 ## Change Log
 
@@ -344,6 +407,10 @@ Stage BigQuery export:
 | 2026-04-26 | Linked `PROJECT_CONTEXT.md` from `README.md`. | Makes the new handoff file discoverable from the main project entry point. |
 | 2026-04-26 | Removed redundant/archived Markdown files after consolidating context. | Kept authoritative manuals and current app/API/warehouse/config docs; removed old status, roadmap, checklist, and archived Markdown files. |
 | 2026-04-26 | Cleaned generated local artifacts. | Removed Python bytecode caches outside `.venv`, pytest cache, CatBoost training cache, temporary scrape folders/files, local verification logs, and one `.bak` file. |
+| 2026-04-27 | Completed remaining repo cleanup and verification pass. | Added ESLint CLI setup, prevented production build-time localhost API fetches, repaired Alembic migration history, imported `StrategySignal` for metadata, de-duplicated BG trip profiles, refreshed `requirements-lock.txt`, removed tracked runtime artifacts, generated local backup/restore sentinels, and confirmed smoke `PASS`. |
+| 2026-04-27 | Added BigQuery cost controls. | Added explicit sync opt-in, 2-day default sync window, partition-refresh loading, hot-cache retention tooling, storage audit tooling, daily scheduled sync cadence, docs for 35-day core scraper hot facts, and 90-day partitioned forecast/backtest retention. GDS facts and unpartitioned tiny winner tables are excluded for now due to low storage footprint. |
+| 2026-04-27 | Applied live BigQuery cost-control settings. | Enabled storage metrics for `region-asia-south1`, applied retention in BigQuery console, and verified `partition_retention_warnings=0`. Current largest table remains `fact_change_event`, now bounded by retention. |
+| 2026-04-27 | Added extraction reliability telemetry and gates. | Added `extraction_attempts`, per-query health classification, latest JSON/MD/CSV health reports, connector health contracts, preflight tool, stale-capture rejection, throttled query launch, one retry pass for retryable source failures, worker-scoped output aggregation, protected-source manual queues for `Q2`, `G9`, `OV`, `BS`, and `2A`, stale-date filtering for manual queues, ShareTrip kill-switch support, and BigQuery skip-on-`FAIL` behavior. |
 
 ## How Future Chats Should Start
 

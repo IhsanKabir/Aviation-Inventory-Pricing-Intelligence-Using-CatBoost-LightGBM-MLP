@@ -21,6 +21,8 @@ except ModuleNotFoundError:
     from modules.requester import Requester, RequesterError
     from modules.sharetrip import fetch_flights_for_airline as fetch_from_sharetrip
 
+from core.source_switches import disabled_source_response, source_enabled
+
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
@@ -648,6 +650,23 @@ def _fetch_from_capture(*, origin: str, destination: str, date: str, cabin: str,
         out["raw"]["error"] = "capture_not_found"
         out["raw"]["hint"] = _direct_search_hint(origin, destination, date)
         return out
+    from core.source_health import capture_is_stale, max_capture_age_hours
+
+    staleness = capture_is_stale(
+        generated_at=summary.get("captured_at_utc") or summary.get("generated_at_utc"),
+        path=capture_path,
+        max_age_hours=max_capture_age_hours("AIRASIA_MAX_CAPTURE_AGE_HOURS"),
+    )
+    out["raw"].update(
+        {
+            "capture_age_hours": staleness.get("age_hours"),
+            "max_capture_age_hours": staleness.get("max_age_hours"),
+        }
+    )
+    if staleness.get("stale"):
+        out["raw"]["error"] = "stale_capture"
+        out["raw"]["hint"] = _direct_search_hint(origin, destination, date)
+        return out
     payload = _response_payload_from_summary(summary)
     out["raw"]["captured_at_utc"] = summary.get("captured_at_utc")
     out["originalResponse"] = payload
@@ -729,6 +748,9 @@ def fetch_direct(*, origin: str, destination: str, date: str, cabin: str = "Econ
 
 
 def fetch_flights(origin: str, destination: str, date: str, cabin: str = "Economy", adt: int = 1, chd: int = 0, inf: int = 0, airline_code: Optional[str] = None):
+    if not source_enabled("airasia"):
+        return disabled_source_response("airasia")
+
     requested_code = str(airline_code or AIRLINE_CODE).upper().strip()
     if requested_code != AIRLINE_CODE:
         return {"raw": {"source": "airasia_direct", "error": "unsupported_airline_code", "hint": f"modules.airasia only supports airline_code={AIRLINE_CODE}."}, "originalResponse": None, "rows": [], "ok": False}
@@ -743,6 +765,23 @@ def fetch_flights(origin: str, destination: str, date: str, cabin: str = "Econom
         return direct
     fallback = fetch_from_sharetrip(airline_code=AIRLINE_CODE, origin=origin, destination=destination, date=date, cabin=cabin, adt=adt, chd=chd, inf=inf)
     return {"raw": {"source": "airasia_auto", "direct": direct.get("raw", {}), "fallback_source": "sharetrip", "fallback_ok": bool(fallback.get("ok"))}, "originalResponse": fallback.get("originalResponse"), "rows": fallback.get("rows") if isinstance(fallback.get("rows"), list) else [], "ok": bool(fallback.get("ok"))}
+
+
+def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
+    from core.source_health import ok
+
+    return ok(
+        "airasia",
+        message="session/capture-backed connector; session replay and fresh captures are validated during extraction",
+        mode=str(os.getenv(ENV_SOURCE_MODE, "auto") or "auto"),
+        session_file=str(_session_file_path()),
+        capture_root=str(_capture_root_path()),
+        manual_action_required=True,
+    )
+
+
+def check_session(*, dry_run: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    return check_source_health(dry_run=dry_run, **kwargs)
 
 
 def cli_main() -> None:

@@ -20,6 +20,7 @@ import sys
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
+from core.source_switches import disabled_source_response, source_enabled, source_switch_status
 from modules.requester import Requester
 
 
@@ -599,6 +600,9 @@ def fetch_flights_for_airline(
     cookies_path: Optional[str] = None,
     proxy_url: Optional[str] = None,
 ) -> Dict[str, Any]:
+    if not source_enabled("amybd"):
+        return disabled_source_response("amybd")
+
     cookies = _resolve_initial_cookies_path(cookies_path)
     proxy = proxy_url or os.getenv(ENV_PROXY_URL) or None
     auto_refresh_session = _env_bool(ENV_SESSION_AUTO_REFRESH, default=False)
@@ -823,6 +827,43 @@ def fetch_flights_for_airline(
                         )
     out["ok"] = True
     return out
+
+
+def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
+    from core.source_health import ok, warn
+
+    status = source_switch_status("amybd")
+    if not status.get("enabled"):
+        return warn(
+            "amybd",
+            message="; ".join(status.get("reasons") or []) or "AMYBD connector is disabled",
+            blocking=False,
+            configured_enabled=False,
+        )
+
+    missing = _missing_session_material()
+    payload = {
+        "source": "amybd",
+        "session_summary_file": _session_summary_file(),
+        "cookies_cache_file": DEFAULT_COOKIES_CACHE_FILE,
+        "manual_action_required": missing,
+    }
+    if missing:
+        return warn(
+            "amybd",
+            message="AMYBD session/token material is missing; refresh manual session before relying on this source",
+            blocking=False,
+            **payload,
+        )
+    return ok(
+        "amybd",
+        message="session material present; validity is measured per extraction attempt",
+        **payload,
+    )
+
+
+def check_session(*, dry_run: bool = True, **kwargs: Any) -> Dict[str, Any]:
+    return check_source_health(dry_run=dry_run, **kwargs)
 
 
 def cli_main():

@@ -609,7 +609,6 @@
           "market_trip_profiles": [
             "default_one_way_monitoring",
             "bangladesh_domestic_round_trip_short",
-            "default_one_way_monitoring",
             "bangladesh_domestic_eid_round_trip_2026",
             "bangladesh_domestic_eid_capital_outbound_one_way_2026"
           ],
@@ -669,7 +668,6 @@
           "market_trip_profiles": [
             "default_one_way_monitoring",
             "bangladesh_domestic_round_trip_short",
-            "default_one_way_monitoring",
             "bangladesh_domestic_eid_round_trip_2026",
             "bangladesh_domestic_eid_capital_outbound_one_way_2026"
           ],

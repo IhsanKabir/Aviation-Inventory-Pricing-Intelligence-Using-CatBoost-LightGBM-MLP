@@ -38,6 +38,7 @@ logs/
 n8n workflow.txt
 
 *.log
+*.pid
 
 # Local runtime/debug artifacts (non-source)
 cookies.json

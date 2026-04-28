@@ -8,6 +8,8 @@ param(
     [string]$ProjectId = "aeropulseintelligence",
     [string]$Dataset = "aviation_intel",
     [string]$OutputDir = "output/warehouse/bigquery",
+    [ValidateSet("partition-refresh", "append", "replace")]
+    [string]$LoadMode = "partition-refresh",
     [switch]$Replace
 )
 
@@ -30,6 +32,10 @@ $env:GOOGLE_APPLICATION_CREDENTIALS = (Resolve-Path -LiteralPath $CredentialsJso
 $env:BIGQUERY_PROJECT_ID = $ProjectId
 $env:BIGQUERY_DATASET = $Dataset
 
+if ($Replace) {
+    $LoadMode = "replace"
+}
+
 $args = @(
     "tools/export_bigquery_stage.py",
     "--output-dir", $OutputDir,
@@ -37,7 +43,8 @@ $args = @(
     "--end-date", $EndDate,
     "--load-bigquery",
     "--project-id", $ProjectId,
-    "--dataset", $Dataset
+    "--dataset", $Dataset,
+    "--load-mode", $LoadMode
 )
 
 if ($Replace) {
@@ -45,5 +52,6 @@ if ($Replace) {
 }
 
 Write-Host "Loading curated warehouse tables into BigQuery dataset $ProjectId.$Dataset"
+Write-Host "Load mode: $LoadMode"
 Write-Host "Credentials: $($env:GOOGLE_APPLICATION_CREDENTIALS)"
 & $python @args

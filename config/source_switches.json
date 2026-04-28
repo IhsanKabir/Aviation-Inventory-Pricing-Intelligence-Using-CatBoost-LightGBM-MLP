@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "description": "Runtime on/off switches for every supplier/source used by the accumulation pipeline. Set a source enabled=false to skip airlines that use it as their primary module and to block nested fallback calls to that supplier.",
+  "sources": {
+    "airarabia": {
+      "enabled": true,
+      "label": "Air Arabia direct/capture",
+      "airlines": ["G9"]
+    },
+    "airasia": {
+      "enabled": true,
+      "label": "AirAsia direct/capture",
+      "airlines": ["AK"]
+    },
+    "airastra": {
+      "enabled": true,
+      "label": "Air Astra TTInteractive wrapper",
+      "airlines": ["2A"]
+    },
+    "amybd": {
+      "enabled": true,
+      "label": "AMYBD OTA fallback",
+      "airlines": ["2A", "BS"]
+    },
+    "bdfare": {
+      "enabled": true,
+      "label": "BDFare OTA fallback",
+      "airlines": ["2A", "BS"]
+    },
+    "biman": {
+      "enabled": true,
+      "label": "Biman direct",
+      "airlines": ["BG"]
+    },
+    "bs": {
+      "enabled": true,
+      "label": "US-Bangla TTInteractive wrapper",
+      "airlines": ["BS"]
+    },
+    "gozayaan": {
+      "enabled": true,
+      "label": "GoZayaan OTA fallback",
+      "airlines": ["2A", "BS"]
+    },
+    "indigo": {
+      "enabled": true,
+      "label": "IndiGo protected direct",
+      "airlines": ["6E"]
+    },
+    "maldivian": {
+      "enabled": true,
+      "label": "Maldivian direct/capture",
+      "airlines": ["Q2"]
+    },
+    "novoair": {
+      "enabled": true,
+      "label": "NOVOAIR direct",
+      "airlines": ["VQ"]
+    },
+    "salamair": {
+      "enabled": true,
+      "label": "SalamAir direct/capture",
+      "airlines": ["OV"]
+    },
+    "sharetrip": {
+      "enabled": true,
+      "label": "ShareTrip OTA",
+      "airlines": ["3L", "6E", "8D", "AK", "BG", "CZ", "EK", "FZ", "MH", "OD", "QR", "SQ", "SV", "TG", "UL", "WY"]
+    }
+  }
+}

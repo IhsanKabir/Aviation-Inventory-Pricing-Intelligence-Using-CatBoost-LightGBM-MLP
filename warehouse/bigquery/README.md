@@ -2,11 +2,11 @@
 
 ## Purpose
 
-BigQuery is the hosted analytics and read layer for this platform. Local PostgreSQL stays operational for ingestion, comparisons, and ML/DL training; BigQuery holds curated fact tables for the website, Looker Studio, thesis analysis, and longer-range query workloads.
+BigQuery is the bounded hosted read layer for this platform. Local PostgreSQL stays operational for ingestion, comparisons, ML/DL training, and long-term history; BigQuery holds only a recent hot-cache slice for the website, Looker Studio, and current operational dashboards.
 
 ## Chosen BI Layer
 
-- BigQuery sandbox for storage and SQL analytics
+- BigQuery sandbox for current hosted reads and SQL analytics
 - Looker Studio for dashboards
 
 This is the strongest free-to-start combination for:
@@ -14,7 +14,9 @@ This is the strongest free-to-start combination for:
 - query management
 - portfolio visibility
 - dashboard delivery
-- thesis-friendly analytics outputs
+- thesis-friendly current analytics outputs
+
+Long-history analysis should use local PostgreSQL, database backups, or ignored Parquet exports under `output/warehouse/`, not permanent BigQuery storage.
 
 ## Curated Tables
 
@@ -55,6 +57,7 @@ Source of truth for export layout:
 - [sql/bigquery/create_analytics_tables.sql](../../sql/bigquery/create_analytics_tables.sql)
 - [sql/bigquery/create_analytics_views.sql](../../sql/bigquery/create_analytics_views.sql)
 - [sql/bigquery/alter_aviation_intel_live_schema.sql](../../sql/bigquery/alter_aviation_intel_live_schema.sql)
+- [sql/bigquery/apply_hot_cache_retention.sql](../../sql/bigquery/apply_hot_cache_retention.sql)
 - [sql/bigquery/create_aviation_intel_dataset.sql](../../sql/bigquery/create_aviation_intel_dataset.sql)
 - [sql/bigquery/create_aviation_intel_tables.sql](../../sql/bigquery/create_aviation_intel_tables.sql)
 - [sql/bigquery/create_aviation_intel_looker_views.sql](../../sql/bigquery/create_aviation_intel_looker_views.sql)
@@ -70,10 +73,11 @@ Source of truth for export layout:
 5. Point `GOOGLE_APPLICATION_CREDENTIALS` to the service account JSON locally.
 6. Run the concrete dataset bootstrap SQL.
 7. Run the local export staging command.
-8. Load staged parquet files into BigQuery.
-9. Create Looker-facing views.
-10. Point hosted API reads to BigQuery-backed tables/views.
-11. Connect Looker Studio to the curated dataset views.
+8. Load staged parquet files into BigQuery using `partition-refresh`.
+9. Apply hot-cache retention.
+10. Create Looker-facing views.
+11. Point hosted API reads to BigQuery-backed tables/views.
+12. Connect Looker Studio to the curated dataset views.
 
 ## Local Export Example
 
@@ -87,9 +91,35 @@ Source of truth for export layout:
 .\.venv\Scripts\python.exe tools\export_bigquery_stage.py --output-dir output\warehouse\bigquery --start-date 2026-03-01 --end-date 2026-03-07 --load-bigquery --project-id your-gcp-project --dataset aviation_intel
 ```
 
+The default direct load mode is `partition-refresh`: dimensions are replaced, fact-table partitions in the export window are deleted, then fresh rows are appended.
+
+## Retention And Audit
+
+Default policy:
+
+- high-volume core scraper fact tables: `35` days
+- GDS fare/change/tax fact tables: intentionally excluded for now because their storage footprint is small
+- partitioned forecast/backtest fact tables: `90` days
+- currently unpartitioned tiny winner tables: intentionally excluded for now because their storage footprint is small
+- dimension tables: no expiration
+- dataset time travel: `48` hours
+
+Dry-run the retention DDL:
+
+```powershell
+.\.venv\Scripts\python.exe tools\bigquery_apply_retention.py --project-id aeropulseintelligence --dataset aviation_intel
+```
+
+Apply retention and audit storage:
+
+```powershell
+.\.venv\Scripts\python.exe tools\bigquery_apply_retention.py --project-id aeropulseintelligence --dataset aviation_intel --hot-days 35 --forecast-days 90 --time-travel-hours 48 --apply
+.\.venv\Scripts\python.exe tools\bigquery_storage_audit.py --project-id aeropulseintelligence --dataset aviation_intel
+```
+
 ## Schema Note
 
-If `fact_offer_snapshot` already exists in BigQuery, add the new round-trip columns before the next append load or rerun the bootstrap SQL against a fresh table set. The canonical schema is in [sql/bigquery/create_aviation_intel_tables.sql](../../sql/bigquery/create_aviation_intel_tables.sql).
+If `fact_offer_snapshot` already exists in BigQuery, add the new round-trip columns before the next partition-refresh load or rerun the bootstrap SQL against a fresh table set. The canonical schema is in [sql/bigquery/create_aviation_intel_tables.sql](../../sql/bigquery/create_aviation_intel_tables.sql).
 
 For a live additive patch, run [sql/bigquery/alter_aviation_intel_live_schema.sql](../../sql/bigquery/alter_aviation_intel_live_schema.sql) first. It covers:
 

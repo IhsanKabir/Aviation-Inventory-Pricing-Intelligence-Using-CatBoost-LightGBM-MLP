@@ -152,25 +152,46 @@ GitHub Actions alternative:
 
 ## Database migration
 
-If you want a zero-cost hosted read path, do not migrate the full local PostgreSQL database. Keep collection and training local, export curated tables into BigQuery, and let the hosted API read from BigQuery.
+If you want a low-cost hosted read path, do not migrate the full local PostgreSQL database. Keep collection, training, and long history local, then export only a bounded recent hot-cache slice into BigQuery for hosted reads.
 
 ## Automatic warehouse sync after scheduler runs
 
-`run_pipeline.py` now supports automatic BigQuery sync after a successful cycle.
+`run_pipeline.py` supports cost-safe automatic BigQuery sync after a successful cycle.
 
 Behavior:
 
-- enabled when `BIGQUERY_PROJECT_ID` and `BIGQUERY_DATASET` are configured
+- enabled only when `BIGQUERY_SYNC_ENABLED=1` or `--bigquery-sync-enabled` is set
+- also requires `BIGQUERY_PROJECT_ID` and `BIGQUERY_DATASET`
 - skipped when `--skip-bigquery-sync` is used
-- exports a rolling recent UTC capture-date window, then loads BigQuery
+- exports a rolling recent UTC capture-date window, then loads BigQuery with `partition-refresh`
+- skipped when extraction health is `FAIL`; process success alone is not enough to publish
 - does not fail the entire pipeline by default if warehouse sync fails
 
 Useful controls:
 
 ```powershell
-.\.venv\Scripts\python.exe run_pipeline.py --bigquery-sync-lookback-days 7
+.\.venv\Scripts\python.exe run_pipeline.py --bigquery-sync-enabled --bigquery-sync-lookback-days 2 --bigquery-load-mode partition-refresh
 .\.venv\Scripts\python.exe run_pipeline.py --skip-bigquery-sync
 .\.venv\Scripts\python.exe run_pipeline.py --fail-on-bigquery-sync-error
+.\.venv\Scripts\python.exe run_pipeline.py --fail-on-extraction-gate
 ```
 
-This keeps BigQuery-backed hosted pages closer to the latest local collection cycle without requiring a separate manual sync step after every scheduler run.
+Retention controls:
+
+```powershell
+.\.venv\Scripts\python.exe tools\bigquery_apply_retention.py --project-id aeropulseintelligence --dataset aviation_intel --hot-days 35 --forecast-days 90 --time-travel-hours 48 --apply
+.\.venv\Scripts\python.exe tools\bigquery_storage_audit.py --project-id aeropulseintelligence --dataset aviation_intel
+```
+
+This keeps BigQuery-backed hosted pages close to the latest local collection cycle without turning BigQuery into the long-term storage system.
+
+## Extraction quality before publish
+
+Before relying on a hosted data refresh, check:
+
+```powershell
+.\.venv\Scripts\python.exe tools\pre_flight_session_check.py --dry-run
+Get-Content output\reports\extraction_health_latest.md
+```
+
+`output/reports/extraction_health_latest.md` is the operator-facing source-quality gate. A `FAIL` status means BigQuery auto-sync is intentionally skipped until the extraction issue is fixed or a same-cycle retry succeeds.

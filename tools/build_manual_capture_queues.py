@@ -90,6 +90,18 @@ def _unique_preserve(values: list[str]) -> list[str]:
     return out
 
 
+def _drop_past_dates(values: list[str], *, today: date) -> list[str]:
+    kept: list[str] = []
+    for value in values:
+        parsed = _parse_iso_date(value)
+        if not parsed or parsed < today:
+            continue
+        iso = parsed.isoformat()
+        if iso not in kept:
+            kept.append(iso)
+    return kept
+
+
 def _load_dates_from_file(path: Path, *, today: date) -> list[str]:
     if not path.exists():
         return []
@@ -271,6 +283,8 @@ def _resolve_schedule_dates(schedule_file: Path, *, repo_root: Path, opts: DateR
                     file_path = repo_root / file_path
                 dates = _load_dates_from_file(file_path, today=today)
 
+    dates = _drop_past_dates(_unique_preserve(dates), today=today)
+
     if not dates:
         fallback_offsets = [0] if opts.quick else [0, 3, 5, 7, 15, 30]
         dates = [(today + timedelta(days=o)).isoformat() for o in fallback_offsets]
@@ -309,9 +323,10 @@ def _load_routes(routes_file: Path) -> list[dict[str, Any]]:
     return out
 
 
-def _build_jobs(routes: list[dict[str, Any]], dates: list[str], *, manual_cabin: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _build_jobs(routes: list[dict[str, Any]], dates: list[str], *, manual_cabin: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     bs2a_jobs: list[dict[str, Any]] = []
     q2_jobs: list[dict[str, Any]] = []
+    protected_jobs: list[dict[str, Any]] = []
     for r in routes:
         airline = r["airline"]
         if airline in {"BS", "2A"}:
@@ -319,6 +334,16 @@ def _build_jobs(routes: list[dict[str, Any]], dates: list[str], *, manual_cabin:
                 bs2a_jobs.append(
                     {
                         "carrier": airline,
+                        "origin": r["origin"],
+                        "destination": r["destination"],
+                        "date": d,
+                        "cabin": manual_cabin,
+                    }
+                )
+                protected_jobs.append(
+                    {
+                        "carrier": airline,
+                        "source_family": "ttinteractive",
                         "origin": r["origin"],
                         "destination": r["destination"],
                         "date": d,
@@ -335,7 +360,29 @@ def _build_jobs(routes: list[dict[str, Any]], dates: list[str], *, manual_cabin:
                         "cabin": manual_cabin,
                     }
                 )
-    return bs2a_jobs, q2_jobs
+                protected_jobs.append(
+                    {
+                        "carrier": airline,
+                        "source_family": "maldivian_plnext",
+                        "origin": r["origin"],
+                        "destination": r["destination"],
+                        "date": d,
+                        "cabin": manual_cabin,
+                    }
+                )
+        elif airline in {"G9", "OV"}:
+            for d in dates:
+                protected_jobs.append(
+                    {
+                        "carrier": airline,
+                        "source_family": "airarabia_har" if airline == "G9" else "salamair_har",
+                        "origin": r["origin"],
+                        "destination": r["destination"],
+                        "date": d,
+                        "cabin": manual_cabin,
+                    }
+                )
+    return bs2a_jobs, q2_jobs, protected_jobs
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -345,7 +392,7 @@ def _write_json(path: Path, payload: Any) -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser(
-        description="Build queue JSON files for manual-assisted capture runners (BS/2A + Q2) using config/routes.json and config/schedule.json date defaults.",
+        description="Build queue JSON files for manual-assisted capture runners (BS/2A + Q2 + G9/OV) using config/routes.json and config/schedule.json date defaults.",
     )
     p.add_argument("--schedule-file", default=str(DEFAULT_SCHEDULE_FILE))
     p.add_argument("--routes-file", default=str(DEFAULT_ROUTES_FILE))
@@ -364,6 +411,7 @@ def main() -> int:
     p.add_argument("--cabin", default="Economy", help="Manual capture cabin for generated queue rows (default: Economy)")
     p.add_argument("--no-bs2a", action="store_true")
     p.add_argument("--no-q2", action="store_true")
+    p.add_argument("--no-protected", action="store_true", help="Do not write the aggregate protected-source queue.")
     p.add_argument("--dry-run", action="store_true", help="Print manifest only; do not write queue files")
     args = p.parse_args()
 
@@ -387,12 +435,14 @@ def main() -> int:
     )
 
     routes = _load_routes(routes_file)
-    bs2a_jobs_all, q2_jobs_all = _build_jobs(routes, resolved["dates"], manual_cabin=str(args.cabin))
+    bs2a_jobs_all, q2_jobs_all, protected_jobs_all = _build_jobs(routes, resolved["dates"], manual_cabin=str(args.cabin))
     bs2a_jobs = [] if args.no_bs2a else bs2a_jobs_all
     q2_jobs = [] if args.no_q2 else q2_jobs_all
+    protected_jobs = [] if args.no_protected else protected_jobs_all
 
     bs2a_queue_path = output_dir / f"bs2a_jobs_{run_tag}.json"
     q2_queue_path = output_dir / f"q2_jobs_{run_tag}.json"
+    protected_queue_path = output_dir / f"protected_source_jobs_{run_tag}.json"
     result_out = Path(args.result_out) if args.result_out else (output_dir / f"manual_capture_queue_manifest_{run_tag}.json")
 
     manifest = {
@@ -409,10 +459,13 @@ def main() -> int:
         "merged_schedule_scrape_defaults": resolved["merged_schedule_scrape_defaults"],
         "bs2a_queue_file": str(bs2a_queue_path.resolve()),
         "q2_queue_file": str(q2_queue_path.resolve()),
+        "protected_source_queue_file": str(protected_queue_path.resolve()),
         "bs2a_jobs_count": len(bs2a_jobs),
         "q2_jobs_count": len(q2_jobs),
+        "protected_source_jobs_count": len(protected_jobs),
         "bs2a_routes_count": len([r for r in routes if r["airline"] in {"BS", "2A"}]),
         "q2_routes_count": len([r for r in routes if r["airline"] == "Q2"]),
+        "protected_source_routes_count": len([r for r in routes if r["airline"] in {"BS", "2A", "Q2", "G9", "OV"}]),
         "dry_run": bool(args.dry_run),
     }
 
@@ -421,9 +474,15 @@ def main() -> int:
             _write_json(bs2a_queue_path, bs2a_jobs)
         if not args.no_q2:
             _write_json(q2_queue_path, q2_jobs)
+        if not args.no_protected:
+            _write_json(protected_queue_path, protected_jobs)
         _write_json(result_out, manifest)
 
-    print(f"[queue-builder] dates_resolved={manifest['dates_resolved_count']} bs2a_jobs={manifest['bs2a_jobs_count']} q2_jobs={manifest['q2_jobs_count']}")
+    print(
+        f"[queue-builder] dates_resolved={manifest['dates_resolved_count']} "
+        f"bs2a_jobs={manifest['bs2a_jobs_count']} q2_jobs={manifest['q2_jobs_count']} "
+        f"protected_source_jobs={manifest['protected_source_jobs_count']}"
+    )
     print(f"[queue-builder] schedule={manifest['schedule_file']}")
     print(f"[queue-builder] routes={manifest['routes_file']}")
     if args.dry_run:
@@ -433,6 +492,8 @@ def main() -> int:
             print(f"[queue-builder] wrote bs2a queue: {bs2a_queue_path}")
         if not args.no_q2:
             print(f"[queue-builder] wrote q2 queue: {q2_queue_path}")
+        if not args.no_protected:
+            print(f"[queue-builder] wrote protected-source queue: {protected_queue_path}")
         print(f"[queue-builder] wrote manifest: {result_out}")
 
     print(json.dumps(manifest, indent=2, ensure_ascii=False))
@@ -441,4 +502,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

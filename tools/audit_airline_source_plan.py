@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AIRLINES_FILE = REPO_ROOT / "config" / "airlines.json"
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core.source_switches import DEFAULT_SOURCE_SWITCHES_FILE, load_source_switches, source_switch_status
 
 DIRECT_MODULES = {
     "airasia": "Direct airline website",
@@ -52,21 +58,49 @@ def _recommended_next_step(classification: str, fallback_modules: List[str]) -> 
     return "Inspect this airline module manually."
 
 
-def build_source_plan(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _status_note(status: dict[str, Any]) -> str:
+    reasons = [str(x).strip() for x in (status.get("reasons") or []) if str(x).strip()]
+    return "; ".join(reasons)
+
+
+def build_source_plan(
+    items: List[Dict[str, Any]],
+    source_switches_file: str | Path | None = None,
+) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
+    switches = load_source_switches(source_switches_file)
     for item in items:
         code = str(item.get("code") or "").upper().strip()
         module_name = str(item.get("module") or "").strip()
-        fallback_modules = [str(m).strip() for m in (item.get("fallback_modules") or []) if str(m).strip()]
+        fallback_modules = []
+        disabled_fallback_modules = []
+        for raw_fallback in item.get("fallback_modules") or []:
+            fallback_module = str(raw_fallback).strip()
+            if not fallback_module:
+                continue
+            fallback_status = source_switch_status(fallback_module, switches=switches)
+            if fallback_status.get("enabled"):
+                fallback_modules.append(fallback_module)
+            else:
+                disabled_fallback_modules.append(f"{fallback_module} ({_status_note(fallback_status)})")
         classification, source_family = _classify_module(module_name)
+        runtime_enabled = bool(item.get("enabled", False))
+        runtime_note = ""
+        primary_status = source_switch_status(module_name, switches=switches)
+        if not primary_status.get("enabled"):
+            runtime_enabled = False
+            runtime_note = _status_note(primary_status) or "disabled in source switches"
         rows.append(
             {
                 "code": code,
                 "enabled": bool(item.get("enabled", False)),
+                "runtime_enabled": runtime_enabled,
                 "module": module_name,
                 "classification": classification,
                 "source_family": source_family,
                 "fallback_modules": fallback_modules,
+                "disabled_fallback_modules": disabled_fallback_modules,
+                "runtime_note": runtime_note,
                 "recommended_next_step": _recommended_next_step(classification, fallback_modules),
             }
         )
@@ -82,8 +116,12 @@ def render_markdown(rows: List[Dict[str, Any]]) -> str:
     ]
     for row in rows:
         fallback = ", ".join(row["fallback_modules"]) if row["fallback_modules"] else "--"
+        enabled = "yes" if row["enabled"] else "no"
+        if row.get("enabled") and not row.get("runtime_enabled"):
+            enabled = "runtime-no"
+        note = f" {row['runtime_note']}" if row.get("runtime_note") else ""
         lines.append(
-            f"| {row['code']} | {'yes' if row['enabled'] else 'no'} | {row['module']} | {row['classification']} | {fallback} | {row['recommended_next_step']} |"
+            f"| {row['code']} | {enabled} | {row['module']} | {row['classification']} | {fallback} | {row['recommended_next_step']}{note} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -91,13 +129,14 @@ def render_markdown(rows: List[Dict[str, Any]]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit current direct-vs-OTA airline source plan.")
     parser.add_argument("--airlines-file", default=str(AIRLINES_FILE))
+    parser.add_argument("--source-switches-file", default=str(DEFAULT_SOURCE_SWITCHES_FILE))
     parser.add_argument("--json-out", default=str(REPO_ROOT / "output" / "reports" / "airline_source_plan_latest.json"))
     parser.add_argument("--md-out", default=str(REPO_ROOT / "output" / "reports" / "airline_source_plan_latest.md"))
     args = parser.parse_args()
 
     airlines_path = Path(args.airlines_file)
     items = json.loads(airlines_path.read_text(encoding="utf-8"))
-    rows = build_source_plan(items)
+    rows = build_source_plan(items, args.source_switches_file)
 
     json_out = Path(args.json_out)
     md_out = Path(args.md_out)

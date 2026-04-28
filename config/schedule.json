@@ -1,11 +1,11 @@
 {
   "mode": "manual",
   "concurrency": 6,
-  "auto_run_interval_hours": 6,
+  "auto_run_interval_hours": 24,
   "task_windows": {
     "ingestion": {
-      "start_time": "00:05",
-      "repeat_minutes": 360
+      "start_time": "12:00",
+      "repeat_minutes": 1440
     },
     "training_enrichment": {
       "start_time": "01:30"
@@ -16,8 +16,21 @@
     },
     "bigquery_sync": {
       "start_time": "03:30",
-      "repeat_minutes": 180
+      "repeat_minutes": 1440
     }
+  },
+  "scheduler_timing": {
+    "enabled": true,
+    "timezone": "local",
+    "global": {
+      "enabled": true,
+      "start_time": "12:00",
+      "repeat_minutes": 1440,
+      "completion_buffer_minutes": 90
+    },
+    "sources": {},
+    "airlines": {},
+    "routes": []
   },
   "auto_run_date_ranges": {
     "default": {
