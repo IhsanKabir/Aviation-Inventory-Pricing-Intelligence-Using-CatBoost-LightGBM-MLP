@@ -63,7 +63,7 @@
       "airlines": ["OV"]
     },
     "sharetrip": {
-      "enabled": true,
+      "enabled": false,
       "label": "ShareTrip OTA",
       "airlines": ["3L", "6E", "8D", "AK", "BG", "CZ", "EK", "FZ", "MH", "OD", "QR", "SQ", "SV", "TG", "UL", "WY"]
     }
