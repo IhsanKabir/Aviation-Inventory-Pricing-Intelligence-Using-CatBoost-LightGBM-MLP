@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 import type {
   AdminHolidayEntry,
@@ -82,19 +82,38 @@ function validateOffsetRangesText(value: string, label: string) {
   }
 }
 
+const ADMIN_CONFIG_SECTIONS = [
+  { id: "admin-config-schedule", label: "Schedule" },
+  { id: "admin-config-basics", label: "Basics" },
+  { id: "admin-config-output", label: "Output Options" },
+  { id: "admin-config-holidays", label: "Holiday Calendar" },
+  { id: "admin-config-trip-profiles", label: "Trip Profiles" },
+  { id: "admin-config-route-assignments", label: "Route Assignments" },
+  { id: "admin-config-advanced", label: "Advanced JSON" },
+];
+
 function AdminAccordionSection({
+  id,
   title,
   summary,
-  defaultOpen = false,
+  open,
+  onToggle,
   children,
 }: {
+  id: string;
   title: string;
   summary: string;
-  defaultOpen?: boolean;
+  open: boolean;
+  onToggle: (open: boolean) => void;
   children: ReactNode;
 }) {
   return (
-    <details className="card panel admin-config-card admin-accordion" open={defaultOpen}>
+    <details
+      className="card panel admin-config-card admin-accordion"
+      id={id}
+      onToggle={(event) => onToggle(event.currentTarget.open)}
+      open={open}
+    >
       <summary className="admin-accordion-summary">
         <div>
           <h3 style={{ marginBottom: "0.35rem" }}>{title}</h3>
@@ -110,8 +129,12 @@ function AdminAccordionSection({
 
 export function AdminSearchConfigPanel({
   initialConfig,
+  onConfigChange,
+  onDirtyChange,
 }: {
   initialConfig: AdminSearchConfig;
+  onConfigChange?: (config: AdminSearchConfig) => void;
+  onDirtyChange?: (hasChanges: boolean) => void;
 }) {
   const [config, setConfig] = useState(initialConfig);
   const [savedConfig, setSavedConfig] = useState(initialConfig);
@@ -122,6 +145,16 @@ export function AdminSearchConfigPanel({
   const [selectedTripProfileKey, setSelectedTripProfileKey] = useState(initialConfig.tripProfiles[0]?.key || "");
   const [routeFilter, setRouteFilter] = useState("");
   const [showArchivedProfiles, setShowArchivedProfiles] = useState(false);
+  const [activeConfigSection, setActiveConfigSection] = useState("admin-config-schedule");
+  const [openConfigSections, setOpenConfigSections] = useState<Record<string, boolean>>({
+    "admin-config-basics": true,
+    "admin-config-schedule": true,
+    "admin-config-output": false,
+    "admin-config-holidays": false,
+    "admin-config-trip-profiles": false,
+    "admin-config-route-assignments": false,
+    "admin-config-advanced": false,
+  });
   const [isPending, startTransition] = useTransition();
 
   const filteredRoutes = useMemo(() => {
@@ -217,6 +250,31 @@ export function AdminSearchConfigPanel({
       changedSections,
     };
   }, [config, savedConfig]);
+
+  const activeRouteCount = useMemo(
+    () =>
+      config.routeProfiles.filter(
+        (route) =>
+          route.marketTripProfiles.length ||
+          route.activeMarketTripProfiles.length ||
+          route.trainingMarketTripProfiles.length ||
+          route.deepMarketTripProfiles.length,
+      ).length,
+    [config.routeProfiles],
+  );
+
+  const archivedProfileCount = useMemo(
+    () => config.tripProfiles.filter((profile) => profile.archived).length,
+    [config.tripProfiles],
+  );
+
+  useEffect(() => {
+    onConfigChange?.(config);
+  }, [config, onConfigChange]);
+
+  useEffect(() => {
+    onDirtyChange?.(unsavedChangeSummary.hasChanges);
+  }, [onDirtyChange, unsavedChangeSummary.hasChanges]);
 
   async function refreshConfig() {
     const response = await fetch("/api/admin/search-config", { cache: "no-store" });
@@ -553,9 +611,33 @@ export function AdminSearchConfigPanel({
     setError(null);
   }
 
+  function updateConfigSectionOpen(sectionId: string, nextOpen: boolean) {
+    setOpenConfigSections((current) => ({
+      ...current,
+      [sectionId]: nextOpen,
+    }));
+    if (nextOpen) {
+      setActiveConfigSection(sectionId);
+    }
+  }
+
+  function jumpToConfigSection(sectionId: string) {
+    setOpenConfigSections((current) => ({
+      ...current,
+      [sectionId]: true,
+    }));
+    setActiveConfigSection(sectionId);
+    window.setTimeout(() => {
+      document.getElementById(sectionId)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 0);
+  }
+
   return (
-    <div className="stack">
-      <div className="status-banner">
+    <div className="admin-config-workbench">
+      <div className="status-banner admin-config-note">
         {config.persistenceNote}
       </div>
 
@@ -569,11 +651,53 @@ export function AdminSearchConfigPanel({
         </div>
       )}
 
-      <div className="stack">
-        <AdminAccordionSection
-          title="Run schedule"
-          summary="Set the global run cadence and task start times used when local scheduler tasks are installed or reapplied."
-        >
+      <div className="admin-config-snapshot-grid">
+        <div className="admin-config-summary">
+          <strong>Run mode</strong>
+          <span>{config.schedule.mode}</span>
+        </div>
+        <div className="admin-config-summary">
+          <strong>Passenger mix</strong>
+          <span>
+            {config.passengers.adt} ADT / {config.passengers.chd} CHD / {config.passengers.inf} INF
+          </span>
+        </div>
+        <div className="admin-config-summary">
+          <strong>Active routes</strong>
+          <span>{activeRouteCount}</span>
+        </div>
+        <div className="admin-config-summary">
+          <strong>Archived profiles</strong>
+          <span>{archivedProfileCount}</span>
+        </div>
+      </div>
+
+      <div className="admin-config-layout">
+        <aside className="admin-config-nav" aria-label="Search configuration sections">
+          <div className="admin-section-kicker">Jump to section</div>
+          <div className="admin-config-nav-list">
+            {ADMIN_CONFIG_SECTIONS.map((section) => (
+              <button
+                className="admin-config-nav-item"
+                data-active={activeConfigSection === section.id}
+                key={section.id}
+                onClick={() => jumpToConfigSection(section.id)}
+                type="button"
+              >
+                {section.label}
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        <div className="admin-config-section-stack">
+          <AdminAccordionSection
+            id="admin-config-schedule"
+            onToggle={(open) => updateConfigSectionOpen("admin-config-schedule", open)}
+            open={openConfigSections["admin-config-schedule"]}
+            title="Schedule"
+            summary="Set the global run cadence and task start times used when local scheduler tasks are installed or reapplied."
+          >
           <div className="button-row" style={{ justifyContent: "flex-end" }}>
             <button className="button-link ghost" type="button" onClick={() => revertSection("schedule")}>
               Revert this section
@@ -740,8 +864,11 @@ export function AdminSearchConfigPanel({
         </AdminAccordionSection>
 
         <AdminAccordionSection
-          title="Passenger defaults"
-          summary="Set the global passenger mix used when a run does not provide custom ADT, CHD, and INF values."
+          id="admin-config-basics"
+          onToggle={(open) => updateConfigSectionOpen("admin-config-basics", open)}
+          open={openConfigSections["admin-config-basics"]}
+          title="Basics"
+          summary="Set the default passenger mix used when a run does not provide custom ADT, CHD, and INF values."
         >
           <div className="button-row" style={{ justifyContent: "flex-end" }}>
             <button className="button-link ghost" type="button" onClick={() => revertSection("passengers")}>
@@ -796,9 +923,11 @@ export function AdminSearchConfigPanel({
             </label>
           </div>
         </AdminAccordionSection>
-      </div>
 
       <AdminAccordionSection
+        id="admin-config-output"
+        onToggle={(open) => updateConfigSectionOpen("admin-config-output", open)}
+        open={openConfigSections["admin-config-output"]}
         title="Output options"
         summary="Choose which file formats the scraper writes after a run completes."
       >
@@ -884,6 +1013,9 @@ export function AdminSearchConfigPanel({
       </AdminAccordionSection>
 
       <AdminAccordionSection
+        id="admin-config-holidays"
+        onToggle={(open) => updateConfigSectionOpen("admin-config-holidays", open)}
+        open={openConfigSections["admin-config-holidays"]}
         title="Holiday calendar"
         summary="Maintain the high-demand holiday dates that influence holiday-focused search windows."
       >
@@ -928,7 +1060,10 @@ export function AdminSearchConfigPanel({
       </AdminAccordionSection>
 
       <AdminAccordionSection
-        title="Trip profile setup"
+        id="admin-config-trip-profiles"
+        onToggle={(open) => updateConfigSectionOpen("admin-config-trip-profiles", open)}
+        open={openConfigSections["admin-config-trip-profiles"]}
+        title="Trip profiles"
         summary="Define one-way and round-trip search windows here using date ranges, day offsets, and return windows."
       >
         <div className="button-row" style={{ justifyContent: "flex-end" }}>
@@ -1199,7 +1334,10 @@ export function AdminSearchConfigPanel({
       </AdminAccordionSection>
 
       <AdminAccordionSection
-        title="Airline and route-wise scheduling"
+        id="admin-config-route-assignments"
+        onToggle={(open) => updateConfigSectionOpen("admin-config-route-assignments", open)}
+        open={openConfigSections["admin-config-route-assignments"]}
+        title="Route assignments"
         summary="This is where scheduling is controlled per airline and per route by assigning which trip profiles are available, operational, training-only, or deep-only."
       >
         <div className="button-row" style={{ justifyContent: "flex-end" }}>
@@ -1396,7 +1534,10 @@ export function AdminSearchConfigPanel({
       </AdminAccordionSection>
 
       <AdminAccordionSection
-        title="Search behavior summary"
+        id="admin-config-advanced"
+        onToggle={(open) => updateConfigSectionOpen("admin-config-advanced", open)}
+        open={openConfigSections["admin-config-advanced"]}
+        title="Advanced JSON"
         summary="Review the plain-language market behavior groups here, and open the raw JSON only when deeper control is needed."
       >
         <div className="button-row" style={{ justifyContent: "flex-end" }}>
@@ -1467,14 +1608,17 @@ export function AdminSearchConfigPanel({
         </label>
       </AdminAccordionSection>
 
-      <div className="button-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <div>
+      </div>
+      </div>
+
+      <div className="admin-config-action-bar">
+        <div className="admin-config-action-feedback">
           {message ? <div className="status-banner good">{message}</div> : null}
           {applyMessage ? <div className="status-banner good">{applyMessage}</div> : null}
           {error ? <div className="status-banner warn">{error}</div> : null}
         </div>
 
-        <div className="button-row">
+        <div className="button-row admin-config-actions">
           <button
             className="button-link ghost"
             type="button"

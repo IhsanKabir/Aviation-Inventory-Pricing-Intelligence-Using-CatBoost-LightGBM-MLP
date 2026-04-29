@@ -24,9 +24,11 @@ function extractDetail(payload: unknown) {
 }
 
 export function AdminAccessRequestsDashboard({
-  initialItems
+  initialItems,
+  onItemsChange,
 }: {
   initialItems: ReportAccessRequest[];
+  onItemsChange?: (items: ReportAccessRequest[]) => void;
 }) {
   const [items, setItems] = useState(initialItems);
   const [statusFilter, setStatusFilter] = useState<AdminStatusFilter>("all");
@@ -41,16 +43,29 @@ export function AdminAccessRequestsDashboard({
     return items.filter((item) => item.status === statusFilter);
   }, [items, statusFilter]);
 
-  async function refreshItems(nextStatus = statusFilter) {
-    const query = nextStatus === "all" ? "" : `?status=${encodeURIComponent(nextStatus)}`;
-    const response = await fetch(`/api/admin/access-requests${query}`, {
+  const statusOptions = useMemo(
+    () =>
+      (["all", "pending", "payment_required", "approved", "rejected"] as AdminStatusFilter[]).map((status) => ({
+        status,
+        count: status === "all" ? items.length : items.filter((item) => item.status === status).length,
+      })),
+    [items],
+  );
+
+  function updateItems(nextItems: ReportAccessRequest[]) {
+    setItems(nextItems);
+    onItemsChange?.(nextItems);
+  }
+
+  async function refreshItems() {
+    const response = await fetch("/api/admin/access-requests?limit=100", {
       cache: "no-store"
     });
     const payload = (await response.json().catch(() => null)) as { items?: ReportAccessRequest[]; detail?: string } | null;
     if (!response.ok) {
       throw new Error(payload?.detail || "Unable to load access requests.");
     }
-    setItems(payload?.items || []);
+    updateItems(payload?.items || []);
   }
 
   async function applyDecision(requestId: string, status: ReportAccessRequest["status"]) {
@@ -82,19 +97,21 @@ export function AdminAccessRequestsDashboard({
     window.location.href = "/admin/login";
   }
 
-  function startRefresh(nextStatus = statusFilter) {
+  function startRefresh() {
     startTransition(() => {
-      refreshItems(nextStatus).catch((refreshError) => {
+      refreshItems().catch((refreshError) => {
         setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh access requests.");
       });
     });
   }
 
   return (
-    <div className="stack">
-      <div className="button-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <div className="chip-row">
-          {(["all", "pending", "payment_required", "approved", "rejected"] as AdminStatusFilter[]).map((status) => (
+    <div className="admin-request-workbench">
+      <div className="admin-toolbar">
+        <div>
+          <div className="admin-section-kicker">Queue filters</div>
+          <div className="chip-row admin-filter-row">
+            {statusOptions.map(({ status, count }) => (
             <button
               key={status}
               className="chip"
@@ -102,16 +119,18 @@ export function AdminAccessRequestsDashboard({
               data-pending={isPending}
               onClick={() => {
                 setStatusFilter(status);
-                startRefresh(status);
+                startRefresh();
               }}
               type="button"
             >
-              {status === "all" ? "All requests" : formatStatusLabel(status)}
+              <span>{status === "all" ? "All requests" : formatStatusLabel(status)}</span>
+              <span className="admin-filter-count">{count}</span>
             </button>
-          ))}
+            ))}
+          </div>
         </div>
 
-        <div className="button-row">
+        <div className="button-row admin-toolbar-actions">
           <button className="button-link ghost" data-pending={isPending} onClick={() => startRefresh()} type="button">
             Refresh
           </button>
@@ -124,24 +143,28 @@ export function AdminAccessRequestsDashboard({
       {error ? <div className="status-banner warn">{error}</div> : null}
 
       {!filteredItems.length ? (
-        <div className="empty-state">No access requests match the current filter.</div>
+        <div className="empty-state admin-empty-state">No access requests match the current filter.</div>
       ) : (
         <div className="admin-request-list">
           {filteredItems.map((item) => (
             <div className="card panel admin-request-card" key={item.request_id}>
-              <div className="button-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div className="admin-request-card-header">
                 <div>
-                  <h2 style={{ margin: 0, fontSize: "1.1rem" }}>{item.requester_name || "Unnamed requester"}</h2>
-                  <div className="panel-copy" style={{ marginBottom: 0 }}>
-                    {(item.requester_email || item.requester_contact || "No contact provided")} | {item.page_key} | submitted {item.created_at_utc || "-"}
+                  <h3>{item.requester_name || "Unnamed requester"}</h3>
+                  <div className="admin-request-meta">
+                    <span>{item.requester_email || item.requester_contact || "No contact provided"}</span>
+                    <span>{item.page_key}</span>
+                    <span>Submitted {item.created_at_utc || "-"}</span>
                   </div>
                   {item.requester_user_id ? (
-                    <div className="mono" style={{ marginTop: "0.35rem" }}>
+                    <div className="mono admin-request-user-id">
                       user_id: {item.requester_user_id}
                     </div>
                   ) : null}
                 </div>
-                <span className={`pill ${item.status === "approved" ? "good" : "warn"}`}>{formatStatusLabel(item.status)}</span>
+                <span className={`pill ${item.status === "approved" ? "good" : item.status === "rejected" ? "neutral" : "warn"}`}>
+                  {formatStatusLabel(item.status)}
+                </span>
               </div>
 
               <div className="admin-scope-grid">
@@ -158,9 +181,9 @@ export function AdminAccessRequestsDashboard({
               </div>
 
               {item.notes ? (
-                <div>
+                <div className="admin-request-note">
                   <strong>Requester note</strong>
-                  <div className="panel-copy" style={{ marginTop: "0.35rem", marginBottom: 0 }}>{item.notes}</div>
+                  <div className="panel-copy">{item.notes}</div>
                 </div>
               ) : null}
 
@@ -174,7 +197,7 @@ export function AdminAccessRequestsDashboard({
                 />
               </label>
 
-              <div className="button-row">
+              <div className="button-row admin-decision-row">
                 <button className="button-link" data-pending={isPending} onClick={() => applyDecision(item.request_id, "approved")} type="button">
                   Approve
                 </button>
