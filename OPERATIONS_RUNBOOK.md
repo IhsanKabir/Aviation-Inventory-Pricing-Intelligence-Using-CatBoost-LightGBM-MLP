@@ -704,6 +704,62 @@ $env:BS_SOURCE_MODE="ttinteractive"
 $env:AIRASTRA_SOURCE_MODE="ttinteractive"
 ```
 
+## Reliability flags and env vars (2026-04-30 hardening pass)
+
+### `GOZAYAAN_INTER_QUERY_SLEEP` (default 3.0s)
+
+Applied at the top of every `fetch_flights_for_airline` call in
+`modules/gozayaan.py`. Prevents the 15-minute 429 cooldown that otherwise
+wipes the rest of the cycle.
+
+- Set in `.env` to override the 3.0s default. Set to `0` to disable
+  (not recommended for multi-route runs).
+- Adds ~3s × number-of-GoZayaan-queries to cycle wall time. For a 10-route
+  GoZayaan fallback that is ~30s extra — small compared to the cost of a
+  single 429 cooldown.
+
+### `--retry-missing-airlines` filtering (run_pipeline.py)
+
+Retry pass now skips airlines whose primary module is currently disabled in
+`config/source_switches.json`. Skipped airlines are logged at WARNING level
+— check pipeline logs for `Skipping retry for airlines whose primary source
+is disabled`.
+
+### `tools/audit_airline_source_plan.py --strict`
+
+Optional gate. Exits 3 if any enabled airline has an empty effective source
+chain (primary disabled and zero enabled fallbacks). Wire into pre-commit
+or scheduled runs to refuse cycles configured with a broken
+`source_switches.json`.
+
+```powershell
+.\.venv\Scripts\python.exe tools\audit_airline_source_plan.py --strict
+if ($LASTEXITCODE -eq 3) {
+    Write-Error "Source plan has broken chains; refusing to launch pipeline."
+}
+```
+
+### Atomic capture / session writes
+
+Capture summaries, session blobs, headers, cookies, rate-limit state, and
+audit JSON/MD outputs now write atomically (`tempfile + os.replace`). Crash
+or kill mid-write no longer leaves a half-written `*_latest.json` that the
+next cycle silently treats as valid. No operator action needed; behaviour
+is automatic.
+
+### `extraction_attempts.error_class` vocabulary
+
+Closed set in `core/extraction_health.py::ALL_ERROR_CLASSES`. When
+dashboards or queries depend on a specific value, only the documented
+strings are guaranteed:
+
+`success`, `no_inventory`, `rate_limit`, `expired_session`, `stale_capture`,
+`missing_capture`, `waf_blocked`, `manual_required`, `timeout`,
+`source_exception`, `source_error`.
+
+New values must be added to the `ALL_ERROR_CLASSES` constants block (and
+the `classify_attempt` docstring) before being emitted.
+
 ## Known Constraints
 
 - Jobs do not run when laptop is fully powered off.

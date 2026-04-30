@@ -13,6 +13,7 @@ AIRLINES_FILE = REPO_ROOT / "config" / "airlines.json"
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.atomic_write import atomic_write_json, atomic_write_text
 from core.source_switches import DEFAULT_SOURCE_SWITCHES_FILE, load_source_switches, source_switch_status
 
 DIRECT_MODULES = {
@@ -107,6 +108,26 @@ def build_source_plan(
     return rows
 
 
+def find_empty_effective_chains(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return rows where the airline is enabled but no source can serve it.
+
+    An airline has an empty effective chain when it is enabled in
+    ``airlines.json``, its primary module is disabled in ``source_switches.json``,
+    and every fallback module is also disabled. Such airlines guarantee zero
+    rows for the cycle and indicate a misconfiguration.
+    """
+    bad: List[Dict[str, Any]] = []
+    for row in rows:
+        if not row.get("enabled"):
+            continue
+        if row.get("runtime_enabled"):
+            continue
+        if row.get("fallback_modules"):
+            continue
+        bad.append(row)
+    return bad
+
+
 def render_markdown(rows: List[Dict[str, Any]]) -> str:
     lines = [
         "# Airline Source Plan",
@@ -132,23 +153,35 @@ def main() -> int:
     parser.add_argument("--source-switches-file", default=str(DEFAULT_SOURCE_SWITCHES_FILE))
     parser.add_argument("--json-out", default=str(REPO_ROOT / "output" / "reports" / "airline_source_plan_latest.json"))
     parser.add_argument("--md-out", default=str(REPO_ROOT / "output" / "reports" / "airline_source_plan_latest.md"))
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Exit non-zero (3) if any enabled airline has an empty effective source chain "
+            "(primary disabled and no enabled fallbacks). Use to gate scheduled runs against "
+            "broken source_switches configurations."
+        ),
+    )
     args = parser.parse_args()
 
     airlines_path = Path(args.airlines_file)
     items = json.loads(airlines_path.read_text(encoding="utf-8"))
     rows = build_source_plan(items, args.source_switches_file)
 
-    json_out = Path(args.json_out)
-    md_out = Path(args.md_out)
-    json_out.parent.mkdir(parents=True, exist_ok=True)
-    md_out.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(Path(args.json_out), rows)
+    atomic_write_text(Path(args.md_out), render_markdown(rows))
 
-    json_out.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
-    md_out.write_text(render_markdown(rows), encoding="utf-8")
-
-    print(f"Wrote JSON: {json_out}")
-    print(f"Wrote Markdown: {md_out}")
+    print(f"Wrote JSON: {args.json_out}")
+    print(f"Wrote Markdown: {args.md_out}")
     print(f"Total airlines audited: {len(rows)}")
+
+    empty_chains = find_empty_effective_chains(rows)
+    if empty_chains:
+        codes = ",".join(row["code"] for row in empty_chains)
+        print(f"WARNING: {len(empty_chains)} airline(s) have empty effective source chains: {codes}", file=sys.stderr)
+        if args.strict:
+            print("--strict: refusing to proceed with broken source plan.", file=sys.stderr)
+            return 3
     return 0
 
 

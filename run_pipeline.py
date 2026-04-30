@@ -1614,6 +1614,21 @@ def main():
         extraction_gate_status = str(extraction_gate_summary.get("status") or "UNKNOWN").upper()
         missing_airlines = list(extraction_gate_summary.get("missing_airlines") or [])
         if args.retry_missing_airlines and rc == 0 and missing_airlines:
+            # Drop airlines whose primary module is currently disabled in
+            # source_switches.json — retrying them produces the same zero-row
+            # result and risks tripping anti-bot/rate-limit on a dead path.
+            runtime_enabled = set(
+                _collect_runtime_enabled_airlines(REPO_ROOT / AIRLINES_FILE, args.source_switches_file)
+            )
+            skipped_disabled = [code for code in missing_airlines if code.upper() not in runtime_enabled]
+            retryable_missing = [code for code in missing_airlines if code.upper() in runtime_enabled]
+            if skipped_disabled:
+                LOG.warning(
+                    "Skipping retry for airlines whose primary source is disabled in source_switches: %s",
+                    ",".join(skipped_disabled),
+                )
+            missing_airlines = retryable_missing
+        if args.retry_missing_airlines and rc == 0 and missing_airlines:
             expected_airlines = list(extraction_gate_summary.get("expected_airlines") or [])
             retry_cmd = _build_missing_airline_retry_cmd(args, missing_airlines)
             LOG.warning(

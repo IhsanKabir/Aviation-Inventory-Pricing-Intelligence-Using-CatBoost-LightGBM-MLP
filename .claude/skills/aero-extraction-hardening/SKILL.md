@@ -23,6 +23,27 @@ Default ordering below is High-Impact / Low-Effort / Low-Risk first.
 
 ---
 
+## Implementation status (2026-04-30)
+
+| Tier item | Status | Notes |
+|---|---|---|
+| 1.2 `no_row_reason` vocabulary | **DONE** | Closed set in `core/extraction_health.py::ALL_ERROR_CLASSES` + `is_known_error_class` helper + docstring on `classify_attempt` |
+| 1.3 `GOZAYAAN_INTER_QUERY_SLEEP=3.0` default | **DONE** | `modules/gozayaan.py::_apply_inter_query_sleep`; `.env.example` documents it |
+| 1.4 Atomic capture writes | **DONE** | `core/atomic_write.py` + 4 tools rerouted (`import_airarabia_har`, `import_salamair_har`, `refresh_amybd_session`, `refresh_gozayaan_token`) |
+| 2.3 Health-gate-aware retry pass | **DONE (partial)** | `run_pipeline.py` filters retry by `source_switches` enabled status; full no_row_reason filtering still pending |
+| 3.3 Strict source plan auditor | **DONE** | `tools/audit_airline_source_plan.py --strict` exits 3 on empty effective chains |
+| 1.1 `check_session()` everywhere | TODO | Skill discusses risk: probes can trip anti-bot; needs live verification per source |
+| 1.5 Fallback path log | TODO (descoped) | `extraction_attempts.source_attempts` may already serve this need; wrapper return-shape changes deferred |
+| 2.1 Decoupled capture scheduler | TODO | Net-new orchestration; defer until 1-week parallel test possible |
+| 2.2 Family-aware parallelism expansion | TODO | Adding G9/OV at workers=1 is safe; raising worker counts requires live observation |
+| 2.4 Row-floor guards | TODO | Needs 30 days of `flight_offers` history to compute floors |
+| 2.5 Capture validator tool | TODO (descoped) | Was conditional on auto-call from `import_*_har.py` |
+| 3.1 Operator-in-the-loop lane | TODO | Phase 3+ vision per project memory |
+| 3.2 Connector smoke harness in CI | TODO | Needs committed fixture HARs |
+| 3.4 Predictive capture refresh | TODO | Needs telemetry baseline |
+| 3.5 Schema-validation gate | TODO (descoped) | `engines/schema_validator.py` is a 16-line stub; real validation logic to write |
+| Phase 2A ML quick wins | TODO | Wire-up only valuable when paired with backtest run |
+
 ## TIER 1 — Cheap wins worth doing now
 
 ### 1.1 Expose `check_session()` on every session-dependent module

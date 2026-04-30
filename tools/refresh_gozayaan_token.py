@@ -12,11 +12,19 @@ import base64
 from datetime import datetime, timezone
 import json
 import os
+import sys
 from pathlib import Path
 import re
 import time
 from typing import Any, Dict, Optional
 import uuid
+
+# Allow `from core.atomic_write import ...` regardless of CWD.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from core.atomic_write import atomic_write_json  # noqa: E402
 
 
 SEARCH_URL_TOKEN = "/api/flight/v4.0/search/"
@@ -212,8 +220,7 @@ def _wait_for_capture(page, holder: Dict[str, Any], wait_seconds: float):
 
 
 def _save_output(path: Path, payload: Dict[str, Any]):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_json(path, payload)
 
 
 def _save_cookies(path: Path, cookies: list[dict[str, Any]]) -> int:
@@ -223,8 +230,7 @@ def _save_cookies(path: Path, cookies: list[dict[str, Any]]) -> int:
         if not name:
             continue
         out[name] = str(item.get("value") or "")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_json(path, out)
     return len(out)
 
 
@@ -235,8 +241,7 @@ def _save_headers(path: Path, headers: Dict[str, Any]) -> int:
         if not name:
             continue
         clean[name] = str(v or "")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(clean, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_json(path, clean)
     return len(clean)
 
 

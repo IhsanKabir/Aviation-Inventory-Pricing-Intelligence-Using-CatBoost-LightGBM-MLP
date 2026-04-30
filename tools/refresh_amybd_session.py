@@ -17,11 +17,20 @@ import argparse
 from datetime import datetime, timedelta, timezone
 import json
 import os
+import sys
 from pathlib import Path
 import re
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qsl
 import time
+
+# Allow `from core.atomic_write import ...` regardless of where this script
+# is launched from.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from core.atomic_write import atomic_write_json, atomic_write_text  # noqa: E402
 
 
 SEARCH_PATH = "/atapi.aspx"
@@ -99,8 +108,7 @@ def _now_utc_iso() -> str:
 
 
 def _save_json(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_json(path, payload)
 
 
 def _clean_headers(headers: Dict[str, Any]) -> Dict[str, str]:
@@ -1412,8 +1420,7 @@ def main():
             origin=origin,
             referer=referer,
         )
-        env_out_path.parent.mkdir(parents=True, exist_ok=True)
-        env_out_path.write_text(env_script, encoding="utf-8")
+        atomic_write_text(env_out_path, env_script)
 
         print(f"Captured AMYBD session -> {out_path}")
         print(f"cookies={len(cookies)} -> {cookies_out_path}")

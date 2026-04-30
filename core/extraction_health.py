@@ -15,6 +15,20 @@ MANUAL_ERROR_CLASSES = {"manual_required", "stale_capture", "waf_blocked", "miss
 FAIL_ERROR_CLASSES = RETRYABLE_ERROR_CLASSES | MANUAL_ERROR_CLASSES | {"source_error"}
 NO_INVENTORY_CLASSES = {"no_inventory"}
 
+# Closed vocabulary for `extraction_attempts.error_class`. Anything outside this
+# set indicates either drift in classify_attempt() or stale operator code.
+# Keep in sync with classify_attempt() below.
+ALL_ERROR_CLASSES = (
+    FAIL_ERROR_CLASSES
+    | NO_INVENTORY_CLASSES
+    | {"success"}
+)
+
+
+def is_known_error_class(value: str | None) -> bool:
+    """Return True when ``value`` is one of the documented error_class strings."""
+    return str(value or "").strip() in ALL_ERROR_CLASSES
+
 
 def _now_utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -100,6 +114,29 @@ def source_family(module_name: str | None, final_source: str | None = None) -> s
 
 
 def classify_attempt(resp: dict[str, Any] | None, *, row_count: int | None = None) -> dict[str, Any]:
+    """Classify a connector response into an extraction-health verdict.
+
+    Returns a dict with keys: ``error_class``, ``manual_action_required``,
+    ``retry_recommended``, ``no_rows_reason``.
+
+    The ``error_class`` value is drawn from the closed vocabulary in
+    ``ALL_ERROR_CLASSES``. Operator dashboards and the extraction-health gate
+    rely on this set being stable; new values must be added to the constants
+    block above and to this docstring before being emitted here.
+
+    Vocabulary:
+      - ``success`` — at least one row parsed
+      - ``no_inventory`` — source returned ok=true but zero rows (sold out)
+      - ``rate_limit`` — 429 / cooldown / too-many-requests
+      - ``expired_session`` — 401 / 403 / token expired / invalid session
+      - ``stale_capture`` — capture file exists but exceeds MAX_CAPTURE_AGE_HOURS
+      - ``missing_capture`` — no capture file matching the query
+      - ``waf_blocked`` — DataDome / captcha / Imperva / generic anti-bot
+      - ``manual_required`` — operator action needed (capture, refresh)
+      - ``timeout`` — request timed out
+      - ``source_exception`` — request raised inside the connector
+      - ``source_error`` — connector returned a structured error string
+    """
     response = resp if isinstance(resp, dict) else {}
     rows = response.get("rows") if isinstance(response.get("rows"), list) else []
     count = _safe_int(row_count if row_count is not None else len(rows))

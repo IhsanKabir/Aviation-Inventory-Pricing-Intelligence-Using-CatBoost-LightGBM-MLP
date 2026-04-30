@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.atomic_write import atomic_write_json
 from modules import airarabia as g9
 
 
@@ -23,8 +24,7 @@ def _now_tag() -> str:
 
 
 def _json_dump(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    atomic_write_json(path, payload, default=str)
 
 
 def main() -> int:

@@ -89,6 +89,13 @@ ENV_GENERATED_TOKEN_TTL_SEC = "GOZAYAAN_GENERATED_TOKEN_TTL_SEC"
 ENV_BROWSER_CAPTURE_AUTO = "GOZAYAAN_BROWSER_CAPTURE_AUTO"
 ENV_BROWSER_CAPTURE_CMD = "GOZAYAAN_BROWSER_CAPTURE_CMD"
 ENV_BROWSER_CAPTURE_TIMEOUT_SEC = "GOZAYAAN_BROWSER_CAPTURE_TIMEOUT_SEC"
+ENV_INTER_QUERY_SLEEP_SEC = "GOZAYAAN_INTER_QUERY_SLEEP"
+
+# Mandatory inter-query throttle. GoZayaan returns 429 with a 15-minute
+# cooldown when called too rapidly across routes. A 3.0s default has been
+# observed to stay below the trigger threshold while keeping cycle runtime
+# acceptable. Override via GOZAYAAN_INTER_QUERY_SLEEP. Set to 0 to disable.
+DEFAULT_INTER_QUERY_SLEEP_SEC = 3.0
 
 DEFAULT_TOKEN_CACHE_FILE = "output/manual_sessions/gozayaan_token_latest.json"
 DEFAULT_COOKIES_CACHE_FILE = "output/manual_sessions/gozayaan_cookies.json"
@@ -108,6 +115,17 @@ def _safe_float(v: Any) -> Optional[float]:
         return float(v)
     except Exception:
         return None
+
+
+def _apply_inter_query_sleep() -> None:
+    raw = os.getenv(ENV_INTER_QUERY_SLEEP_SEC)
+    if raw is None or str(raw).strip() == "":
+        sleep_sec: float = DEFAULT_INTER_QUERY_SLEEP_SEC
+    else:
+        parsed = _safe_float(raw)
+        sleep_sec = float(parsed) if parsed is not None else DEFAULT_INTER_QUERY_SLEEP_SEC
+    if sleep_sec > 0:
+        time.sleep(sleep_sec)
 
 
 def _safe_int(v: Any) -> Optional[int]:
@@ -1539,6 +1557,8 @@ def fetch_flights_for_airline(
     """
     if not source_enabled("gozayaan"):
         return disabled_source_response("gozayaan")
+
+    _apply_inter_query_sleep()
 
     search_payload = build_search_payload(
         origin=origin,
