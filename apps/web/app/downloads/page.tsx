@@ -1,8 +1,10 @@
 /**
- * app/downloads/page.tsx - TravelportAuto release downloads
+ * app/downloads/page.tsx — Downloads hub for all internal tools
  *
- * Fetches live releases from GitHub API with 1-hour ISR revalidation.
- * Falls back to FALLBACK_RELEASES if the fetch fails at build/revalidate time.
+ * Renders one tab per product. Each tab fetches its own GitHub releases
+ * with 1-hour ISR revalidation. Active tab is driven by ?product= query.
+ *
+ * To add a new product: append a new entry to PRODUCTS below.
  */
 
 interface Release {
@@ -24,35 +26,93 @@ interface GitHubRelease {
   assets: { name: string; browser_download_url: string }[];
 }
 
-const REPO = "IhsanKabir/Process_Optimization_Using_pywinauto";
-const GUIDE_URL = `https://github.com/${REPO}/blob/main/user_guide.md`;
+interface Product {
+  /** URL slug used in ?product= */
+  slug: string;
+  /** Tab label */
+  name: string;
+  /** Sub-headline shown above the latest release card */
+  tagline: string;
+  /** GitHub repo (owner/name) to fetch releases from */
+  repo: string;
+  /** File matcher used to pick the download asset from a release */
+  assetMatch: (assetName: string) => boolean;
+  /** Optional system-requirements line shown at the bottom of the latest card */
+  requirements?: string;
+  /** Optional guide URL — if set, renders the User Guide button on the latest card */
+  guideUrl?: string;
+  /** Fallback releases shown when the GitHub API is unavailable */
+  fallback: Release[];
+}
 
-const FALLBACK_RELEASES: Release[] = [
+const TRAVELPORT_REPO = "IhsanKabir/Process_Optimization_Using_pywinauto";
+const IATA_REPO = "IhsanKabir/iata-code-validator";
+
+const PRODUCTS: Product[] = [
   {
-    version: "v1.4.0",
-    date: "2026-04-13",
-    label: "Latest",
-    notes: [
-      "FS two-window date schedule — rescues airlines whose first-month inventory has dried up",
-      "FZS precision preserved to 6 decimal places in currency reports",
-      "India K3 origin-sensitive tax correction for round-trip fares from non-Indian airports",
+    slug: "travelport",
+    name: "TravelportAuto",
+    tagline:
+      "Travelport Smartpoint automation tool for fare, tax and penalty extraction",
+    repo: TRAVELPORT_REPO,
+    assetMatch: (n) => n.endsWith(".exe") || n.endsWith(".zip"),
+    requirements:
+      "Windows 10/11 · Travelport Smartpoint running and signed in · Screen resolution ≥ 1920×1080",
+    guideUrl: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
+    fallback: [
+      {
+        version: "v1.4.0",
+        date: "2026-04-13",
+        label: "Latest",
+        notes: [
+          "FS two-window date schedule — rescues airlines whose first-month inventory has dried up",
+          "FZS precision preserved to 6 decimal places in currency reports",
+          "India K3 origin-sensitive tax correction for round-trip fares from non-Indian airports",
+        ],
+        exe_url: `https://github.com/${TRAVELPORT_REPO}/releases/download/v1.4.0/TravelportAuto.exe`,
+        guide_url: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
+      },
+      {
+        version: "v1.3.8",
+        date: "2026-04-13",
+        notes: [
+          "Performance: eliminated fixed sleeps, replaced with adaptive polling — 1-3 minutes faster per full run",
+          "Startup connection 14s faster, FS freshness check and currency redirect no longer wait the full timeout when data arrives early",
+        ],
+        exe_url: `https://github.com/${TRAVELPORT_REPO}/releases/download/v1.3.8/TravelportAuto.exe`,
+        guide_url: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
+      },
     ],
-    exe_url: `https://github.com/${REPO}/releases/download/v1.4.0/TravelportAuto.exe`,
-    guide_url: GUIDE_URL,
   },
   {
-    version: "v1.3.8",
-    date: "2026-04-13",
-    notes: [
-      "Performance: eliminated fixed sleeps, replaced with adaptive polling — 1-3 minutes faster per full run",
-      "Startup connection 14s faster, FS freshness check and currency redirect no longer wait the full timeout when data arrives early",
+    slug: "iata",
+    name: "IATA Code Validator",
+    tagline:
+      "Bulk-validates IATA Numeric Codes against IATA's public CheckACode page; writes agency details (Trading Name, Country, Accredited) back to Excel",
+    repo: IATA_REPO,
+    assetMatch: (n) => n === "IATACodeValidator.exe" || n.endsWith(".exe"),
+    requirements:
+      "Windows 10/11 · Internet connection · Excel file with IATA codes in any column",
+    fallback: [
+      {
+        version: "v1.0.0",
+        date: "2026-05-05",
+        label: "Latest",
+        notes: [
+          "Initial release",
+          "Bulk validation with Excel input/output",
+          "Tkinter GUI with sheet/column picker, row range, pause/resume",
+          "Local SQLite cache makes re-runs skip already-validated codes",
+          "Single portable Windows .exe (~380 MB) — no Python or admin required",
+        ],
+        exe_url: `https://github.com/${IATA_REPO}/releases/download/v1.0.0/IATACodeValidator.exe`,
+        guide_url: null,
+      },
     ],
-    exe_url: `https://github.com/${REPO}/releases/download/v1.3.8/TravelportAuto.exe`,
-    guide_url: GUIDE_URL,
   },
 ];
 
-function parseGitHubReleases(items: GitHubRelease[]): Release[] {
+function parseGitHubReleases(items: GitHubRelease[], product: Product): Release[] {
   const releases: Release[] = [];
 
   for (const item of items) {
@@ -61,13 +121,14 @@ function parseGitHubReleases(items: GitHubRelease[]): Release[] {
     const version = item.tag_name.startsWith("v") ? item.tag_name : `v${item.tag_name}`;
     const date = item.published_at.slice(0, 10);
 
-    const exeAsset = item.assets.find(
-      (a) => a.name.endsWith(".exe") || a.name.endsWith(".zip")
-    );
+    const exeAsset = item.assets.find((a) => product.assetMatch(a.name));
     const exe_url = exeAsset?.browser_download_url ?? null;
 
-    const hasGuide = item.body?.toLowerCase().includes("user guide") || item.assets.some((a) => a.name.includes("guide"));
-    const guide_url = hasGuide ? GUIDE_URL : null;
+    const hasGuide =
+      product.guideUrl != null &&
+      (item.body?.toLowerCase().includes("user guide") ||
+        item.assets.some((a) => a.name.includes("guide")));
+    const guide_url = hasGuide ? product.guideUrl ?? null : null;
 
     const notes = (item.body || "")
       .split("\n")
@@ -90,23 +151,26 @@ function parseGitHubReleases(items: GitHubRelease[]): Release[] {
   return releases;
 }
 
-async function fetchReleases(): Promise<Release[]> {
+async function fetchReleases(product: Product): Promise<Release[]> {
   try {
     const res = await fetch(
-      `https://api.github.com/repos/${REPO}/releases?per_page=30`,
+      `https://api.github.com/repos/${product.repo}/releases?per_page=30`,
       {
         next: { revalidate: 3600 },
         headers: { Accept: "application/vnd.github+json" },
       }
     );
 
-    if (!res.ok) return FALLBACK_RELEASES;
+    if (!res.ok) return product.fallback;
 
     const items: GitHubRelease[] = await res.json();
-    const parsed = parseGitHubReleases(items.filter((r) => !r.prerelease));
-    return parsed.length > 0 ? parsed : FALLBACK_RELEASES;
+    const parsed = parseGitHubReleases(
+      items.filter((r) => !r.prerelease),
+      product
+    );
+    return parsed.length > 0 ? parsed : product.fallback;
   } catch {
-    return FALLBACK_RELEASES;
+    return product.fallback;
   }
 }
 
@@ -118,19 +182,23 @@ function fmt(iso: string) {
   });
 }
 
-export default async function DownloadsPage() {
-  const releases = await fetchReleases();
+function ProductCard({
+  product,
+  releases,
+}: {
+  product: Product;
+  releases: Release[];
+}) {
   const latest = releases[0];
   const older = releases.slice(1);
 
   return (
-    <main className="shell" style={{ paddingBlock: "32px" }}>
-      {/* Header */}
+    <>
       <div style={{ marginBottom: "32px" }}>
-        <h1 className="page-title">Downloads</h1>
-        <p className="page-copy">
-          TravelportAuto — Travelport Smartpoint automation tool for fare, tax and penalty extraction
-        </p>
+        <h1 className="page-title" style={{ marginBottom: "8px" }}>
+          {product.name}
+        </h1>
+        <p className="page-copy">{product.tagline}</p>
       </div>
 
       {/* Latest release card */}
@@ -142,7 +210,16 @@ export default async function DownloadsPage() {
           borderLeft: "4px solid var(--good)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: "16px", marginBottom: "20px" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "16px",
+            marginBottom: "20px",
+          }}
+        >
           <div>
             <div className="chip-row" style={{ marginBottom: "8px" }}>
               <span
@@ -160,7 +237,12 @@ export default async function DownloadsPage() {
               </span>
               <span
                 className="chip"
-                style={{ fontSize: "0.78rem", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", fontWeight: 600 }}
+                style={{
+                  fontSize: "0.78rem",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                  fontWeight: 600,
+                }}
               >
                 {latest.version}
               </span>
@@ -207,33 +289,47 @@ export default async function DownloadsPage() {
           <p style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: "10px" }}>
             What&apos;s in this release:
           </p>
-          <ul style={{ margin: 0, paddingLeft: "20px", display: "flex", flexDirection: "column", gap: "4px" }}>
+          <ul
+            style={{
+              margin: 0,
+              paddingLeft: "20px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "4px",
+            }}
+          >
             {latest.notes.map((note, i) => (
-              <li key={i} style={{ fontSize: "0.85rem" }}>{note}</li>
+              <li key={i} style={{ fontSize: "0.85rem" }}>
+                {note}
+              </li>
             ))}
           </ul>
         </div>
 
-        <div
-          style={{
-            marginTop: "20px",
-            padding: "12px 16px",
-            borderRadius: "12px",
-            background: "rgba(255,255,255,0.56)",
-            fontSize: "0.78rem",
-            color: "var(--muted)",
-          }}
-        >
-          <strong style={{ color: "var(--ink)" }}>Requirements:</strong> Windows 10/11 &nbsp;·&nbsp;
-          Travelport Smartpoint running and signed in &nbsp;·&nbsp; Screen resolution ≥ 1920×1080
-        </div>
+        {product.requirements && (
+          <div
+            style={{
+              marginTop: "20px",
+              padding: "12px 16px",
+              borderRadius: "12px",
+              background: "rgba(255,255,255,0.56)",
+              fontSize: "0.78rem",
+              color: "var(--muted)",
+            }}
+          >
+            <strong style={{ color: "var(--ink)" }}>Requirements:</strong>{" "}
+            {product.requirements}
+          </div>
+        )}
       </div>
 
       {/* Previous versions */}
       {older.length > 0 && (
         <div className="card" style={{ overflow: "hidden" }}>
           <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--line)" }}>
-            <h2 style={{ fontWeight: 600, fontSize: "1rem", margin: 0 }}>Previous Versions</h2>
+            <h2 style={{ fontWeight: 600, fontSize: "1rem", margin: 0 }}>
+              Previous Versions
+            </h2>
           </div>
           <div className="data-table-wrap">
             <table>
@@ -249,11 +345,19 @@ export default async function DownloadsPage() {
                 {older.map((rel) => (
                   <tr key={rel.version}>
                     <td>
-                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", fontWeight: 600 }}>
+                      <span
+                        style={{
+                          fontFamily:
+                            "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                          fontWeight: 600,
+                        }}
+                      >
                         {rel.version}
                       </span>
                     </td>
-                    <td style={{ color: "var(--muted)", fontSize: "0.82rem" }}>{fmt(rel.date)}</td>
+                    <td style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
+                      {fmt(rel.date)}
+                    </td>
                     <td style={{ fontSize: "0.82rem" }}>
                       <ul style={{ margin: 0, paddingLeft: "16px" }}>
                         {rel.notes.map((n, i) => (
@@ -267,7 +371,11 @@ export default async function DownloadsPage() {
                           href={rel.exe_url}
                           className="chip"
                           download
-                          style={{ fontSize: "0.72rem", padding: "4px 10px", minHeight: "unset" }}
+                          style={{
+                            fontSize: "0.72rem",
+                            padding: "4px 10px",
+                            minHeight: "unset",
+                          }}
                         >
                           ↓ .exe
                         </a>
@@ -282,10 +390,70 @@ export default async function DownloadsPage() {
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+function ProductTabs({ active }: { active: string }) {
+  return (
+    <div
+      role="tablist"
+      style={{
+        display: "flex",
+        gap: "4px",
+        borderBottom: "1px solid var(--line)",
+        marginBottom: "32px",
+      }}
+    >
+      {PRODUCTS.map((p) => {
+        const isActive = p.slug === active;
+        return (
+          <a
+            key={p.slug}
+            href={`/downloads?product=${p.slug}`}
+            role="tab"
+            aria-selected={isActive}
+            style={{
+              padding: "12px 20px",
+              fontSize: "0.9rem",
+              fontWeight: isActive ? 600 : 500,
+              color: isActive ? "var(--ink)" : "var(--muted)",
+              borderBottom: isActive ? "2px solid var(--ink)" : "2px solid transparent",
+              marginBottom: "-1px",
+              textDecoration: "none",
+              transition: "color 0.15s ease",
+            }}
+          >
+            {p.name}
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
+export default async function DownloadsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ product?: string }>;
+}) {
+  const params = await searchParams;
+  const requested = params.product ?? PRODUCTS[0].slug;
+  const product = PRODUCTS.find((p) => p.slug === requested) ?? PRODUCTS[0];
+
+  // Fetch all products' releases in parallel so tab clicks revalidate together.
+  const allReleases = await Promise.all(PRODUCTS.map(fetchReleases));
+  const activeIdx = PRODUCTS.findIndex((p) => p.slug === product.slug);
+  const releases = allReleases[activeIdx];
+
+  return (
+    <main className="shell" style={{ paddingBlock: "32px" }}>
+      <ProductTabs active={product.slug} />
+      <ProductCard product={product} releases={releases} />
     </main>
   );
 }
 
 export const metadata = {
-  title: "Downloads — TravelportAuto",
+  title: "Downloads",
 };
