@@ -170,7 +170,11 @@ async function fetchReleases(product: Product): Promise<Release[]> {
     const res = await fetch(
       `https://api.github.com/repos/${product.repo}/releases?per_page=30`,
       {
-        next: { revalidate: 3600 },
+        // Revalidate at most every 60 seconds. Releases are tagged a few
+        // times a month, so 1-minute freshness is plenty and ensures a
+        // new release appears on the page right after GitHub Actions
+        // publishes it — without manual redeploys.
+        next: { revalidate: 60 },
         headers: { Accept: "application/vnd.github+json" },
       }
     );
@@ -187,6 +191,12 @@ async function fetchReleases(product: Product): Promise<Release[]> {
     return product.fallback;
   }
 }
+
+// Force this page to be rendered on every request. The fetch above still
+// uses Next.js's data cache with revalidate=60s, so we don't lose
+// performance — but we never serve a build-time-cached page after a
+// fresh deploy.
+export const dynamic = "force-dynamic";
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleDateString("en-GB", {
