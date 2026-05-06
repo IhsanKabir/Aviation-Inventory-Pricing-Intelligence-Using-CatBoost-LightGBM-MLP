@@ -88,18 +88,32 @@ const PRODUCTS: Product[] = [
     slug: "iata",
     name: "IATA Code Validator",
     tagline:
-      "Bulk-validates IATA Numeric Codes against IATA's public CheckACode page; writes agency details (Trading Name, Country, Accredited) back to Excel",
+      "Two tools in one: validate IATA Numeric Codes against IATA's public CheckACode page, and look up Bangladesh travel agencies from regtravelagency.gov.bd. Both export to Excel.",
     repo: IATA_REPO,
     assetMatch: (n) => n === "IATACodeValidator.exe" || n.endsWith(".exe"),
     requirements:
-      "Windows 10/11 · Internet connection · Excel file with IATA codes in any column",
+      "Windows 10/11 · Internet connection · Excel file with IATA codes or agency names",
     fallback: [
+      {
+        version: "v1.1.0",
+        date: "2026-05-06",
+        label: "Latest",
+        notes: [
+          "NEW tab: BD Travel Agency Lookup (regtravelagency.gov.bd)",
+          "Export the full ~6,113 active agency list to Excel in one click",
+          "Lookup mode: match an Excel of names/license numbers against the cached list",
+          "Match priority: EXACT → CONTAINS → FUZZY (rapidfuzz), each row tagged with the method that matched",
+          "Filter to exclude EXPIRED-PENDING agencies",
+          "Local SQLite cache so re-running the app doesn't re-download",
+        ],
+        exe_url: `https://github.com/${IATA_REPO}/releases/download/v1.1.0/IATACodeValidator.exe`,
+        guide_url: null,
+      },
       {
         version: "v1.0.0",
         date: "2026-05-05",
-        label: "Latest",
         notes: [
-          "Initial release",
+          "Initial release — IATA Code Validator tab",
           "Bulk validation with Excel input/output",
           "Tkinter GUI with sheet/column picker, row range, pause/resume",
           "Local SQLite cache makes re-runs skip already-validated codes",
