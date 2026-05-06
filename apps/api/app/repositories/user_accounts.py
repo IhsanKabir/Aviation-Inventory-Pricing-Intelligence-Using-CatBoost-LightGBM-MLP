@@ -89,6 +89,25 @@ def ensure_tables(engine: Engine | None) -> None:
                 """
             )
         )
+        # app_id distinguishes which desktop app (or web client) the
+        # session belongs to. Existing rows are NULL, which renders as
+        # 'travelport-auto' in the usage dashboard for backwards compat.
+        conn.execute(
+            text(
+                """
+                ALTER TABLE report_user_sessions
+                ADD COLUMN IF NOT EXISTS app_id TEXT NULL
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_report_user_sessions_app_id
+                ON report_user_sessions (app_id, last_seen_at_utc DESC)
+                """
+            )
+        )
 
 
 def _normalize_email(value: Any) -> str:
@@ -411,7 +430,16 @@ def create_session(
     user_agent: str | None = None,
     ip_address: str | None = None,
     ttl_days: int = SESSION_TTL_DAYS,
+    app_id: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
+    """Create a new session row.
+
+    `app_id` is an optional tag identifying which desktop app or web
+    client is signing in (e.g. "travelport-auto", "iata-validator").
+    Used by the /api/v1/usage/summary endpoint to break down activity
+    per-product. Older sessions without an app_id are reported as
+    'travelport-auto' since that was the only client until 2026-05-06.
+    """
     session_token = secrets.token_urlsafe(32)
     session_id = str(uuid4())
     now = _utcnow()
@@ -425,6 +453,7 @@ def create_session(
                 session_token_hash,
                 user_agent,
                 ip_address,
+                app_id,
                 created_at_utc,
                 last_seen_at_utc,
                 expires_at_utc,
@@ -436,6 +465,7 @@ def create_session(
                 :session_token_hash,
                 :user_agent,
                 :ip_address,
+                :app_id,
                 :created_at_utc,
                 :last_seen_at_utc,
                 :expires_at_utc,
@@ -449,6 +479,7 @@ def create_session(
             "session_token_hash": _hash_session_token(session_token),
             "user_agent": _normalize_name(user_agent),
             "ip_address": _normalize_name(ip_address),
+            "app_id": _normalize_name(app_id),
             "created_at_utc": now,
             "last_seen_at_utc": now,
             "expires_at_utc": expires_at,
@@ -458,6 +489,7 @@ def create_session(
     return session_token, {
         "session_id": session_id,
         "user_id": user_id,
+        "app_id": _normalize_name(app_id),
         "created_at_utc": now.isoformat(),
         "expires_at_utc": expires_at.isoformat(),
     }
