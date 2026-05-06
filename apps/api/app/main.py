@@ -526,16 +526,23 @@ def log_lookup_event(
 def usage_summary(
     days: int = 30,
     x_user_session: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
     """Aggregated usage breakdown — admin only.
 
-    Configure admins via the USAGE_ADMIN_EMAILS env var
-    (comma-separated). Defaults to the project owner's email.
+    Two auth paths so this is callable from both contexts:
+      - Server-side (Vercel /usage page renderer): pass X-Admin-Token,
+        same pattern as the existing /access-requests endpoint.
+      - Direct user (curl, etc.): pass X-User-Session of a user whose
+        email is in the USAGE_ADMIN_EMAILS env var.
     """
     if db is None:
         raise HTTPException(status_code=503, detail="Database not configured.")
-    _require_admin_user(db, x_user_session)
+    if x_admin_token:
+        _require_admin_token(x_admin_token)
+    else:
+        _require_admin_user(db, x_user_session)
     return usage.usage_summary(db, days=days)
 
 
