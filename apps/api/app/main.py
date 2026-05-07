@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import engine, get_optional_db
-from .repositories import access_requests, exporting, reporting, user_accounts
+from .repositories import access_requests, exporting, reporting, usage, user_accounts
 from .routers import gds as gds_router
 from .routers import travelport_feedback as travelport_feedback_router
 
@@ -98,12 +98,35 @@ class GoogleCodeExchangeBody(BaseModel):
     code_verifier: str
     redirect_uri: str
     client_id: str
+    # Optional tag identifying which desktop app initiated the flow,
+    # e.g. "travelport-auto" or "iata-validator". Persisted on the
+    # session row for the /api/v1/usage/summary admin dashboard.
+    app_id: str | None = None
+
+
+class LookupEventBody(BaseModel):
+    """A single batch-level usage event reported from a desktop app.
+
+    Send one of these per *batch* (a Run/Export/Refresh), not per row.
+    The desktop app calls POST /api/v1/lookups/log with its session
+    token; we resolve the user from the token and persist app_id.
+    """
+    app_id: str
+    action: str           # e.g. "iata_validate", "bd_lookup", "bd_export", "bd_refresh"
+    target: str | None = None  # short label, e.g. input column name
+    count: int = 0        # number of records processed in the batch
+    notes: str | None = None
+
+
+class UsageSummaryQuery(BaseModel):
+    days: int = 30
 
 
 @app.on_event("startup")
 def startup() -> None:
     access_requests.ensure_tables(engine)
     user_accounts.ensure_tables(engine)
+    usage.ensure_tables(engine)
 
 
 @app.middleware("http")
@@ -405,6 +428,7 @@ def google_code_exchange(
                 user_id=user["user_id"],
                 user_agent=request.headers.get("user-agent"),
                 ip_address=request.client.host if request.client else None,
+                app_id=getattr(body, "app_id", None),
             )
             return {"user": user, "session_token": session_token, "session": session_payload}
         except Exception:
@@ -438,6 +462,88 @@ def logout_user(
     required_db = _require_access_request_db(db)
     revoked = user_accounts.revoke_session(required_db, x_user_session)
     return {"ok": revoked}
+
+
+# ---------------------------------------------------------------------------
+# App usage logging — desktop apps post one event per batch (Run/Export/etc.)
+# Used by the /usage admin dashboard to break down activity per app and user.
+# ---------------------------------------------------------------------------
+
+
+_ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in os.environ.get("USAGE_ADMIN_EMAILS", "ihsankabir999@gmail.com").split(",")
+    if e.strip()
+}
+
+
+def _require_admin_user(db: Session | None, x_user_session: str | None) -> dict:
+    user = _require_user_session(db, x_user_session)
+    email = (user.get("email") or "").strip().lower()
+    if email not in _ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=403,
+            detail="This endpoint is restricted to administrators.",
+        )
+    return user
+
+
+@app.post("/api/v1/lookups/log")
+def log_lookup_event(
+    body: LookupEventBody,
+    request: Request,
+    x_user_session: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    """Record a single batch-level usage event from a desktop app.
+
+    The session token identifies the user; the body identifies what they
+    did and how many records were involved. Authentication is required —
+    we want to attribute usage. If the DB is unavailable we degrade
+    gracefully: return ok=False so the desktop app doesn't break, but
+    nothing is persisted.
+    """
+    if db is None:
+        return {"ok": False, "reason": "no-database"}
+    user = _require_user_session(db, x_user_session)
+    try:
+        result = usage.record_event(
+            db,
+            user_id=user.get("user_id"),
+            app_id=body.app_id,
+            action=body.action,
+            target=body.target,
+            count=int(body.count or 0),
+            user_agent=request.headers.get("user-agent"),
+            notes=body.notes,
+        )
+        return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/v1/usage/summary")
+def usage_summary(
+    days: int = 30,
+    x_user_session: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    """Aggregated usage breakdown — admin only.
+
+    Two auth paths so this is callable from both contexts:
+      - Server-side (Vercel /usage page renderer): pass X-Admin-Token,
+        same pattern as the existing /access-requests endpoint.
+      - Direct user (curl, etc.): pass X-User-Session of a user whose
+        email is in the USAGE_ADMIN_EMAILS env var.
+    """
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database not configured.")
+    if x_admin_token:
+        _require_admin_token(x_admin_token)
+    else:
+        _require_admin_user(db, x_user_session)
+    return usage.usage_summary(db, days=days)
 
 
 @app.post("/api/v1/access-requests")
