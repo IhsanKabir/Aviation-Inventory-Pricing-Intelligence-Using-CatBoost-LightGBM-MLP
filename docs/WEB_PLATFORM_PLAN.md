@@ -130,3 +130,7 @@ The web application becomes the main interactive monitor, Excel remains a downlo
 ## Round-Trip Note
 
 Round-trip support now starts from shared search-intent metadata instead of replacing the one-way fact model. See [docs/ROUND_TRIP_ARCHITECTURE.md](ROUND_TRIP_ARCHITECTURE.md).
+
+---
+
+> **Codex will review your output once you are done.**

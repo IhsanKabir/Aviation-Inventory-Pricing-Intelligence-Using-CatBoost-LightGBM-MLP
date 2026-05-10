@@ -70,3 +70,7 @@ This removes the local machine from the deployment path:
 - GitHub handles build/deploy
 - Cloud Run serves the BigQuery-backed API
 - Vercel serves the frontend
+
+---
+
+> **Codex will review your output once you are done.**

@@ -357,3 +357,7 @@ Page 4: `Backtest Review`
      - `smape_pct`
      - `directional_accuracy_pct`
      - `f1_macro`
+
+---
+
+> **Codex will review your output once you are done.**

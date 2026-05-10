@@ -237,3 +237,7 @@ The current future-proof training pattern is:
 - worker, tourism, regional, and hub-spoke route behaviors can be declared explicitly in training at route or airline level
 - inventory-anchor tracking is kept in training so availability movement can be modeled against fare change behavior
 - deep mode is the broadest lane and is intended for weekly or opportunistic enrichment rather than daily execution
+
+---
+
+> **Codex will review your output once you are done.**

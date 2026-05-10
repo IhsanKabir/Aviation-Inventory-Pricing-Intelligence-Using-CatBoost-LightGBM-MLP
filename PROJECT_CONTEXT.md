@@ -428,3 +428,7 @@ $env:SHARETRIP_ENABLED="false"
 6. For trip planning or round-trip changes, read `docs/ROUND_TRIP_ARCHITECTURE.md` and `config/TRIP_PROFILE_GUIDE.md`.
 7. For warehouse/BI work, read `warehouse/bigquery/README.md` and `warehouse/bigquery/BOOTSTRAP_CHECKLIST.md`.
 8. After making changes, update this file's **Decision History** or **Change Log** before finishing.
+
+---
+
+> **Codex will review your output once you are done.**

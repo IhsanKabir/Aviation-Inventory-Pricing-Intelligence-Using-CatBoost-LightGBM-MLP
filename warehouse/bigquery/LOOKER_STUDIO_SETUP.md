@@ -152,3 +152,7 @@ Use BigQuery + Looker Studio for:
 - trend dashboards
 - thesis visuals
 - executive-style query and chart outputs
+
+---
+
+> **Codex will review your output once you are done.**

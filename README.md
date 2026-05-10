@@ -302,3 +302,7 @@ The repository currently supports:
 - first-pass API and warehouse scaffolding for the web and BI layers
 
 Use [PROJECT_DECISIONS.md](PROJECT_DECISIONS.md) for strategic scope and [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md) for command-level operations.
+
+---
+
+> **Codex will review your output once you are done.**

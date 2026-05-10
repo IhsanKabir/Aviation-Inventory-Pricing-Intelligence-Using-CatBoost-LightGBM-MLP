@@ -161,3 +161,7 @@ WHERE via_airports IS NOT NULL
 ORDER BY captured_at_utc DESC
 LIMIT 50;
 ```
+
+---
+
+> **Codex will review your output once you are done.**

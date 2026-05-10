@@ -98,3 +98,7 @@ Production target:
 - set env vars from [.env.example](.env.example)
 
 For BigQuery in Cloud Run, use the attached service account. Do not mount a downloaded JSON key in production.
+
+---
+
+> **Codex will review your output once you are done.**

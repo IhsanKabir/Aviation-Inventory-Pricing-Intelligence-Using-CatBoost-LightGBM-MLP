@@ -216,3 +216,7 @@ Metrics:
 
 - [warehouse/bigquery/FORECASTING_BACKTEST_DASHBOARD_SPEC.md](FORECASTING_BACKTEST_DASHBOARD_SPEC.md)
 - [warehouse/bigquery/LOOKER_STUDIO_SETUP.md](LOOKER_STUDIO_SETUP.md)
+
+---
+
+> **Codex will review your output once you are done.**

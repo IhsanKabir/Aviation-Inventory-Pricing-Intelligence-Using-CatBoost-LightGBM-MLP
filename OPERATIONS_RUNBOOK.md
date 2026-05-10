@@ -948,3 +948,7 @@ Current baseline: ~4h31m accumulation. Target: ~1h15m via family-aware paralleli
 .\.venv\Scripts\python.exe run_all.py --profile-runtime
 # Output: output\reports\runtime_profile_*.json
 ```
+
+---
+
+> **Codex will review your output once you are done.**

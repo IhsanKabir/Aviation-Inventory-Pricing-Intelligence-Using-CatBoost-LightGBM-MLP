@@ -151,6 +151,13 @@ export function Topbar({
           >
             Downloads
           </Link>
+          <Link
+            className="nav-link"
+            href="/usage"
+            data-active={isActivePath(pathname, "/usage")}
+          >
+            Usage
+          </Link>
 
           {adminItems.map((item) => (
             <Link

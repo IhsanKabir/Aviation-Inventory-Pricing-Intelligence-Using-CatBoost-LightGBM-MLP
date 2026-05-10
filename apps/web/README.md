@@ -116,3 +116,7 @@ For production:
 - add `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` only when enabling Google sign-in
 
 The frontend should point to the hosted API, not localhost.
+
+---
+
+> **Codex will review your output once you are done.**

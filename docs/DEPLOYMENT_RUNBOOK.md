@@ -195,3 +195,7 @@ Get-Content output\reports\extraction_health_latest.md
 ```
 
 `output/reports/extraction_health_latest.md` is the operator-facing source-quality gate. A `FAIL` status means BigQuery auto-sync is intentionally skipped until the extraction issue is fixed or a same-cycle retry succeeds.
+
+---
+
+> **Codex will review your output once you are done.**

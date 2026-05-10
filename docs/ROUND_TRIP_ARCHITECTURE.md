@@ -316,3 +316,7 @@ CLI:
 2. Upgrade OTA connectors with explicit round-trip payload builders.
 3. Add itinerary-level export and ranking views.
 4. Add itinerary-level ranking and forecasting on top of linked legs.
+
+---
+
+> **Codex will review your output once you are done.**

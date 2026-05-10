@@ -104,3 +104,7 @@ If the VM reboots:
 - Keep route-selection gate fixed: `beats_zero_folds`
 - Continue weekly model-ops workflow from the current project context and operations runbook.
 - Re-run comparative policy study only on trigger conditions
+
+---
+
+> **Codex will review your output once you are done.**

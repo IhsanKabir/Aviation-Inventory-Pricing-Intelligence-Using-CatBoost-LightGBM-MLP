@@ -384,3 +384,7 @@ When adding a new feature:
 
 **Last Updated**: 2026-03-18
 **Next Review**: After first production validation with backtest results
+
+---
+
+> **Codex will review your output once you are done.**

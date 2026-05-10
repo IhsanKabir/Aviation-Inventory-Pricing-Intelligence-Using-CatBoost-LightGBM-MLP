@@ -1198,3 +1198,7 @@ enabled.
 - `tools/bigquery_apply_retention.py`
 - `tools/bigquery_storage_audit.py`
 - `sql/bigquery/apply_hot_cache_retention.sql`
+
+---
+
+> **Codex will review your output once you are done.**

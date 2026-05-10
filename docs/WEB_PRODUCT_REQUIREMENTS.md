@@ -533,3 +533,7 @@ The next implementation cycle should deliver at minimum:
 - INT/DOM data contract
 - visibility rules for inventory-estimation fields
 - scoped plan for Airline Operations, round-trip support, forecasting expansion, and future penalty integration
+
+---
+
+> **Codex will review your output once you are done.**

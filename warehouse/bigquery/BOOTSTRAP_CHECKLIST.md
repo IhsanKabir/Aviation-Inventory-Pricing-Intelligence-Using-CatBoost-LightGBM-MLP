@@ -232,3 +232,7 @@ For the preferred zero-cost hosted deployment:
   - `BIGQUERY_PROJECT_ID=aeropulseintelligence`
   - `BIGQUERY_DATASET=aviation_intel`
 - `AIRLINE_DB_URL` should be omitted unless you intentionally keep transitional PostgreSQL-backed endpoints enabled.
+
+---
+
+> **Codex will review your output once you are done.**

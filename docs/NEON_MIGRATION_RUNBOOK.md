@@ -74,3 +74,7 @@ Once validated locally:
 1. store the same `AIRLINE_DB_URL` in Secret Manager
 2. deploy Cloud Run API
 3. point Vercel frontend to the Cloud Run API URL
+
+---
+
+> **Codex will review your output once you are done.**
