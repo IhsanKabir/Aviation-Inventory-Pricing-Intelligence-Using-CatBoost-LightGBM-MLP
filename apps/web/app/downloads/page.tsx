@@ -61,26 +61,26 @@ const PRODUCTS: Product[] = [
     guideUrl: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
     fallback: [
       {
-        version: "v1.5.26",
+        version: "v1.5.27",
         date: "2026-05-11",
         label: "Latest",
+        notes: [
+          "Button text cleaned up — no more garbled symbols on Start, Stop, and other buttons",
+          "Auto-update dialog enlarged and resizable so Download button is always visible",
+          "BOOK-click for baggage mode now uses calibration fan-out — reliable on all machines",
+        ],
+        exe_url: `https://github.com/${TRAVELPORT_REPO}/releases/download/v1.5.27/TravelportAuto-v1.5.27.zip`,
+        guide_url: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
+      },
+      {
+        version: "v1.5.26",
+        date: "2026-05-11",
         notes: [
           "New Baggage Allowance mode — standalone baggage extraction with Excel report",
           "Include baggage checkbox: run fare + tax + baggage in one session",
           "Baggage file browse field: load saved baggage JSON into any fare report",
         ],
         exe_url: `https://github.com/${TRAVELPORT_REPO}/releases/download/v1.5.26/TravelportAuto-v1.5.26.zip`,
-        guide_url: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
-      },
-      {
-        version: "v1.5.25",
-        date: "2026-05-10",
-        notes: [
-          "Baggage allowance backend: BOOK + FQC[airline]/ET after FS to fetch checked and carry-on data",
-          "baggage_parser.py: pure parser for FQC terminal output",
-          "Inline baggage data appended to individual airline sheets in fare report",
-        ],
-        exe_url: `https://github.com/${TRAVELPORT_REPO}/releases/download/v1.5.25/TravelportAuto-v1.5.25.zip`,
         guide_url: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
       },
     ],
