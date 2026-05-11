@@ -53,7 +53,7 @@ const PRODUCTS: Product[] = [
     slug: "travelport",
     name: "TravelportAuto",
     tagline:
-      "Travelport Smartpoint automation tool for fare, tax and penalty extraction",
+      "Travelport Smartpoint automation tool for fare, tax, penalty and baggage extraction",
     repo: TRAVELPORT_REPO,
     assetMatch: (n) => n.endsWith(".exe") || n.endsWith(".zip"),
     requirements:
@@ -61,25 +61,26 @@ const PRODUCTS: Product[] = [
     guideUrl: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
     fallback: [
       {
-        version: "v1.4.0",
-        date: "2026-04-13",
+        version: "v1.5.26",
+        date: "2026-05-11",
         label: "Latest",
         notes: [
-          "FS two-window date schedule — rescues airlines whose first-month inventory has dried up",
-          "FZS precision preserved to 6 decimal places in currency reports",
-          "India K3 origin-sensitive tax correction for round-trip fares from non-Indian airports",
+          "New Baggage Allowance mode — standalone baggage extraction with Excel report",
+          "Include baggage checkbox: run fare + tax + baggage in one session",
+          "Baggage file browse field: load saved baggage JSON into any fare report",
         ],
-        exe_url: `https://github.com/${TRAVELPORT_REPO}/releases/download/v1.4.0/TravelportAuto.exe`,
+        exe_url: `https://github.com/${TRAVELPORT_REPO}/releases/download/v1.5.26/TravelportAuto-v1.5.26.zip`,
         guide_url: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
       },
       {
-        version: "v1.3.8",
-        date: "2026-04-13",
+        version: "v1.5.25",
+        date: "2026-05-10",
         notes: [
-          "Performance: eliminated fixed sleeps, replaced with adaptive polling — 1-3 minutes faster per full run",
-          "Startup connection 14s faster, FS freshness check and currency redirect no longer wait the full timeout when data arrives early",
+          "Baggage allowance backend: BOOK + FQC[airline]/ET after FS to fetch checked and carry-on data",
+          "baggage_parser.py: pure parser for FQC terminal output",
+          "Inline baggage data appended to individual airline sheets in fare report",
         ],
-        exe_url: `https://github.com/${TRAVELPORT_REPO}/releases/download/v1.3.8/TravelportAuto.exe`,
+        exe_url: `https://github.com/${TRAVELPORT_REPO}/releases/download/v1.5.25/TravelportAuto-v1.5.25.zip`,
         guide_url: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
       },
     ],
