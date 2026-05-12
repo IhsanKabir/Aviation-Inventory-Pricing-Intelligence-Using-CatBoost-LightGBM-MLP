@@ -56,6 +56,9 @@ jobs:
           if [ -n "${{ secrets.REPORT_ACCESS_ADMIN_TOKEN }}" ]; then
             ENV_VARS="${ENV_VARS},REPORT_ACCESS_ADMIN_TOKEN=${{ secrets.REPORT_ACCESS_ADMIN_TOKEN }}"
           fi
+          if [ -n "${{ secrets.GOOGLE_CLIENT_SECRET }}" ]; then
+            ENV_VARS="${ENV_VARS},GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}"
+          fi
           gcloud run deploy "${CLOUD_RUN_SERVICE}" \
             --project "${GCP_PROJECT_ID}" \
             --region "${GCP_REGION}" \
