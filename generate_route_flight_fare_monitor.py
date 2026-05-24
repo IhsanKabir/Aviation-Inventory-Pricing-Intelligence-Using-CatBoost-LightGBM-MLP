@@ -781,6 +781,8 @@ def generate_route_flight_fare_monitor(
     return_date=None,
     return_date_start=None,
     return_date_end=None,
+    dep_start_date=None,
+    dep_end_date=None,
 ):
     engine = create_engine(db_url, pool_pre_ping=True, future=True)
     scrape_ctx = ScrapeContext(engine)
@@ -858,6 +860,18 @@ def generate_route_flight_fare_monitor(
     final_df = _prepare_for_writer(final_df)
     final_df["current_capture_label"] = current_capture_label or "Current snapshot"
     final_df["previous_capture_label"] = previous_capture_label or "Previous snapshot"
+
+    # Optionally restrict visible departure dates without re-querying the DB.
+    # _date_span_summary and _build_full_capture_history_df both derive their
+    # date range from final_df["flight_date"], so filtering here propagates everywhere.
+    if (dep_start_date or dep_end_date) and "flight_date" in final_df.columns:
+        dates = pd.to_datetime(final_df["flight_date"], errors="coerce")
+        mask = pd.Series([True] * len(final_df), index=final_df.index)
+        if dep_start_date:
+            mask &= dates >= pd.Timestamp(dep_start_date)
+        if dep_end_date:
+            mask &= dates <= pd.Timestamp(dep_end_date)
+        final_df = final_df[mask]
 
     if final_df.empty:
         raise RuntimeError("No rows available for route_flight_fare_monitor after filters.")

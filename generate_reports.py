@@ -1180,6 +1180,8 @@ def export_reports(args):
                 return_date_end=getattr(args, "return_date_end", None),
                 route_scope=getattr(args, "route_scope", "all"),
                 market_country=getattr(args, "market_country", "BD"),
+                dep_start_date=getattr(args, "start_date", None),
+                dep_end_date=getattr(args, "end_date", None),
             )
             exported.append(
                 ("route_flight_fare_monitor", rm_path, rm_rows)
