@@ -1593,7 +1593,7 @@ def _no_rows_reason_bits(resp: Any) -> list[str]:
 
 MODULE_QUERY_WORKER_DEFAULTS = {
     "biman": 3,
-    "novoair": 3,
+    "novoair": 1,  # ASP.NET session-stateful; parallel workers share cookies and get 409 on fareSelection
     "indigo": 2,
     "sharetrip": 1,
     "airastra": 1,
