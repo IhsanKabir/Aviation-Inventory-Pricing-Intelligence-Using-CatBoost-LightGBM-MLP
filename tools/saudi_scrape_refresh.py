@@ -1,20 +1,14 @@
 """
 Post-scrape coverage validator and auto-retry for Saudi Arabia routes.
 
-After any Saudi scrape run, checks which target airlines still have zero rows
-in the DB for the next 7 departure dates. For each missing airline it:
-  1. Temporarily enables ShareTrip in source_switches.json
-  2. Runs run_pipeline.py with explicit --dates for those 7 calendar days
-  3. Re-checks coverage
-  4. Disables ShareTrip again
-
-Airlines covered by their own dedicated scraper (BG, BS, OV, G9) are retried
-without needing ShareTrip.
+For every missing airline it enables ShareTrip, retries up to 2 times
+using the exact next 7 calendar dates, then generates the competitor
+report and disables ShareTrip.
 
 Run:
     python tools/saudi_scrape_refresh.py
-    python tools/saudi_scrape_refresh.py --dry-run      # just show what's missing
-    python tools/saudi_scrape_refresh.py --min-rows 5   # require at least 5 rows
+    python tools/saudi_scrape_refresh.py --dry-run   # show gaps only
+    python tools/saudi_scrape_refresh.py --min-rows 5
 """
 from __future__ import annotations
 
@@ -35,25 +29,22 @@ if str(REPO_ROOT) not in sys.path:
 
 from db import DATABASE_URL as DEFAULT_DATABASE_URL
 
-SAUDI_AIRPORTS = ["JED", "RUH", "DMM", "MED"]
-BD_AIRPORTS    = ["DAC", "CGP", "ZYL", "CXB"]
-
 SOURCE_SWITCHES_FILE = REPO_ROOT / "config" / "source_switches.json"
+MAX_RETRIES = 2
 
-# Airlines whose primary scraper module is NOT ShareTrip
-DIRECT_SCRAPER_AIRLINES = {"BG", "BS", "OV", "G9", "VQ", "2A", "6E"}
-
-# All Saudi competitor airlines we care about
-TARGET_AIRLINES = ["BG", "BS", "OV", "SV", "EK", "QR", "FZ", "WY", "6E",
-                   "KU", "AI", "EY", "GF", "PK", "MS", "G9"]
+TARGET_AIRLINES = [
+    "BG", "BS", "OV", "SV",
+    "EK", "QR", "FZ", "WY", "6E",
+    "KU", "AI", "EY", "GF", "PK", "MS", "G9",
+]
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Saudi competitor scrape coverage check + auto-retry")
     p.add_argument("--min-rows", type=int, default=1,
-                   help="Minimum DB rows required to consider an airline 'covered' (default: 1)")
+                   help="Minimum DB rows to consider an airline covered (default: 1)")
     p.add_argument("--dry-run", action="store_true",
-                   help="Only report gaps, do not trigger re-scrape")
+                   help="Only report gaps, do not scrape or generate report")
     p.add_argument("--db-url", default=os.getenv("AIRLINE_DB_URL", DEFAULT_DATABASE_URL))
     p.add_argument("--python-exe", default=sys.executable)
     return p.parse_args()
@@ -65,18 +56,19 @@ def _next_7_dates() -> list[date]:
 
 
 def _check_coverage(engine, airlines: list[str], dates: list[date]) -> dict[str, int]:
-    """Return {airline: row_count} for the given date window."""
     airline_list = ", ".join(f"'{a}'" for a in airlines)
     date_list    = ", ".join(f"'{d}'" for d in dates)
     sql = text(f"""
-        SELECT fo.airline, COUNT(*) as rows
+        SELECT fo.airline, COUNT(*) AS rows
         FROM flight_offers fo
         WHERE fo.airline IN ({airline_list})
           AND DATE(fo.departure) IN ({date_list})
-          AND (fo.origin IN ('DAC','CGP','ZYL','CXB')
-               AND fo.destination IN ('JED','RUH','DMM','MED')
-            OR fo.origin IN ('JED','RUH','DMM','MED')
+          AND (
+              (fo.origin IN ('DAC','CGP','ZYL','CXB')
+               AND fo.destination IN ('JED','RUH','DMM','MED'))
+           OR (fo.origin IN ('JED','RUH','DMM','MED')
                AND fo.destination IN ('DAC','CGP','ZYL','CXB'))
+          )
         GROUP BY fo.airline
     """)
     with engine.connect() as conn:
@@ -91,8 +83,7 @@ def _set_sharetrip(enabled: bool) -> None:
     data = json.loads(SOURCE_SWITCHES_FILE.read_text())
     data["sources"]["sharetrip"]["enabled"] = enabled
     SOURCE_SWITCHES_FILE.write_text(json.dumps(data, indent=2))
-    state = "ON" if enabled else "OFF"
-    print(f"  [sharetrip] {state}")
+    print(f"  [sharetrip] {'ON' if enabled else 'OFF'}")
 
 
 def _run_scrape(python_exe: str, airlines: list[str], dates: list[date]) -> int:
@@ -104,75 +95,87 @@ def _run_scrape(python_exe: str, airlines: list[str], dates: list[date]) -> int:
         "--dates", date_str,
         "--skip-training", "--skip-prediction", "--skip-reports",
     ]
-    print(f"  Running: {' '.join(cmd[-6:])}")
-    result = subprocess.run(cmd, cwd=str(REPO_ROOT))
-    return result.returncode
+    print(f"  Scraping: {','.join(airlines)}  dates={date_str}")
+    return subprocess.run(cmd, cwd=str(REPO_ROOT)).returncode
+
+
+def _run_report(python_exe: str) -> None:
+    cmd = [python_exe, str(REPO_ROOT / "tools" / "saudi_competitor_report.py"),
+           "--max-transit-hours", "6"]
+    print("\n  Generating competitor report...")
+    subprocess.run(cmd, cwd=str(REPO_ROOT))
+
+
+def _print_coverage(coverage: dict[str, int], min_rows: int) -> None:
+    for airline, rows in sorted(coverage.items()):
+        status = "OK     " if rows >= min_rows else "MISSING"
+        print(f"    {airline:4s}  {rows:>6,} rows  [{status}]")
 
 
 def main() -> int:
     args = parse_args()
     dates = _next_7_dates()
-    date_str = ", ".join(str(d) for d in dates)
 
-    print(f"\n[saudi_scrape_refresh] Checking coverage for next 7 dates: {date_str}")
-    print(f"  Min rows required: {args.min_rows}\n")
+    print(f"\n[saudi_scrape_refresh]  Dates: {dates[0]} -> {dates[-1]}")
+    print(f"  Min rows: {args.min_rows}  Max retries: {MAX_RETRIES}\n")
 
     engine = create_engine(args.db_url)
+
+    # Initial coverage check
     coverage = _check_coverage(engine, TARGET_AIRLINES, dates)
+    missing = [a for a, n in coverage.items() if n < args.min_rows]
 
-    missing = [a for a, rows in sorted(coverage.items()) if rows < args.min_rows]
-    present = [a for a, rows in sorted(coverage.items()) if rows >= args.min_rows]
-
-    print("Coverage summary:")
-    for a, rows in sorted(coverage.items()):
-        status = "OK" if rows >= args.min_rows else "MISSING"
-        print(f"  {a:4s}  {rows:>6,} rows  [{status}]")
+    print("Initial coverage:")
+    _print_coverage(coverage, args.min_rows)
 
     if not missing:
-        print("\n  All airlines covered. Nothing to re-scrape.")
+        print("\n  All airlines covered.")
+        if not args.dry_run:
+            _run_report(args.python_exe)
         return 0
 
-    print(f"\nMissing airlines: {missing}")
+    print(f"\n  Missing: {missing}")
 
     if args.dry_run:
-        print("  --dry-run: skipping re-scrape.")
+        print("  --dry-run: stopping here.")
         return 0
 
-    # Split into ShareTrip airlines vs direct-scraper airlines
-    needs_sharetrip = [a for a in missing if a not in DIRECT_SCRAPER_AIRLINES]
-    needs_direct    = [a for a in missing if a in DIRECT_SCRAPER_AIRLINES]
-
-    if needs_direct:
-        print(f"\n[Retry] Direct-scraper airlines: {needs_direct}")
-        rc = _run_scrape(args.python_exe, needs_direct, dates)
-        if rc != 0:
-            print(f"  WARNING: direct scrape returned rc={rc}")
-
-    if needs_sharetrip:
-        print(f"\n[Retry] ShareTrip airlines: {needs_sharetrip}")
-        _set_sharetrip(True)
-        try:
-            rc = _run_scrape(args.python_exe, needs_sharetrip, dates)
+    # Retry loop — all missing airlines go through ShareTrip
+    _set_sharetrip(True)
+    try:
+        for attempt in range(1, MAX_RETRIES + 1):
+            if not missing:
+                break
+            print(f"\n[Retry {attempt}/{MAX_RETRIES}]  Airlines: {missing}")
+            rc = _run_scrape(args.python_exe, missing, dates)
             if rc != 0:
-                print(f"  WARNING: ShareTrip scrape returned rc={rc}")
-        finally:
-            _set_sharetrip(False)
+                print(f"  WARNING: scrape exited rc={rc}")
 
-    # Re-check after retry
-    print("\nPost-retry coverage:")
-    coverage2 = _check_coverage(engine, missing, dates)
-    still_missing = []
-    for a, rows in sorted(coverage2.items()):
-        status = "OK" if rows >= args.min_rows else "STILL MISSING"
-        print(f"  {a:4s}  {rows:>6,} rows  [{status}]")
-        if rows < args.min_rows:
-            still_missing.append(a)
+            coverage = _check_coverage(engine, missing, dates)
+            still_missing = [a for a, n in coverage.items() if n < args.min_rows]
+            newly_covered = [a for a in missing if a not in still_missing]
 
-    if still_missing:
-        print(f"\n  NOTE: {still_missing} returned no data even after retry.")
-        print("  These airlines likely have no service on DAC<->Saudi routes")
-        print("  or are not carried by any active scraper/OTA.")
+            if newly_covered:
+                print(f"  Newly covered: {newly_covered}")
+            missing = still_missing
 
+            print(f"  After retry {attempt}:")
+            _print_coverage(coverage, args.min_rows)
+
+            if not missing:
+                print("  All airlines now covered.")
+                break
+
+        if missing:
+            print(f"\n  NOTE: {missing} returned no data after {MAX_RETRIES} retries.")
+            print("  These airlines likely have no BD<->Saudi service or are not")
+            print("  carried by any active scraper/OTA.")
+
+    finally:
+        _set_sharetrip(False)
+
+    # Generate report regardless of remaining gaps
+    _run_report(args.python_exe)
     return 0
 
 
