@@ -296,7 +296,7 @@ def _normalize_offer(
         return None
     leg0 = legs[0] if isinstance(legs[0], dict) else {}
     airline = str((leg0.get("airlines") or {}).get("code") or "").upper().strip()
-    if airline != str(airline_code).upper().strip():
+    if airline_code and airline != str(airline_code).upper().strip():
         return None
 
     segments: List[Dict[str, Any]] = []
@@ -720,8 +720,8 @@ def fetch_flights_for_airline(
         return disabled_source_response("sharetrip")
 
     policy = _sharetrip_source_policy(airline_code)
-    airline = str(airline_code or "").upper().strip()
-    can_try_bdfare = _bdfare_airline_scope_allows(airline)
+    airline = str(airline_code or "").upper().strip()  # empty = accept all airlines on route
+    can_try_bdfare = _bdfare_airline_scope_allows(airline) if airline else False
     attempts: List[Dict[str, Any]] = []
 
     def _annotate(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -823,20 +823,9 @@ def fetch_flights(
     { raw, originalResponse, rows, ok }
     """
     code = str(airline_code or os.getenv(ENV_DEFAULT_AIRLINE_CODE, "")).upper().strip()
-    if not code:
-        return {
-            "raw": {
-                "source": "sharetrip",
-                "error": "airline_code_missing",
-                "hint": "Pass airline_code in fetch_flights(...) or set SHARETRIP_AIRLINE_CODE.",
-            },
-            "originalResponse": None,
-            "rows": [],
-            "ok": False,
-        }
 
     return fetch_flights_for_airline(
-        airline_code=code,
+        airline_code=code or None,  # None = accept all airlines on the route
         origin=origin,
         destination=destination,
         date=date,

@@ -147,8 +147,9 @@ def parse_args() -> argparse.Namespace:
 
 def _fetch(engine, origins: list[str], dests: list[str],
            start_date: date, end_date: date) -> pd.DataFrame:
-    org_list  = ", ".join(f"'{a}'" for a in origins)
-    dst_list  = ", ".join(f"'{a}'" for a in dests)
+    bd_list = ", ".join(f"'{a}'" for a in origins)
+    sa_list = ", ".join(f"'{a}'" for a in dests)
+    # Fetch both directions: BD->Saudi AND Saudi->BD
     sql = text(f"""
         SELECT
             fo.airline,
@@ -168,8 +169,10 @@ def _fetch(engine, origins: list[str], dests: list[str],
             fo.scraped_at
         FROM flight_offers fo
         JOIN flight_offer_raw_meta frm ON frm.flight_offer_id = fo.id
-        WHERE fo.origin IN ({org_list})
-          AND fo.destination IN ({dst_list})
+        WHERE (
+            (fo.origin IN ({bd_list}) AND fo.destination IN ({sa_list}))
+         OR (fo.origin IN ({sa_list}) AND fo.destination IN ({bd_list}))
+        )
           AND DATE(fo.departure) BETWEEN :start_date AND :end_date
         ORDER BY fo.origin, fo.destination, fo.airline, fo.departure, fo.price_total_bdt
     """)
@@ -294,7 +297,7 @@ def _build_report(df: pd.DataFrame, max_transit_min: float) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
 
-    out = pd.DataFrame(rows).sort_values(["Origin", "Destination", "Airline", "Transit"])
+    out = pd.DataFrame(rows).sort_values(["Origin", "Destination", "Starting Fare"], ascending=[True, True, False])
     return out.drop(columns=["_transit_min"])
 
 
@@ -313,10 +316,10 @@ def _print_report(df: pd.DataFrame) -> None:
     header = "  ".join(c.ljust(col_widths[c]) for c in display_cols)
     sep    = "-" * len(header)
 
-    for dest in sorted(df["Destination"].unique()):
-        sub = df[df["Destination"] == dest]
+    for (orig, dest) in sorted(df[["Origin", "Destination"]].drop_duplicates().itertuples(index=False)):
+        sub = df[(df["Origin"] == orig) & (df["Destination"] == dest)]
         print(f"\n{'='*len(header)}")
-        print(f"  Destination: {dest}  ({len(sub)} itineraries)")
+        print(f"  {orig} -> {dest}  ({len(sub)} itineraries)")
         print(f"{'='*len(header)}")
         print(header)
         print(sep)
@@ -332,6 +335,7 @@ def main() -> int:
 
     origins = [args.origin.upper()] if args.origin else BD_AIRPORTS
     dests   = [args.dest.upper()]   if args.dest   else SAUDI_AIRPORTS
+    # _fetch queries both BD->Saudi and Saudi->BD, so pass all airports
 
     today = date.today()
     start = today - timedelta(days=args.lookback_days)
