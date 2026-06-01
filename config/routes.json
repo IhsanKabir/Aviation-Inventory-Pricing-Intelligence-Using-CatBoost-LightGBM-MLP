@@ -1798,5 +1798,613 @@
     "cabins": [
       "Economy"
     ]
+  },
+  {
+    "airline": "EK",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EK",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EK",
+    "origin": "DAC",
+    "destination": "DMM",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EK",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EK",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EK",
+    "origin": "DMM",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "QR",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "QR",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "QR",
+    "origin": "DAC",
+    "destination": "DMM",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "QR",
+    "origin": "DAC",
+    "destination": "MED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "QR",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "QR",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "QR",
+    "origin": "DMM",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "QR",
+    "origin": "MED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "FZ",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "FZ",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "FZ",
+    "origin": "DAC",
+    "destination": "DMM",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "FZ",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "FZ",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "FZ",
+    "origin": "DMM",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "WY",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "WY",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "WY",
+    "origin": "DAC",
+    "destination": "MED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "WY",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "WY",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "WY",
+    "origin": "MED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "DAC",
+    "destination": "DMM",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "DMM",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "DAC",
+    "destination": "MED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "6E",
+    "origin": "MED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "KU",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "KU",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "KU",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "KU",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "KU",
+    "origin": "DAC",
+    "destination": "DMM",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "KU",
+    "origin": "DMM",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "AI",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "AI",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "AI",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "AI",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "AI",
+    "origin": "DAC",
+    "destination": "DMM",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "AI",
+    "origin": "DMM",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "AI",
+    "origin": "DAC",
+    "destination": "MED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "AI",
+    "origin": "MED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EY",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EY",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EY",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EY",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EY",
+    "origin": "DAC",
+    "destination": "MED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "EY",
+    "origin": "MED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "GF",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "GF",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "GF",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "GF",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "GF",
+    "origin": "DAC",
+    "destination": "DMM",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "GF",
+    "origin": "DMM",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "PK",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "PK",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "PK",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "PK",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "PK",
+    "origin": "DAC",
+    "destination": "MED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "PK",
+    "origin": "MED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "J9",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "J9",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "J9",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "J9",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "J9",
+    "origin": "DAC",
+    "destination": "KWI",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "J9",
+    "origin": "KWI",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "MS",
+    "origin": "DAC",
+    "destination": "JED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "MS",
+    "origin": "JED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "MS",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "MS",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
   }
 ]
