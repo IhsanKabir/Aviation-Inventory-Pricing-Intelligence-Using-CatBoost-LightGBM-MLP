@@ -87,9 +87,10 @@ def _normalize(offer: Dict[str, Any], requested_cabin: str,
     else:
         via = None
 
-    stops     = int(leg.get("stops") or 0)
-    dur_text  = leg.get("totalFlightDuration") or seg0.get("flightDuration") or ""
-    dur_min   = _duration_to_min(dur_text)
+    stops        = int(leg.get("stops") or 0)
+    dur_text     = leg.get("totalFlightDuration") or seg0.get("flightDuration") or ""
+    dur_min      = _duration_to_min(dur_text)
+    layover_times = leg.get("layoverTimes") or []   # e.g. ["3h 20m", "1h 45m"]
 
     origin      = str(seg0.get("originAirportCode") or "").upper()
     destination = str(seg_last.get("destinationAirportCode") or "").upper()
@@ -127,6 +128,7 @@ def _normalize(offer: Dict[str, Any], requested_cabin: str,
         "duration_min":         dur_min,
         "stops":                stops,
         "via_airports":         via,
+        "layover_times":        layover_times,
         "aircraft":             aircraft,
         "baggage":              baggage,
         "seat_available":       seats,
