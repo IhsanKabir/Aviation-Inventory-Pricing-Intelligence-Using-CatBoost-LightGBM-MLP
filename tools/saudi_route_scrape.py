@@ -24,7 +24,26 @@ if str(REPO_ROOT) not in sys.path:
 load_dotenv(REPO_ROOT / ".env")
 
 from db import DATABASE_URL
-from modules.sharetrip import fetch_flights
+from modules.sharetrip import fetch_flights as sharetrip_fetch
+from modules.firsttrip import fetch_flights as firsttrip_fetch
+
+
+def fetch_flights(origin: str, destination: str, date: str,
+                  cabin: str = "Economy", adt: int = 1,
+                  chd: int = 0, inf: int = 0,
+                  airline_code=None) -> dict:
+    """Query both ShareTrip and FirstTrip and merge all rows."""
+    rows: list = []
+    for name, fn in [("sharetrip", sharetrip_fetch), ("firsttrip", firsttrip_fetch)]:
+        try:
+            r = fn(origin=origin, destination=destination, date=date,
+                   cabin=cabin, adt=adt, chd=chd, inf=inf, airline_code=airline_code)
+            r_rows = r.get("rows") or []
+            rows.extend(r_rows)
+            print(f"    {name}: {len(r_rows)} rows ok={r.get('ok')}")
+        except Exception as e:
+            print(f"    {name}: ERROR {e}")
+    return {"ok": len(rows) > 0, "rows": rows}
 
 # Search far-out dates for lowest advance fares.
 # Start at 30 days out, try 45, 60, 75, 90 if a route returns 0 rows.
