@@ -200,5 +200,59 @@
     "cabin_classes": [
       "Economy"
     ]
+  },
+  {
+    "code": "KU",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "AI",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "EY",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "GF",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "PK",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
+  },
+  {
+    "code": "MS",
+    "module": "sharetrip",
+    "enabled": true,
+    "throttle_per_minute": 10,
+    "cabin_classes": [
+      "Economy"
+    ]
   }
 ]

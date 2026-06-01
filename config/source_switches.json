@@ -5,67 +5,117 @@
     "airarabia": {
       "enabled": true,
       "label": "Air Arabia direct/capture",
-      "airlines": ["G9"]
+      "airlines": [
+        "G9"
+      ]
     },
     "airasia": {
       "enabled": true,
       "label": "AirAsia direct/capture",
-      "airlines": ["AK"]
+      "airlines": [
+        "AK"
+      ]
     },
     "airastra": {
       "enabled": true,
       "label": "Air Astra TTInteractive wrapper",
-      "airlines": ["2A"]
+      "airlines": [
+        "2A"
+      ]
     },
     "amybd": {
       "enabled": true,
       "label": "AMYBD OTA fallback",
-      "airlines": ["2A", "BS"]
+      "airlines": [
+        "2A",
+        "BS"
+      ]
     },
     "bdfare": {
       "enabled": true,
       "label": "BDFare OTA fallback",
-      "airlines": ["2A", "BS"]
+      "airlines": [
+        "2A",
+        "BS"
+      ]
     },
     "biman": {
       "enabled": true,
       "label": "Biman direct",
-      "airlines": ["BG"]
+      "airlines": [
+        "BG"
+      ]
     },
     "bs": {
       "enabled": true,
       "label": "US-Bangla TTInteractive wrapper",
-      "airlines": ["BS"]
+      "airlines": [
+        "BS"
+      ]
     },
     "gozayaan": {
       "enabled": true,
       "label": "GoZayaan OTA fallback",
-      "airlines": ["2A", "BS"]
+      "airlines": [
+        "2A",
+        "BS"
+      ]
     },
     "indigo": {
       "enabled": true,
       "label": "IndiGo protected direct",
-      "airlines": ["6E"]
+      "airlines": [
+        "6E"
+      ]
     },
     "maldivian": {
       "enabled": true,
       "label": "Maldivian direct/capture",
-      "airlines": ["Q2"]
+      "airlines": [
+        "Q2"
+      ]
     },
     "novoair": {
       "enabled": true,
       "label": "NOVOAIR direct",
-      "airlines": ["VQ"]
+      "airlines": [
+        "VQ"
+      ]
     },
     "salamair": {
       "enabled": true,
       "label": "SalamAir direct/capture",
-      "airlines": ["OV"]
+      "airlines": [
+        "OV"
+      ]
     },
     "sharetrip": {
       "enabled": false,
       "label": "ShareTrip OTA",
-      "airlines": ["3L", "6E", "8D", "AK", "BG", "CZ", "EK", "FZ", "MH", "OD", "QR", "SQ", "SV", "TG", "UL", "WY"]
+      "airlines": [
+        "3L",
+        "6E",
+        "8D",
+        "AI",
+        "AK",
+        "BG",
+        "CZ",
+        "EK",
+        "EY",
+        "FZ",
+        "GF",
+        "KU",
+        "MH",
+        "MS",
+        "OD",
+        "PK",
+        "QR",
+        "SQ",
+        "SV",
+        "TG",
+        "UL",
+        "WY"
+      ]
     }
   }
 }
