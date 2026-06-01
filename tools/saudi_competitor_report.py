@@ -135,8 +135,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dest",    help="Filter to specific Saudi destination (e.g. JED)")
     p.add_argument("--days-ahead", type=int, default=60,
                    help="Number of days ahead for departure window (default: 60)")
-    p.add_argument("--lookback-days", type=int, default=90,
-                   help="Days of historical departure data to include (default: 90)")
+    p.add_argument("--lookback-days", type=int, default=180,
+                   help="Days of historical departure data to include (default: 180)")
     p.add_argument("--max-transit-hours", type=float, default=6.0,
                    help="Maximum estimated transit hours to include (default: 6)")
     p.add_argument("--output-dir", default="output/reports")
