@@ -2406,5 +2406,149 @@
     "cabins": [
       "Economy"
     ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "RUH",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "RUH",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "SYD",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "SYD",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "MED",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "MED",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "DMM",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DMM",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "YYZ",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "YYZ",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "JFK",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "JFK",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "DAC",
+    "destination": "AMM",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "AMM",
+    "destination": "DAC",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "CGP",
+    "destination": "JFK",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "JFK",
+    "destination": "CGP",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "CGP",
+    "destination": "SYD",
+    "cabins": [
+      "Economy"
+    ]
+  },
+  {
+    "airline": "BS",
+    "origin": "SYD",
+    "destination": "CGP",
+    "cabins": [
+      "Economy"
+    ]
   }
 ]
