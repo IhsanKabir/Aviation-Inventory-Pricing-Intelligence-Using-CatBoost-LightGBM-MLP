@@ -29,7 +29,7 @@ logging.basicConfig(
 
 API_BASE = os.getenv("SHARETRIP_API_BASE", "https://api.sharetrip.net").rstrip("/")
 INIT_URL = f"{API_BASE}/api/v2/flight/search/initialize"
-SEARCH_URL_TMPL = f"{API_BASE}/api/v2/flight/search/{{search_id}}"
+SEARCH_URL_TMPL = f"{API_BASE}/api/v2/flight/search/available-flights"
 DEFAULT_ACCESS_TOKEN = "$2b$10$Fzhdo.0wIriRI9BfMIBKsuEZapnZdFAurXYwqDesf7DiFAHPmF6zm"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -243,7 +243,7 @@ def build_initialize_params(
 
 
 def _post_search_page(req: Requester, search_id: str, page: int, limit: int, headers: Dict[str, str]) -> tuple[int, Any]:
-    url = SEARCH_URL_TMPL.format(search_id=search_id)
+    url = f"{SEARCH_URL_TMPL}?searchId={search_id}"
     payload = {"page": page, "limit": limit}
     response = req.post_raw(
         url,
