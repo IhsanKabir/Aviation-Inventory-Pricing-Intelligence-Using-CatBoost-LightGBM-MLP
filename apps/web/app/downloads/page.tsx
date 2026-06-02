@@ -61,9 +61,19 @@ const PRODUCTS: Product[] = [
     guideUrl: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
     fallback: [
       {
+        version: "v1.5.28",
+        date: "2026-05-12",
+        label: "Latest",
+        notes: [
+          "Time Calculator — enter UTC offsets, departure time and duration to get local arrival time instantly",
+          "Handles overnight flights with +1d / +2d indicator",
+        ],
+        exe_url: `https://github.com/${TRAVELPORT_REPO}/releases/download/v1.5.28/TravelportAuto-v1.5.28.zip`,
+        guide_url: `https://github.com/${TRAVELPORT_REPO}/blob/main/user_guide.md`,
+      },
+      {
         version: "v1.5.27",
         date: "2026-05-11",
-        label: "Latest",
         notes: [
           "Button text cleaned up — no more garbled symbols on Start, Stop, and other buttons",
           "Auto-update dialog enlarged and resizable so Download button is always visible",
