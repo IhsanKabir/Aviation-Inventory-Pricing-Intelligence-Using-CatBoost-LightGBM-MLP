@@ -47,6 +47,7 @@ interface Product {
 
 const TRAVELPORT_REPO = "IhsanKabir/Process_Optimization_Using_pywinauto";
 const IATA_REPO = "IhsanKabir/iata-code-validator";
+const MAILER_REPO = "IhsanKabir/bulk-mailer";
 
 const PRODUCTS: Product[] = [
   {
@@ -141,6 +142,33 @@ const PRODUCTS: Product[] = [
           "Single portable Windows .exe (~380 MB) — no Python or admin required",
         ],
         exe_url: `https://github.com/${IATA_REPO}/releases/download/v1.0.0/IATACodeValidator.exe`,
+        guide_url: null,
+      },
+    ],
+  },
+  {
+    slug: "mailer",
+    name: "Bulk Email Sending",
+    tagline:
+      "Send one personalised email per recipient — each with its own attachment — from a single Excel list (Email · Name · File · CC · BCC). Draft for review, or send. Works with Outlook desktop, Microsoft 365, or any SMTP host.",
+    repo: MAILER_REPO,
+    assetMatch: (n) => n === "BulkMailer.exe" || n.endsWith(".exe"),
+    requirements:
+      "Windows 10/11 · Outlook desktop, a Microsoft 365 mailbox, or any SMTP account · Excel mapping sheet + attachments folder",
+    fallback: [
+      {
+        version: "v1.0.0",
+        date: "2026-06-09",
+        label: "Latest",
+        notes: [
+          "Standalone Bulk Mailer — one personalised email per recipient from an Excel list",
+          "Per-recipient attachments, {name}/{column} templating, CC + BCC",
+          "Three transports: Outlook desktop, Microsoft 365 (Graph sign-in), or any SMTP host",
+          "Draft-first review, skip-already-sent resume log, delay throttle + Stop for large runs",
+          "Row preview validates email + attachment before anything sends",
+          "No recipient cap — 40 or 1,000+ in one pass; single portable Windows .exe (~27 MB)",
+        ],
+        exe_url: `https://github.com/${MAILER_REPO}/releases/download/v1.0.0/BulkMailer.exe`,
         guide_url: null,
       },
     ],
