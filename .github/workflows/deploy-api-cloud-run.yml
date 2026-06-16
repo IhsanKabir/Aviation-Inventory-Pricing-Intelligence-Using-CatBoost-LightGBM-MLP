@@ -65,6 +65,7 @@ jobs:
             --image "${IMAGE_URI}" \
             --service-account "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}" \
             --allow-unauthenticated \
+            --timeout 600 \
             --set-env-vars "${ENV_VARS}"
 
       - name: Output service URL

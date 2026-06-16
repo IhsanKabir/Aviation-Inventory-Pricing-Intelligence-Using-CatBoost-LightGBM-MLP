@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .db import engine, get_optional_db
 from .repositories import access_requests, exporting, reporting, usage, user_accounts
+from .routers import app_release as app_release_router
 from .routers import gds as gds_router
 from .routers import travelport_feedback as travelport_feedback_router
 
@@ -51,6 +52,11 @@ app.include_router(
     travelport_feedback_router.router,
     prefix="/travelport-agent",
     tags=["Travelport Feedback"],
+)
+app.include_router(
+    app_release_router.router,
+    prefix="/api/v1/app",
+    tags=["App Updates"],
 )
 
 
