@@ -148,16 +148,19 @@ def latest_version(
 
 
 @router.get("/download")
-def download(
-    x_user_session: str | None = Header(default=None),
-    db: Session | None = Depends(get_optional_db),
-) -> StreamingResponse:
-    """Stream the latest .exe through this (reachable) host.
+def download() -> StreamingResponse:
+    """Stream the latest .exe through this (reachable) host. PUBLIC by design.
+
+    Intentionally unauthenticated: the website Download button is a plain
+    browser navigation that cannot send the X-User-Session header, and the
+    binary is ALREADY public on the GitHub release (public repo) — so this
+    mirror exposes nothing new. It simply makes the download reachable on
+    corporate networks that block GitHub. The desktop updater also hits this
+    route (its session header is just ignored here).
 
     A 302 redirect to GitHub would defeat the purpose — the corporate client
-    can't reach GitHub. So we proxy the bytes, chunked (constant memory).
+    can't reach GitHub — so we proxy the bytes, chunked (constant memory).
     """
-    _require_session(db, x_user_session)
     try:
         url = _asset_url(_fetch_latest_release())
     except Exception:  # noqa: BLE001
