@@ -43,11 +43,21 @@ interface Product {
   guideUrl?: string;
   /** Fallback releases shown when the GitHub API is unavailable */
   fallback: Release[];
+  /** When set, the LATEST card's download points here instead of GitHub —
+   *  serves firewalled users from a reachable mirror. */
+  latestDownloadOverride?: string;
 }
 
 const TRAVELPORT_REPO = "IhsanKabir/Process_Optimization_Using_pywinauto";
 const IATA_REPO = "IhsanKabir/iata-code-validator";
 const MAILER_REPO = "IhsanKabir/bulk-mailer";
+
+// Reachable download mirror for corporate networks that block GitHub. The
+// Cloud Run backend streams the latest IATA exe over a public route; once a
+// user is on it, the app auto-updates through the same backend — so this is
+// the one-time bootstrap for firewalled users (no manual hand-out).
+const IATA_DOWNLOAD_URL =
+  "https://aero-pulse-api-591603094460.asia-south1.run.app/api/v1/app/download";
 
 const PRODUCTS: Product[] = [
   {
@@ -115,6 +125,7 @@ const PRODUCTS: Product[] = [
     assetMatch: (n) => n === "IATACodeValidator.exe" || n.endsWith(".exe"),
     requirements:
       "Windows 10/11 · Internet connection · Excel file with IATA codes or agency names",
+    latestDownloadOverride: IATA_DOWNLOAD_URL,
     fallback: [
       {
         version: "v1.1.0",
@@ -262,7 +273,10 @@ function ProductCard({
   product: Product;
   releases: Release[];
 }) {
-  const latest = releases[0];
+  const latest =
+    product.latestDownloadOverride && releases[0]
+      ? { ...releases[0], exe_url: product.latestDownloadOverride }
+      : releases[0];
   const older = releases.slice(1);
 
   return (
@@ -404,7 +418,7 @@ function ProductCard({
               Previous Versions
             </h2>
           </div>
-          <div className="data-table-wrap">
+          <div className="data-table-wrap" role="region" aria-label="Previous versions" tabIndex={0}>
             <table>
               <thead>
                 <tr>
@@ -520,10 +534,10 @@ export default async function DownloadsPage({
   const releases = allReleases[activeIdx];
 
   return (
-    <main className="shell" style={{ paddingBlock: "32px" }}>
+    <section>
       <ProductTabs active={product.slug} />
       <ProductCard product={product} releases={releases} />
-    </main>
+    </section>
   );
 }
 
