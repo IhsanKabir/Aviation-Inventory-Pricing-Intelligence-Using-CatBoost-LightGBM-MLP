@@ -163,14 +163,30 @@ def download() -> StreamingResponse:
     """
     try:
         url = _asset_url(_fetch_latest_release())
-    except Exception:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail="Upstream release unavailable.")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"release lookup failed: {exc}")
     if not url:
         raise HTTPException(status_code=404, detail="No release asset.")
 
-    upstream = urllib.request.urlopen(
-        _gh_request(url, "application/octet-stream"), timeout=60,
+    # GitHub's asset CDN (objects.githubusercontent.com) can 403 a datacenter
+    # request that carries a generic User-Agent, so use a browser-like one.
+    # Fetch eagerly and surface any failure as 502 rather than an unhandled
+    # 500. We deliberately do NOT set a manual Content-Length on the streaming
+    # response — Starlette chunks it.
+    asset_req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/octet-stream",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            ),
+        },
     )
+    try:
+        upstream = urllib.request.urlopen(asset_req, timeout=60)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"asset fetch failed: {exc}")
 
     def _stream():
         try:
@@ -182,10 +198,8 @@ def download() -> StreamingResponse:
         finally:
             upstream.close()
 
-    headers = {"Content-Disposition": f'attachment; filename="{_ASSET}"'}
-    length = upstream.headers.get("Content-Length")
-    if length:
-        headers["Content-Length"] = length
     return StreamingResponse(
-        _stream(), media_type="application/octet-stream", headers=headers,
+        _stream(),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{_ASSET}"'},
     )
