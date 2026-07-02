@@ -31,7 +31,8 @@ export async function POST(request: Request) {
     name: getAdminSessionCookieName(),
     value: buildAdminSessionCookieValue(),
     httpOnly: true,
-    sameSite: "lax",
+    // Admin area has no cross-site entry flows, so the stricter CSRF posture is free.
+    sameSite: "strict",
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: 60 * 60 * 12

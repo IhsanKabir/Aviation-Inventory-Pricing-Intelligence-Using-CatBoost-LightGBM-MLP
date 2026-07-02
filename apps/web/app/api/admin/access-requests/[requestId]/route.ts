@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { hasAdminSession } from "@/lib/admin";
+import { getAdminApiToken, hasAdminSession } from "@/lib/admin";
 import { getApiBaseUrl } from "@/lib/api";
 
 async function ensureAdmin() {
@@ -8,14 +8,6 @@ async function ensureAdmin() {
     return NextResponse.json({ detail: "Admin session required." }, { status: 401 });
   }
   return null;
-}
-
-function getAdminToken() {
-  return (
-    process.env.REPORT_ACCESS_ADMIN_TOKEN?.trim() ||
-    process.env.WEB_ADMIN_PASSWORD?.trim() ||
-    ""
-  );
 }
 
 export async function PATCH(
@@ -29,7 +21,7 @@ export async function PATCH(
     return unauthorized;
   }
 
-  const adminToken = getAdminToken();
+  const adminToken = getAdminApiToken();
   if (!adminToken) {
     return NextResponse.json({ detail: "Admin API token is not configured." }, { status: 503 });
   }

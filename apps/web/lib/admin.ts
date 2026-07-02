@@ -85,3 +85,12 @@ export function getAdminSessionCookieName() {
   return ADMIN_SESSION_COOKIE;
 }
 
+/** Token forwarded to the upstream API for admin-scoped endpoints. */
+export function getAdminApiToken() {
+  return (
+    process.env.REPORT_ACCESS_ADMIN_TOKEN?.trim() ||
+    process.env.WEB_ADMIN_PASSWORD?.trim() ||
+    ""
+  );
+}
+

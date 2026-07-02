@@ -1,0 +1,28 @@
+/* GDS-only styles (split from globals.css). Imported by app/gds/page.tsx. */
+
+/* BigQuery load gate */
+.market-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 64px 32px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--paper);
+  text-align: center;
+  margin-top: 24px;
+}
+.market-gate-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+}
+.market-gate-copy {
+  font-size: 0.92rem;
+  color: var(--muted);
+  max-width: 420px;
+  line-height: 1.6;
+  margin: 0;
+}

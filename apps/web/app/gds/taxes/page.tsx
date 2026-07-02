@@ -8,6 +8,7 @@
  */
 
 import Link from "next/link";
+import { formatDhakaDate } from "@/lib/format";
 import { getGdsTaxAirports, type GdsTaxAirport } from "@/lib/gds";
 
 export default async function GdsTaxesIndexPage() {
@@ -19,7 +20,7 @@ export default async function GdsTaxesIndexPage() {
   }
 
   return (
-    <main className="shell" style={{ paddingBlock: "32px" }}>
+    <section>
       <div style={{ marginBottom: "24px" }}>
         <div className="chip-row" style={{ marginBottom: "12px" }}>
           <Link href="/gds" className="chip" style={{ fontSize: "0.75rem" }}>
@@ -46,7 +47,7 @@ export default async function GdsTaxesIndexPage() {
         </div>
       ) : (
         <div className="card" style={{ overflow: "hidden" }}>
-          <div className="data-table-wrap">
+          <div className="data-table-wrap" role="region" aria-label="Airports with tax data" tabIndex={0}>
             <table>
               <thead>
                 <tr>
@@ -66,7 +67,7 @@ export default async function GdsTaxesIndexPage() {
                     </td>
                     <td>{ap.tax_count}</td>
                     <td style={{ color: "var(--muted)", fontSize: "0.8rem" }}>
-                      {new Date(ap.last_updated).toLocaleDateString()}
+                      {formatDhakaDate(ap.last_updated)}
                     </td>
                     <td>
                       <Link
@@ -84,7 +85,7 @@ export default async function GdsTaxesIndexPage() {
           </div>
         </div>
       )}
-    </main>
+    </section>
   );
 }
 

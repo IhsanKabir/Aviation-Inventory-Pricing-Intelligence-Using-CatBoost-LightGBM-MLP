@@ -3,11 +3,14 @@
   "description": "Runtime on/off switches for every supplier/source used by the accumulation pipeline. Set a source enabled=false to skip airlines that use it as their primary module and to block nested fallback calls to that supplier.",
   "sources": {
     "airarabia": {
-      "enabled": true,
+      "enabled": false,
       "label": "Air Arabia direct/capture",
       "airlines": [
         "G9"
-      ]
+      ],
+      "auto_flagged": true,
+      "auto_flagged_at_utc": "2026-06-02T19:22:53.971791+00:00",
+      "auto_flagged_reason": "3 consecutive zero-row runs (airlines: G9)"
     },
     "airasia": {
       "enabled": true,
@@ -69,11 +72,14 @@
       ]
     },
     "maldivian": {
-      "enabled": true,
+      "enabled": false,
       "label": "Maldivian direct/capture",
       "airlines": [
         "Q2"
-      ]
+      ],
+      "auto_flagged": true,
+      "auto_flagged_at_utc": "2026-06-02T19:22:53.971791+00:00",
+      "auto_flagged_reason": "3 consecutive zero-row runs (airlines: Q2)"
     },
     "novoair": {
       "enabled": true,
@@ -83,11 +89,14 @@
       ]
     },
     "salamair": {
-      "enabled": true,
+      "enabled": false,
       "label": "SalamAir direct/capture",
       "airlines": [
         "OV"
-      ]
+      ],
+      "auto_flagged": true,
+      "auto_flagged_at_utc": "2026-06-02T19:22:53.971791+00:00",
+      "auto_flagged_reason": "3 consecutive zero-row runs (airlines: OV)"
     },
     "sharetrip": {
       "enabled": false,

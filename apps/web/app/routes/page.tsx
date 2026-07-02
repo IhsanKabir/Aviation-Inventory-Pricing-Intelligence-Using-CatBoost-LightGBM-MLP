@@ -201,7 +201,7 @@ export default async function RoutesPage({ searchParams }: PageProps) {
 
   const routeSnapshotLimit = routeSelectionReady ? 20 : 12;
 
-  const [airlines, recentCycles, configuredRouteEntries, accessRequest, routeSnapshot] = await Promise.all([
+  const [airlines, recentCycles, configuredRouteEntries, accessRequest, routeSnapshot, userSession] = await Promise.all([
     getAirlines(),
     getRecentCycles(8),
     loadConfiguredRouteEntries(),
@@ -214,9 +214,10 @@ export default async function RoutesPage({ searchParams }: PageProps) {
       routePairKeys: selectedRoutePairs.length ? selectedRoutePairs : undefined,
       cabins: cabin ? [cabin] : undefined,
       limit: routeSnapshotLimit
-    })
+    }),
+    getCurrentUserSession()
   ]);
-  const { user } = await getCurrentUserSession();
+  const { user } = userSession;
   const accessGranted = accessRequest.ok && accessRequest.data?.page_key === "routes" && accessRequest.data?.status === "approved";
 
   const recentCycleOptions = uniqueByKey(recentCycles.data?.items ?? [], (item) => item.cycle_id ?? "");

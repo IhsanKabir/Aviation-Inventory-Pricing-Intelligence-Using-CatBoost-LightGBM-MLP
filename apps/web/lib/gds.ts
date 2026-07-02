@@ -1,36 +1,41 @@
 /**
  * gds.ts - TypeScript API client for GDS endpoints
- *
- * Add these types and functions to apps/web/lib/api.ts (or import from here).
  */
 
+import { getConfiguredApiBaseUrl } from "./api";
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Internal fetch helper (mirrors the pattern used in api.ts)
+// Internal fetch helper (base URL + timeout semantics shared with api.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
-
-function normalizeApiBaseUrl(raw: string): string {
-  return raw.trim().replace(/\s+/g, "").replace(/\/+$/, "");
-}
-
-function getConfiguredApiBase(): string | null {
-  const base = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "";
-  const normalized = normalizeApiBaseUrl(base);
-  return normalized || null;
-}
+const GDS_FETCH_TIMEOUT_MS = 12000;
 
 async function fetchJson<T>(path: string): Promise<T> {
-  const apiBase = getConfiguredApiBase() ?? (process.env.NODE_ENV === "production" ? null : LOCAL_API_BASE_URL);
+  const apiBase =
+    getConfiguredApiBaseUrl() ?? (process.env.NODE_ENV === "production" ? null : LOCAL_API_BASE_URL);
   if (!apiBase) {
     throw new Error("API_BASE_URL or NEXT_PUBLIC_API_BASE_URL is not configured");
   }
 
-  const res = await fetch(`${apiBase}${path}`, {
-    next: { revalidate: 60 },
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json() as Promise<T>;
+  // Abort hung upstreams instead of hanging the whole server render.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GDS_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${apiBase}${path}`, {
+      next: { revalidate: 60 },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return (await res.json()) as T;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`GDS API request timed out after ${Math.round(GDS_FETCH_TIMEOUT_MS / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,56 @@
+{
+ "airlines": {
+  "BS": {
+   "economy": "30 KG"
+  },
+  "QR": {
+   "economy": "25-35 KG"
+  },
+  "SV": {
+   "economy": "1 Piece / 2 Pieces"
+  },
+  "EK": {
+   "economy": "25-40 KG",
+   "business": "40-50 KG"
+  },
+  "6E": {
+   "economy": "30 KG"
+  },
+  "GF": {
+   "economy": "35-40 KG"
+  },
+  "KU": {
+   "economy": "2 Pieces"
+  },
+  "UL": {
+   "economy": "30 KG"
+  },
+  "FZ": {
+   "economy": "30 KG"
+  },
+  "ET": {
+   "economy": "2 Pieces"
+  },
+  "MH": {
+   "economy": "30 KG"
+  },
+  "AI": {
+   "economy": "35 KG"
+  },
+  "BG": {
+   "economy": "30-40 KG"
+  },
+  "MS": {
+   "economy": "2 Pieces"
+  },
+  "TK": {
+   "economy": "15-23 KG"
+  },
+  "H9": {
+   "economy": "30 KG"
+  },
+  "WY": {
+   "economy": "30-40 KG"
+  }
+ }
+}

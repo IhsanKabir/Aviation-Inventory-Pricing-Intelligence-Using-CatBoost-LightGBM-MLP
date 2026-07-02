@@ -32,8 +32,13 @@ export default async function RootLayout({
   return (
     <html lang="en" className={`${display.variable} ${mono.variable}`}>
       <body style={{ fontFamily: "var(--font-display)" }}>
+        <a className="skip-link" href="#main-content">
+          Skip to main content
+        </a>
         <Topbar />
-        <main className="page shell">{children}</main>
+        <main id="main-content" tabIndex={-1} className="page shell">
+          {children}
+        </main>
         {vercelTelemetryEnabled ? <Analytics /> : null}
         {vercelTelemetryEnabled ? <SpeedInsights /> : null}
       </body>

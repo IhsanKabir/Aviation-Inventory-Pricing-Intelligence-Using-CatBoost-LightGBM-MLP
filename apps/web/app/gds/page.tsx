@@ -5,6 +5,8 @@
 
 import { DataPanel } from "@/components/data-panel";
 import { MetricCard } from "@/components/metric-card";
+import { TablePager } from "@/components/table-pager";
+import { paginateRows, parsePageParam } from "@/lib/pagination";
 import {
   getGdsChangeSummary,
   getGdsChanges,
@@ -17,6 +19,9 @@ import {
   type GdsFareRun,
 } from "@/lib/gds";
 import { firstParam, type RawSearchParams } from "@/lib/query";
+
+import "../analytics.css";
+import "./gds.css";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -91,6 +96,11 @@ export default async function GdsDashboardPage({ searchParams }: PageProps) {
 
   const { latestRun, runs, fares, changes, summary } = await getPageData();
 
+  // Rendered-table pagination only — the analytics aggregations below
+  // (daily activity, top routes, biggest moves) intentionally keep the
+  // full fare/change fetches.
+  const faresPaged = paginateRows(fares, parsePageParam(firstParam(params, "fares_page")));
+
   // Metric card values
   const soldOutCount = fares.filter((f) => f.is_sold_out).length;
   const soldOutPct   = pct(soldOutCount, fares.length || 1);
@@ -148,9 +158,11 @@ export default async function GdsDashboardPage({ searchParams }: PageProps) {
     .sort((a, b) => b.absDelta - a.absDelta)
     .slice(0, 6);
 
-  // Change events grouped by day (most recent 200)
+  // Change events grouped by day (most recent 200, paged)
+  const recentEvents = changes.slice(0, 200);
+  const eventsPaged = paginateRows(recentEvents, parsePageParam(firstParam(params, "events_page")));
   const eventsByDay: Record<string, GdsChangeEvent[]> = {};
-  for (const ev of changes.slice(0, 200)) {
+  for (const ev of eventsPaged.pageRows) {
     const day = ev.report_day ?? "unknown";
     if (!eventsByDay[day]) eventsByDay[day] = [];
     eventsByDay[day].push(ev);
@@ -351,7 +363,7 @@ export default async function GdsDashboardPage({ searchParams }: PageProps) {
           title={`Current fares (${fares.length.toLocaleString()} rows)`}
           copy="Latest extraction snapshot. Sold-out and unsaleable fares included for completeness."
         >
-          <div className="data-table-wrap">
+          <div className="data-table-wrap" role="region" aria-label="Current fares" tabIndex={0}>
             <table>
               <thead>
                 <tr>
@@ -367,7 +379,7 @@ export default async function GdsDashboardPage({ searchParams }: PageProps) {
                 </tr>
               </thead>
               <tbody>
-                {fares.map((row, i) => (
+                {faresPaged.pageRows.map((row, i) => (
                   <tr key={i}>
                     <td><span style={{ fontFamily: "monospace" }}>{row.airline}</span></td>
                     <td><span style={{ fontFamily: "monospace" }}>{row.route_key}</span></td>
@@ -393,6 +405,7 @@ export default async function GdsDashboardPage({ searchParams }: PageProps) {
               </tbody>
             </table>
           </div>
+          <TablePager label="fares" pageKey="fares_page" pager={faresPaged} params={params} />
         </DataPanel>
       )}
 
@@ -400,7 +413,7 @@ export default async function GdsDashboardPage({ searchParams }: PageProps) {
       {Object.keys(eventsByDay).length > 0 && (
         <DataPanel
           title="Change events"
-          copy="All-time fare changes detected between consecutive extraction runs. Showing most recent 200."
+          copy="All-time fare changes detected between consecutive extraction runs, across the most recent 200 events."
         >
           {Object.entries(eventsByDay)
             .sort(([a], [b]) => b.localeCompare(a))
@@ -409,7 +422,13 @@ export default async function GdsDashboardPage({ searchParams }: PageProps) {
                 <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>
                   {formatShortDay(day)} — {evs.length} events
                 </div>
-                <div className="data-table-wrap" style={{ border: "none", borderRadius: 0, marginBottom: 0 }}>
+                <div
+                  className="data-table-wrap"
+                  role="region"
+                  aria-label={`Change events for ${formatShortDay(day)}`}
+                  tabIndex={0}
+                  style={{ border: "none", borderRadius: 0, marginBottom: 0 }}
+                >
                   <table>
                     <thead>
                       <tr>
@@ -452,6 +471,7 @@ export default async function GdsDashboardPage({ searchParams }: PageProps) {
                 </div>
               </div>
             ))}
+          <TablePager label="events" pageKey="events_page" pager={eventsPaged} params={params} />
         </DataPanel>
       )}
     </div>

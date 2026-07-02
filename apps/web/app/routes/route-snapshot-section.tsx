@@ -44,7 +44,7 @@ export function RouteSnapshotSection({
             </div>
           </div>
 
-          <div className="data-table-wrap">
+          <div className="data-table-wrap" role="region" aria-label="Route snapshot rows" tabIndex={0}>
             <table className="data-table compact-table">
               <thead>
                 <tr>

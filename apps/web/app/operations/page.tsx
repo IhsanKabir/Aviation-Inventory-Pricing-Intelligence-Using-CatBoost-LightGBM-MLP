@@ -92,13 +92,14 @@ export default async function OperationsPage({ searchParams }: PageProps) {
   const requestId = firstParam(params, "request_id") ?? undefined;
   const routeKey = selectedRouteKey(origin, destination);
 
-  const [airlines, routes, recentCycles, accessRequest] = await Promise.all([
+  const [airlines, routes, recentCycles, accessRequest, userSession] = await Promise.all([
     getAirlines(),
     getRoutes(),
     getRecentCycles(8),
     requestId ? getReportAccessRequest(requestId) : Promise.resolve({ ok: true, data: null as null, error: undefined }),
+    getCurrentUserSession(),
   ]);
-  const { user } = await getCurrentUserSession();
+  const { user } = userSession;
   const accessGranted = accessRequest.ok && accessRequest.data?.page_key === "operations" && accessRequest.data?.status === "approved";
 
   const operations =
@@ -407,7 +408,7 @@ export default async function OperationsPage({ searchParams }: PageProps) {
               </div>
 
               <div className="stack">
-                <div className="data-table-wrap">
+                <div className="data-table-wrap" role="region" aria-label="Departure days" tabIndex={0}>
                   <table className="data-table">
                     <thead>
                       <tr>
@@ -434,7 +435,7 @@ export default async function OperationsPage({ searchParams }: PageProps) {
                   </table>
                 </div>
 
-                <div className="data-table-wrap">
+                <div className="data-table-wrap" role="region" aria-label="Snapshot timeline" tabIndex={0}>
                   <table className="data-table">
                     <thead>
                       <tr>

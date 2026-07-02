@@ -134,7 +134,7 @@ export default async function UsagePage() {
 
   if ("error" in data) {
     return (
-      <main style={pageStyle}>
+      <section style={pageStyle}>
         <header style={headerStyle}>
           <h1 style={titleStyle}>Usage</h1>
           <p style={taglineStyle}>
@@ -150,12 +150,12 @@ export default async function UsagePage() {
             <code>REPORT_ACCESS_ADMIN_TOKEN</code> is set in the Vercel environment.
           </p>
         </section>
-      </main>
+      </section>
     );
   }
 
   return (
-    <main style={pageStyle}>
+    <section style={pageStyle}>
       <header style={headerStyle}>
         <h1 style={titleStyle}>Usage</h1>
         <p style={taglineStyle}>
@@ -261,7 +261,7 @@ export default async function UsagePage() {
           </table>
         )}
       </section>
-    </main>
+    </section>
   );
 }
 

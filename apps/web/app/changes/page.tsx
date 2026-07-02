@@ -2,6 +2,7 @@ import { DataPanel } from "@/components/data-panel";
 import { LiveFilterControls } from "@/components/live-filter-controls";
 import { MetricCard } from "@/components/metric-card";
 import { ReportAccessRequestPanel } from "@/components/report-access-request-panel";
+import { TablePager } from "@/components/table-pager";
 import {
   getAirlines,
   getChangeDashboardPayload,
@@ -11,8 +12,11 @@ import {
 } from "@/lib/api";
 import { buildReportingExportUrl } from "@/lib/export";
 import { formatDhakaDateTime, formatNumber, formatPublicValue, formatRouteGeo, formatRouteType } from "@/lib/format";
+import { paginateRows, parsePageParam } from "@/lib/pagination";
 import { buildHref, firstParam, manyParams, parseLimit, removeParams, setParam, type RawSearchParams } from "@/lib/query";
 import { getCurrentUserSession } from "@/lib/user-auth";
+
+import "../analytics.css";
 
 type PageProps = {
   searchParams?: Promise<RawSearchParams>;
@@ -95,12 +99,13 @@ export default async function ChangesPage({ searchParams }: PageProps) {
   const routeKey = selectedRouteKey(origin, destination);
   const { startDate, endDate } = resolveDateWindow(explicitStartDate, explicitEndDate, selectedWindow);
 
-  const [airlines, routes, accessRequest] = await Promise.all([
+  const [airlines, routes, accessRequest, userSession] = await Promise.all([
     getAirlines(),
     getRoutes(),
     requestId ? getReportAccessRequest(requestId) : Promise.resolve({ ok: true, data: null as null, error: undefined }),
+    getCurrentUserSession(),
   ]);
-  const { user } = await getCurrentUserSession();
+  const { user } = userSession;
   const accessGranted = accessRequest.ok && accessRequest.data?.page_key === "changes" && accessRequest.data?.status === "approved";
 
   const [dashboard, changes] =
@@ -137,6 +142,7 @@ export default async function ChangesPage({ searchParams }: PageProps) {
         ];
 
   const rows = (changes.data?.items ?? []).filter((row) => !HIDDEN_FIELD_NAMES.has((row.field_name ?? "").trim()));
+  const rowsPaged = paginateRows(rows, parsePageParam(firstParam(params, "page")));
   const summary = dashboard.data?.summary;
   const totalEvents = summary?.event_count ?? rows.length;
   const upCount = summary?.up_count ?? rows.filter((row) => row.direction === "up").length;
@@ -170,7 +176,7 @@ export default async function ChangesPage({ searchParams }: PageProps) {
               key={item.value}
               className="window-chip"
               data-active={!explicitStartDate && !explicitEndDate && selectedWindow === item.value}
-              href={buildHref(setParam(removeParams(params, ["start_date", "end_date"]), "window", item.value))}
+              href={buildHref(setParam(removeParams(params, ["start_date", "end_date", "page"]), "window", item.value))}
             >
               {item.label}
             </a>
@@ -178,7 +184,7 @@ export default async function ChangesPage({ searchParams }: PageProps) {
           <a
             className="window-chip"
             data-active={!explicitStartDate && !explicitEndDate && !selectedWindow}
-            href={buildHref(removeParams(params, ["window", "start_date", "end_date"]))}
+            href={buildHref(removeParams(params, ["window", "start_date", "end_date", "page"]))}
           >
             All history
           </a>
@@ -205,7 +211,8 @@ export default async function ChangesPage({ searchParams }: PageProps) {
         >
           <LiveFilterControls
             airlineOptions={airlineOptions}
-            clearKeys={["airline", "origin", "destination", "domain", "change_type", "direction", "window", "start_date", "end_date", "limit"]}
+            clearKeys={["airline", "origin", "destination", "domain", "change_type", "direction", "window", "start_date", "end_date", "limit", "page"]}
+            resetKeys={["page"]}
             extraGroups={[
               {
                 key: "domain",
@@ -356,7 +363,7 @@ export default async function ChangesPage({ searchParams }: PageProps) {
               ) : rows.length === 0 ? (
                 <div className="empty-state">No change events matched the current filter set.</div>
               ) : (
-                <div className="data-table-wrap">
+                <div className="data-table-wrap" role="region" aria-label="Change events" tabIndex={0}>
                   <table className="data-table compact-table">
                     <thead>
                       <tr>
@@ -374,7 +381,7 @@ export default async function ChangesPage({ searchParams }: PageProps) {
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((row, index) => (
+                      {rowsPaged.pageRows.map((row, index) => (
                         <tr key={`${row.id}-${row.detected_at_utc ?? ""}-${index}`}>
                           <td>{formatDhakaDateTime(row.detected_at_utc)}</td>
                           <td>
@@ -413,6 +420,7 @@ export default async function ChangesPage({ searchParams }: PageProps) {
                   </table>
                 </div>
               )}
+              <TablePager label="events" pageKey="page" pager={rowsPaged} params={params} />
             </DataPanel>
           </>
         )}

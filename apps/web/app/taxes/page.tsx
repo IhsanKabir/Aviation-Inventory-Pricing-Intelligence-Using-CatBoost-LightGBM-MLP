@@ -2,9 +2,11 @@ import { DataPanel } from "@/components/data-panel";
 import { LiveFilterControls } from "@/components/live-filter-controls";
 import { MetricCard } from "@/components/metric-card";
 import { ReportAccessRequestPanel } from "@/components/report-access-request-panel";
+import { TablePager } from "@/components/table-pager";
 import { getAirlines, getRecentCycles, getReportAccessRequest, getRoutes, getTaxPayload } from "@/lib/api";
 import { buildReportingExportUrl } from "@/lib/export";
 import { formatDhakaDateTime, formatMoney, formatNumber, formatRouteGeo, formatRouteType } from "@/lib/format";
+import { paginateRows, parsePageParam } from "@/lib/pagination";
 import { firstParam, manyParams, parseLimit, type RawSearchParams } from "@/lib/query";
 import { getCurrentUserSession } from "@/lib/user-auth";
 
@@ -57,13 +59,14 @@ export default async function TaxesPage({ searchParams }: PageProps) {
   const requestId = firstParam(params, "request_id") ?? undefined;
   const routeKey = selectedRouteKey(origin, destination);
 
-  const [airlines, routes, recentCycles, accessRequest] = await Promise.all([
+  const [airlines, routes, recentCycles, accessRequest, userSession] = await Promise.all([
     getAirlines(),
     getRoutes(),
     getRecentCycles(8),
     requestId ? getReportAccessRequest(requestId) : Promise.resolve({ ok: true, data: null as null, error: undefined }),
+    getCurrentUserSession(),
   ]);
-  const { user } = await getCurrentUserSession();
+  const { user } = userSession;
   const accessGranted = accessRequest.ok && accessRequest.data?.page_key === "taxes" && accessRequest.data?.status === "approved";
 
   const taxes =
@@ -81,6 +84,7 @@ export default async function TaxesPage({ searchParams }: PageProps) {
       : { ok: true, data: null as null, error: undefined };
 
   const rows = taxes.data?.rows ?? [];
+  const rowsPaged = paginateRows(rows, parsePageParam(firstParam(params, "page")));
   const routeSummaries = taxes.data?.route_summaries ?? [];
   const airlineSummaries = taxes.data?.airline_summaries ?? [];
   const airlineOptions = [...(airlines.data?.items ?? [])]
@@ -146,7 +150,8 @@ export default async function TaxesPage({ searchParams }: PageProps) {
         >
           <LiveFilterControls
             airlineOptions={airlineOptions}
-            clearKeys={["airline", "origin", "destination", "route_type", "cycle_id", "limit", "trend_limit"]}
+            clearKeys={["airline", "origin", "destination", "route_type", "cycle_id", "limit", "trend_limit", "page"]}
+            resetKeys={["page"]}
             extraGroups={[
               ...(cycleOptions.length
                 ? [
@@ -307,7 +312,7 @@ export default async function TaxesPage({ searchParams }: PageProps) {
               ) : rows.length === 0 ? (
                 <div className="empty-state">No tax rows matched the current filter set.</div>
               ) : (
-                <div className="data-table-wrap">
+                <div className="data-table-wrap" role="region" aria-label="Tax rows" tabIndex={0}>
                   <table className="data-table">
                     <thead>
                       <tr>
@@ -323,7 +328,7 @@ export default async function TaxesPage({ searchParams }: PageProps) {
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((row, index) => (
+                      {rowsPaged.pageRows.map((row, index) => (
                         <tr
                           key={`${row.route_key}-${row.airline}-${row.flight_number}-${row.departure_utc}-${row.fare_basis ?? ""}-${row.captured_at_utc ?? ""}-${index}`}
                         >
@@ -352,6 +357,7 @@ export default async function TaxesPage({ searchParams }: PageProps) {
                   </table>
                 </div>
               )}
+              <TablePager label="tax rows" pageKey="page" pager={rowsPaged} params={params} />
             </DataPanel>
           </>
         )}

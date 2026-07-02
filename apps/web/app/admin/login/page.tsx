@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { AdminLoginForm } from "@/components/admin-login-form";
 import { hasAdminSession, isAdminConfigured } from "@/lib/admin";
+import { sanitizeReturnPath } from "@/lib/navigation";
 
 export default async function AdminLoginPage({
   searchParams
@@ -19,7 +20,7 @@ export default async function AdminLoginPage({
     );
   }
 
-  const next = (await searchParams)?.next || "/admin";
+  const next = sanitizeReturnPath((await searchParams)?.next, "/admin");
   if (await hasAdminSession()) {
     redirect(next);
   }

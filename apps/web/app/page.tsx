@@ -3,7 +3,7 @@ import Link from "next/link";
 import { DataPanel } from "@/components/data-panel";
 import { MetricCard } from "@/components/metric-card";
 import { getDashboardPayload } from "@/lib/api";
-import { formatRouteGeo, formatRouteType } from "@/lib/format";
+import { formatDhakaDateTime, formatRouteGeo, formatRouteType } from "@/lib/format";
 
 export const revalidate = 3600;
 
@@ -23,11 +23,7 @@ function uniqueByKey<T>(items: T[], keyFn: (item: T) => string) {
 
 function formatDate(value?: string | null) {
   if (!value) return "Not available";
-  return new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Asia/Dhaka",
-  }).format(new Date(value));
+  return formatDhakaDateTime(value);
 }
 
 export default async function HomePage() {

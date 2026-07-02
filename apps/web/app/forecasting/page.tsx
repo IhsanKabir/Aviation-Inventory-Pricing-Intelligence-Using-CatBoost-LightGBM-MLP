@@ -3,6 +3,8 @@ import { MetricCard } from "@/components/metric-card";
 import { getForecastingPayload } from "@/lib/api";
 import { formatDhakaDateTime, formatNumber, formatPercent } from "@/lib/format";
 
+import "./forecasting.css";
+
 export const revalidate = 3600;
 
 type MetricLike = Record<string, unknown>;
@@ -354,7 +356,7 @@ export default async function ForecastingPage() {
           {!overallEval.length ? (
             <div className="empty-state">No overall evaluation rows found.</div>
           ) : (
-            <div className="data-table-wrap">
+            <div className="data-table-wrap" role="region" aria-label="Model leaderboard" tabIndex={0}>
               <table className="data-table compact-table forecasting-table">
                 <thead>
                   <tr>
@@ -457,7 +459,7 @@ export default async function ForecastingPage() {
             {!routeWinners.length ? (
               <div className="empty-state">No route-winner rows available in the latest prediction bundle.</div>
             ) : (
-              <div className="data-table-wrap">
+              <div className="data-table-wrap" role="region" aria-label="Current route winners" tabIndex={0}>
                 <table className="data-table compact-table forecasting-table">
                   <thead>
                     <tr>
@@ -495,7 +497,7 @@ export default async function ForecastingPage() {
             {!backtestRouteWinners.length ? (
               <div className="empty-state">No backtest route-winner rows available in the latest backtest bundle.</div>
             ) : (
-              <div className="data-table-wrap">
+              <div className="data-table-wrap" role="region" aria-label="Backtest route winners" tabIndex={0}>
                 <table className="data-table compact-table forecasting-table">
                   <thead>
                     <tr>
@@ -534,7 +536,7 @@ export default async function ForecastingPage() {
           {!nextDayWatchlist.length ? (
             <div className="empty-state">No next-day rows found.</div>
           ) : (
-            <div className="data-table-wrap">
+            <div className="data-table-wrap" role="region" aria-label="Next-day watchlist" tabIndex={0}>
               <table className="data-table compact-table forecasting-table">
                 <thead>
                   <tr>
@@ -580,7 +582,7 @@ export default async function ForecastingPage() {
           {!backtestLeaderboard.length ? (
             <div className="empty-state">No backtest evaluation rows found.</div>
           ) : (
-            <div className="data-table-wrap">
+            <div className="data-table-wrap" role="region" aria-label="Backtest stability" tabIndex={0}>
               <table className="data-table compact-table forecasting-table">
                 <thead>
                   <tr>

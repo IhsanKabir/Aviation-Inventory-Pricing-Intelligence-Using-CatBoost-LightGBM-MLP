@@ -1,0 +1,126 @@
+/* Forecasting dashboard styles (split from globals.css). Imported by app/forecasting/page.tsx. */
+
+.forecast-banner {
+  margin-top: 22px;
+  padding: 22px 24px;
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 18px;
+  background:
+    radial-gradient(circle at top right, rgba(241, 180, 59, 0.18), transparent 26%),
+    linear-gradient(145deg, rgba(9, 38, 64, 0.96), rgba(24, 82, 122, 0.92));
+  color: white;
+}
+
+.forecast-banner h2 {
+  margin: 6px 0 8px;
+  font-size: 1.8rem;
+}
+
+.forecast-banner p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.84);
+  line-height: 1.6;
+}
+
+.forecast-banner-label {
+  font-size: 0.76rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.forecast-banner-meta {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.forecast-inline-stat {
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.forecast-inline-stat span {
+  display: block;
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.forecast-inline-stat strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1rem;
+}
+
+.forecast-grid {
+  grid-template-columns: 1.2fr 1fr;
+}
+
+.forecast-grid-split {
+  grid-template-columns: 1fr 1fr;
+}
+
+.forecasting-table {
+  min-width: 920px;
+}
+
+.forecast-delta-up {
+  color: var(--good);
+  font-weight: 700;
+}
+
+.forecast-delta-down {
+  color: var(--alert);
+  font-weight: 700;
+}
+
+.mae-bar-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mae-bar-track {
+  flex: 1;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(16, 35, 59, 0.08);
+  overflow: hidden;
+  min-width: 40px;
+}
+
+.mae-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #1d74a6, #52aaba);
+}
+
+.mae-bar-fill.warn {
+  background: linear-gradient(90deg, #b73632, #d96b4a);
+}
+
+.mae-bar-value {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* .forecast-grid always rides on .section-grid; the later .section-grid
+   media rule in globals.css used to win at this width, so mirror it here. */
+@media (max-width: 1100px) {
+  .forecast-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 840px) {
+  .forecast-banner,
+  .forecast-grid,
+  .forecast-grid-split {
+    grid-template-columns: 1fr;
+  }
+}

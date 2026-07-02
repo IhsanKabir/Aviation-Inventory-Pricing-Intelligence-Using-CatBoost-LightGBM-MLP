@@ -4,6 +4,8 @@ import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
+import { sanitizeReturnPath } from "@/lib/navigation";
+
 type Mode = "login" | "register";
 
 export function UserAuthForm({ googleEnabled = false }: { googleEnabled?: boolean }) {
@@ -37,7 +39,7 @@ export function UserAuthForm({ googleEnabled = false }: { googleEnabled?: boolea
         throw new Error(payload?.detail || "Unable to continue.");
       }
 
-      const next = searchParams.get("next") || "/routes";
+      const next = sanitizeReturnPath(searchParams.get("next"), "/routes");
       startTransition(() => {
         router.replace(next);
         router.refresh();
@@ -48,7 +50,7 @@ export function UserAuthForm({ googleEnabled = false }: { googleEnabled?: boolea
   }
 
   async function continueWithGoogle() {
-    const next = searchParams.get("next") || "/routes";
+    const next = sanitizeReturnPath(searchParams.get("next"), "/routes");
     await signIn("google", { callbackUrl: next });
   }
 
@@ -76,41 +78,81 @@ export function UserAuthForm({ googleEnabled = false }: { googleEnabled?: boolea
         </div>
       )}
 
-      <div className="button-row" style={{ marginBottom: "1rem" }}>
-        <button className="chip" data-active={mode === "login"} onClick={() => setMode("login")} type="button">
+      <div className="button-row" style={{ marginBottom: "1rem" }} role="group" aria-label="Sign-in mode">
+        <button
+          className="chip"
+          aria-pressed={mode === "login"}
+          data-active={mode === "login"}
+          onClick={() => setMode("login")}
+          type="button"
+        >
           Sign in
         </button>
-        <button className="chip" data-active={mode === "register"} onClick={() => setMode("register")} type="button">
+        <button
+          className="chip"
+          aria-pressed={mode === "register"}
+          data-active={mode === "register"}
+          onClick={() => setMode("register")}
+          type="button"
+        >
           Create account
         </button>
       </div>
 
-      <div className="filter-form">
+      <form
+        className="filter-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
         {mode === "register" ? (
           <label className="field">
             <span>Full name</span>
-            <input onChange={(event) => setFullName(event.target.value)} type="text" value={fullName} />
+            <input
+              autoComplete="name"
+              onChange={(event) => setFullName(event.target.value)}
+              required
+              type="text"
+              value={fullName}
+            />
           </label>
         ) : null}
 
         <label className="field">
           <span>Email</span>
-          <input onChange={(event) => setEmail(event.target.value)} type="email" value={email} />
+          <input
+            autoComplete="email"
+            onChange={(event) => setEmail(event.target.value)}
+            required
+            type="email"
+            value={email}
+          />
         </label>
 
         <label className="field">
           <span>Password</span>
-          <input onChange={(event) => setPassword(event.target.value)} type="password" value={password} />
+          <input
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+            type="password"
+            value={password}
+          />
         </label>
 
-        {error ? <div className="status-banner warn">{error}</div> : null}
+        {error ? (
+          <div className="status-banner warn" role="alert">
+            {error}
+          </div>
+        ) : null}
 
         <div className="button-row">
-          <button className="button-link" data-pending={isPending} onClick={submit} type="button">
+          <button className="button-link" data-pending={isPending} type="submit">
             {ctaLabel}
           </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }

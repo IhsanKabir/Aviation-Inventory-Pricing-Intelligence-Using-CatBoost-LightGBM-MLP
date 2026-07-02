@@ -1,0 +1,339 @@
+/* Activity analytics styles shared by the /changes and /gds dashboards (split from globals.css). */
+
+/* ── Direction split bar ── */
+.direction-split-bar-wrap {
+  margin-top: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.direction-split-bar {
+  display: flex;
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(16, 35, 59, 0.07);
+}
+
+.direction-split-bar-up {
+  background: linear-gradient(90deg, #1d8a63, #2cb07c);
+  border-radius: 999px 0 0 999px;
+  transition: width 400ms ease;
+}
+
+.direction-split-bar-down {
+  background: linear-gradient(90deg, #d96b4a, #b73632);
+  border-radius: 0 999px 999px 0;
+  transition: width 400ms ease;
+}
+
+.direction-split-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.direction-split-labels span:first-child { color: var(--good); font-weight: 600; }
+.direction-split-labels span:last-child { color: var(--alert); font-weight: 600; }
+
+/* ── Daily activity (full-width stacked bars) ── */
+.daily-activity-list {
+  display: grid;
+  gap: 8px;
+}
+
+.daily-activity-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 108px 128px;
+  gap: 14px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.56);
+  border: 1px solid rgba(16, 35, 59, 0.06);
+  transition: background 140ms ease;
+}
+
+.daily-activity-row:hover {
+  background: rgba(28, 95, 134, 0.05);
+}
+
+.daily-activity-date {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.daily-activity-bar-track {
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(16, 35, 59, 0.07);
+  display: flex;
+}
+
+.daily-bar-up {
+  height: 100%;
+  background: linear-gradient(90deg, #1d8a63, #2cb07c);
+  transition: width 400ms ease;
+  flex-shrink: 0;
+}
+
+.daily-bar-down {
+  height: 100%;
+  background: linear-gradient(90deg, #d96b4a, #b73632);
+  transition: width 400ms ease;
+  flex-shrink: 0;
+}
+
+.daily-bar-other {
+  height: 100%;
+  background: rgba(16, 35, 59, 0.15);
+  flex-shrink: 0;
+}
+
+.daily-activity-count {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.daily-activity-split {
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.daily-activity-split .up-text { color: var(--good); font-weight: 600; }
+.daily-activity-split .down-text { color: var(--alert); font-weight: 600; }
+
+/* ── Analytics 3-column grid ── */
+.analytics-three-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 18px;
+  align-items: start;
+}
+
+.analytics-panel {
+  display: grid;
+  gap: 8px;
+  padding: 20px 22px;
+}
+
+/* Route / airline rows with direction split */
+.analytics-row {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(16, 35, 59, 0.07);
+  transition: background 140ms ease;
+}
+
+.analytics-row:hover { background: rgba(28, 95, 134, 0.05); }
+
+.analytics-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.analytics-row-label {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.analytics-row-count {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.analytics-split-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(16, 35, 59, 0.07);
+}
+
+.analytics-split-up {
+  background: #2cb07c;
+  flex-shrink: 0;
+}
+
+.analytics-split-down {
+  background: #b73632;
+  flex-shrink: 0;
+}
+
+/* Domain bar rows */
+.domain-bar-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(16, 35, 59, 0.07);
+}
+
+.domain-bar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.domain-bar-name {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--ink);
+  text-transform: capitalize;
+}
+
+.domain-bar-count {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.domain-fill-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(16, 35, 59, 0.07);
+  overflow: hidden;
+}
+
+.domain-fill-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #1d74a6, #52aaba);
+}
+
+/* ── Biggest price moves card grid ── */
+.moves-card-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.moves-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  box-shadow: 0 4px 16px rgba(16, 35, 59, 0.07);
+  transition: box-shadow 140ms ease, transform 140ms ease;
+}
+
+.moves-card:hover {
+  box-shadow: 0 8px 28px rgba(16, 35, 59, 0.12);
+  transform: translateY(-1px);
+}
+
+.moves-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.moves-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  border: 1px solid rgba(16, 35, 59, 0.12);
+  background: rgba(16, 35, 59, 0.06);
+  color: var(--ink);
+}
+
+.moves-badge.airline {
+  background: rgba(15, 55, 88, 0.1);
+  border-color: rgba(15, 55, 88, 0.16);
+  color: #0f3758;
+}
+
+.moves-card-field {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.moves-card-values {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.96rem;
+  font-weight: 700;
+  color: var(--ink);
+  flex-wrap: wrap;
+}
+
+.moves-value-old {
+  color: var(--muted);
+  text-decoration: line-through;
+  font-weight: 500;
+}
+
+.moves-arrow { color: var(--muted); }
+
+.moves-card-magnitude {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.moves-card-magnitude.up { color: var(--good); }
+.moves-card-magnitude.down { color: var(--alert); }
+
+.moves-card-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+@media (max-width: 1100px) {
+  .analytics-three-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .moves-card-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 840px) {
+  .analytics-three-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .moves-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .daily-activity-row {
+    grid-template-columns: 56px minmax(0, 1fr) 80px;
+  }
+
+  .daily-activity-split {
+    display: none;
+  }
+}

@@ -75,7 +75,7 @@ export default async function AirportTaxPage({ params, searchParams }: Props) {
   };
 
   return (
-    <main className="shell" style={{ paddingBlock: "32px" }}>
+    <section>
       {/* Breadcrumb + count chips */}
       <div style={{ marginBottom: "24px" }}>
         <div className="chip-row" style={{ marginBottom: "12px" }}>
@@ -149,7 +149,13 @@ export default async function AirportTaxPage({ params, searchParams }: Props) {
                       {sub && (
                         <p style={{ fontSize: "0.78rem", color: "var(--muted)", margin: 0 }}>{sub}</p>
                       )}
-                      <div className="data-table-wrap" style={{ borderRadius: "12px", overflow: "hidden" }}>
+                      <div
+                        className="data-table-wrap"
+                        role="region"
+                        aria-label={`Tax rates${cat ? ` for ${cat}` : ""}${sub ? ` — ${sub}` : ""}`}
+                        tabIndex={0}
+                        style={{ borderRadius: "12px", overflow: "hidden" }}
+                      >
                         <table>
                           <thead>
                             <tr>
@@ -185,7 +191,7 @@ export default async function AirportTaxPage({ params, searchParams }: Props) {
           ))}
         </div>
       )}
-    </main>
+    </section>
   );
 }
 

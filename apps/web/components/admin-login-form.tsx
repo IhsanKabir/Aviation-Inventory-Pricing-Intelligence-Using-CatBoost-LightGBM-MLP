@@ -3,6 +3,8 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { sanitizeReturnPath } from "@/lib/navigation";
+
 export function AdminLoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -26,7 +28,7 @@ export function AdminLoginForm() {
         throw new Error(payload?.detail || "Unable to sign in.");
       }
 
-      const next = searchParams.get("next") || "/admin";
+      const next = sanitizeReturnPath(searchParams.get("next"), "/admin");
       startTransition(() => {
         router.replace(next);
         router.refresh();
@@ -43,25 +45,47 @@ export function AdminLoginForm() {
         Use the admin credential to review access requests, monitor sensitive pages, and manage approvals.
       </p>
 
-      <div className="filter-form">
+      <form
+        className="filter-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submitLogin();
+        }}
+      >
         <label className="field">
           <span>Username</span>
-          <input onChange={(event) => setUsername(event.target.value)} type="text" value={username} />
+          <input
+            autoComplete="username"
+            onChange={(event) => setUsername(event.target.value)}
+            required
+            type="text"
+            value={username}
+          />
         </label>
 
         <label className="field">
           <span>Password</span>
-          <input onChange={(event) => setPassword(event.target.value)} type="password" value={password} />
+          <input
+            autoComplete="current-password"
+            onChange={(event) => setPassword(event.target.value)}
+            required
+            type="password"
+            value={password}
+          />
         </label>
 
-        {error ? <div className="status-banner warn">{error}</div> : null}
+        {error ? (
+          <div className="status-banner warn" role="alert">
+            {error}
+          </div>
+        ) : null}
 
         <div className="button-row">
-          <button className="button-link" data-pending={isPending} onClick={submitLogin} type="button">
+          <button className="button-link" data-pending={isPending} type="submit">
             Sign in
           </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }

@@ -4,6 +4,8 @@ import type { ReportAccessRequest } from "@/lib/api";
 import { getApiBaseUrl } from "@/lib/api";
 import { readAdminSearchConfig } from "@/lib/search-config";
 
+import "./admin.css";
+
 async function loadInitialRequests() {
   const adminToken =
     process.env.REPORT_ACCESS_ADMIN_TOKEN?.trim() ||

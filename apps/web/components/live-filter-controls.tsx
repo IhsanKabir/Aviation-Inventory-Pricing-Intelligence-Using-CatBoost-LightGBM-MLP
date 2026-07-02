@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 export type RouteToggleOption = {
   routeKey: string;
@@ -34,6 +34,7 @@ export function LiveFilterControls({
   manualFields,
   initialValues,
   clearKeys,
+  resetKeys = [],
   extraGroups = []
 }: {
   routeOptions: RouteToggleOption[];
@@ -43,6 +44,8 @@ export function LiveFilterControls({
   manualFields: TextFieldConfig[];
   initialValues: Record<string, string>;
   clearKeys: string[];
+  /** Params dropped whenever any filter changes, e.g. pagination cursors. */
+  resetKeys?: string[];
   extraGroups?: ExtraToggleGroup[];
 }) {
   const router = useRouter();
@@ -51,11 +54,20 @@ export function LiveFilterControls({
   const [isPending, startTransition] = useTransition();
   const [values, setValues] = useState<Record<string, string>>(initialValues);
 
-  const syncKey = useMemo(() => JSON.stringify(initialValues), [initialValues]);
+  // Sorted entries make the key insensitive to object key order, so only a real
+  // content change (not a re-serialized equal object) resets the draft below.
+  const syncKey = useMemo(
+    () => JSON.stringify(Object.entries(initialValues).sort(([left], [right]) => left.localeCompare(right))),
+    [initialValues]
+  );
 
-  useEffect(() => {
+  // Reset the draft inputs when the server-resolved filters actually change (URL
+  // navigation), comparing by content so a new-but-equal object doesn't wipe typing.
+  const [prevSyncKey, setPrevSyncKey] = useState(syncKey);
+  if (prevSyncKey !== syncKey) {
+    setPrevSyncKey(syncKey);
     setValues(initialValues);
-  }, [syncKey, initialValues]);
+  }
 
   function replaceWith(next: URLSearchParams) {
     const query = next.toString();
@@ -67,6 +79,9 @@ export function LiveFilterControls({
   function updateQuery(mutator: (next: URLSearchParams) => void) {
     const next = new URLSearchParams(searchParams.toString());
     mutator(next);
+    for (const key of resetKeys) {
+      next.delete(key);
+    }
     replaceWith(next);
   }
 
@@ -155,12 +170,13 @@ export function LiveFilterControls({
     <div className="filter-stack">
       {routeOptions.length ? (
         <div className="filter-group">
-          <div className="filter-label">Quick routes</div>
-          <div className="chip-row">
+          <div className="filter-label" id="filter-group-quick-routes">Quick routes</div>
+          <div className="chip-row" role="group" aria-labelledby="filter-group-quick-routes">
             {routeOptions.map((item) => (
               <button
                 key={item.routeKey}
                 className="chip"
+                aria-pressed={selectedRouteKey === item.routeKey}
                 data-active={selectedRouteKey === item.routeKey}
                 data-pending={isPending}
                 onClick={() => toggleRoute(item.origin, item.destination)}
@@ -175,12 +191,13 @@ export function LiveFilterControls({
 
       {airlineOptions.length ? (
         <div className="filter-group">
-          <div className="filter-label">Airlines</div>
-          <div className="chip-row">
+          <div className="filter-label" id="filter-group-airlines">Airlines</div>
+          <div className="chip-row" role="group" aria-labelledby="filter-group-airlines">
             {airlineOptions.map((code) => (
               <button
                 key={code}
                 className="chip"
+                aria-pressed={selectedAirlines.includes(code)}
                 data-active={selectedAirlines.includes(code)}
                 data-pending={isPending}
                 onClick={() => toggleAirline(code)}
@@ -195,12 +212,13 @@ export function LiveFilterControls({
 
       {extraGroups.map((group) => (
         <div className="filter-group" key={group.key}>
-          <div className="filter-label">{group.label}</div>
-          <div className="chip-row">
+          <div className="filter-label" id={`filter-group-${group.key}`}>{group.label}</div>
+          <div className="chip-row" role="group" aria-labelledby={`filter-group-${group.key}`}>
             {group.options.map((option) => (
               <button
                 key={`${group.key}-${option.value}`}
                 className="chip"
+                aria-pressed={group.selected.includes(option.value)}
                 data-active={group.selected.includes(option.value)}
                 data-pending={isPending}
                 onClick={() => toggleExtra(group.key, option.value, group.multi !== false)}
@@ -248,6 +266,10 @@ export function LiveFilterControls({
             Clear filters
           </button>
         </div>
+
+        <p className="filter-status" role="status" aria-live="polite">
+          {isPending ? "Updating results…" : ""}
+        </p>
       </form>
     </div>
   );
