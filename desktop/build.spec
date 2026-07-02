@@ -12,17 +12,21 @@
 # CI then zips dist/OTADiscountReport -> OTADiscountReport.zip (+ .sha256) and
 # publishes it as the GitHub release asset the app_release mirror serves.
 
-from PyInstaller.utils.hooks import collect_data_files
+import os
+
+# PyInstaller resolves relative paths against the SPEC file's directory (desktop/),
+# not the invocation cwd — anchor everything to the repo root explicitly.
+ROOT = os.path.dirname(SPECPATH)  # noqa: F821  (SPECPATH is injected by PyInstaller)
 
 block_cipher = None
 
 a = Analysis(
-    ["launcher.py"],
-    pathex=["."],
+    [os.path.join(ROOT, "launcher.py")],
+    pathex=[ROOT],
     binaries=[],
     datas=[
-        ("desktop/ui.html", "desktop"),
-        ("config/discount_manual_overrides.json", "config"),
+        (os.path.join(ROOT, "desktop", "ui.html"), "desktop"),
+        (os.path.join(ROOT, "config", "discount_manual_overrides.json"), "config"),
     ],
     hiddenimports=[
         "keyring.backends.Windows",
