@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "description": "Registry for the daily OTA discount-comparison report. Defines every OTA/agency channel shown in the grid, its persona (B2B agent view vs B2C consumer view), the scraper module that feeds it, current coverage status, and the airline column universe split into Domestic vs International. Discount data is scraped live per flight: for each offer we capture gross_fare vs net_fare to derive discount_pct. B2C channels apply one or more coupon codes; each coupon is captured as its own row (NO summation).",
+  "personas": {
+    "B2B": "Agent / sub-agent facing rate. Usually a single negotiated discount per (channel, airline).",
+    "B2C": "Consumer facing rate. May expose 3-4 stacked coupon options; each coupon is recorded individually."
+  },
+  "color_legend": {
+    "red": "Value changed vs previous report window",
+    "green": "Highest discount for that airline (best for buyer)",
+    "blue": "Second highest discount for that airline"
+  },
+  "channels": [
+    {
+      "key": "usba_ota",
+      "label": "USBA-OTA",
+      "persona": "B2B",
+      "module": null,
+      "status": "missing",
+      "notes": "US-Bangla agent OTA portal. No scraper yet."
+    },
+    {
+      "key": "sharetrip_b2b",
+      "label": "ShareTrip",
+      "persona": "B2B",
+      "module": "sharetrip",
+      "status": "active_no_persist",
+      "notes": "sharetrip.py computes ota_discount_pct/amount (gross vs display) but it is not persisted yet."
+    },
+    {
+      "key": "amy_b2b",
+      "label": "Amy",
+      "persona": "B2B",
+      "module": "amyweb",
+      "status": "active_price_only",
+      "notes": "amyweb.py captures final price only; needs gross-vs-net discount extraction."
+    },
+    {
+      "key": "bdfare",
+      "label": "Bdfare",
+      "persona": "B2B",
+      "module": "bdfare",
+      "status": "active_no_persist",
+      "notes": "bdfare.py computes ota_discount_pct/amount but it is not persisted yet."
+    },
+    {
+      "key": "akij_air",
+      "label": "AKIJ Air",
+      "persona": "B2B",
+      "module": null,
+      "status": "missing",
+      "notes": "No scraper yet."
+    },
+    {
+      "key": "tlntrip",
+      "label": "Tlntrip",
+      "persona": "B2B",
+      "module": null,
+      "status": "missing",
+      "notes": "No scraper yet."
+    },
+    {
+      "key": "triplover_b2c",
+      "label": "Triplover-B2C",
+      "persona": "B2C",
+      "module": null,
+      "status": "missing",
+      "coupons": [],
+      "notes": "No scraper yet. Populate coupon codes when available."
+    },
+    {
+      "key": "sharetrip_b2c",
+      "label": "ShareTrip-B2C",
+      "persona": "B2C",
+      "module": "sharetrip_har",
+      "status": "active_price_only",
+      "coupons": [],
+      "notes": "sharetrip_har.py captures price only; needs per-coupon gross-vs-net capture."
+    },
+    {
+      "key": "firsttrip_b2c",
+      "label": "Firsttrip-B2C",
+      "persona": "B2C",
+      "module": "firsttrip",
+      "status": "active_price_only",
+      "coupons": [],
+      "notes": "firsttrip.py captures price only; needs per-coupon gross-vs-net capture."
+    },
+    {
+      "key": "gozayaan_b2c",
+      "label": "Go Zayaan",
+      "persona": "B2C",
+      "module": "gozayaan_har",
+      "status": "active_price_only",
+      "coupons": [],
+      "notes": "gozayaan_har.py captures price only; needs per-coupon gross-vs-net capture."
+    },
+    {
+      "key": "tripcom_b2c",
+      "label": "Trip.Com",
+      "persona": "B2C",
+      "module": "trip_har",
+      "status": "active_price_only",
+      "coupons": [],
+      "notes": "trip_har.py captures price only; needs per-coupon gross-vs-net capture."
+    },
+    {
+      "key": "bookingcom_b2c",
+      "label": "Booking.Com",
+      "persona": "B2C",
+      "module": null,
+      "status": "missing",
+      "coupons": [],
+      "notes": "No scraper yet."
+    }
+  ],
+  "airline_universe": {
+    "domestic": {
+      "description": "Bangladesh domestic carriers shown in the DOMESTIC grid.",
+      "column_order": ["BS", "2A", "BG", "VQ"],
+      "names": {
+        "BS": "US-Bangla Airlines",
+        "2A": "Air Astra",
+        "BG": "Biman Bangladesh",
+        "VQ": "Novoair"
+      }
+    },
+    "international": {
+      "description": "Carriers shown in the INTERNATIONAL grid (column order matches the demo).",
+      "column_order": [
+        "BS", "BG", "EK", "SV", "QR", "SQ", "MH", "CA", "AI", "EY",
+        "GF", "KU", "OD", "TG", "TK", "UL", "WY", "CX", "CZ", "H9",
+        "MU", "ET", "MS", "6E", "G9", "FZ", "J9", "8D"
+      ]
+    }
+  }
+}

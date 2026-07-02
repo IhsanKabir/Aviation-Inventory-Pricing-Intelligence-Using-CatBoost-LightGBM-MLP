@@ -1,0 +1,104 @@
+name: release-desktop
+
+# Builds the OTA Discount Report desktop app (Windows, PyInstaller one-folder),
+# optionally code-signs it, and publishes it as a GitHub Release asset that the
+# app_release mirror serves to firewalled clients (?app=discount-report).
+#
+# Trigger: push a tag like `desktop-v0.1.0`, or run manually (workflow_dispatch).
+#   git tag desktop-v0.1.0 && git push origin desktop-v0.1.0
+#
+# Code signing is OPTIONAL: if the WINDOWS_CERT_* secrets are absent the build
+# ships UNSIGNED (SmartScreen will warn on first run). See docs for adding a cert.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g. 0.1.0) — used when running manually"
+        required: true
+        default: "0.1.0"
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: write        # create the release + upload assets
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      # Surfaced so the sign step's `if:` can test presence (secrets aren't
+      # allowed directly in step conditionals).
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "value=${GITHUB_REF_NAME#desktop-v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install openpyxl requests pywebview keyring psutil pyinstaller
+
+      - name: Build (one-folder)
+        run: pyinstaller desktop/build.spec --noconfirm
+
+      - name: Package as zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/OTADiscountReport/* -DestinationPath dist/OTADiscountReport.zip -Force
+
+      # --- Optional Authenticode signing (only if a cert secret is configured) ---
+      - name: Code-sign
+        if: ${{ env.WINDOWS_CERT_BASE64 != '' }}
+        env:
+          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        shell: pwsh
+        run: |
+          $pfx = "$env:RUNNER_TEMP\cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+          & "C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe" sign `
+            /f $pfx /p $env:WINDOWS_CERT_PASSWORD /tr http://timestamp.digicert.com `
+            /td sha256 /fd sha256 dist/OTADiscountReport/OTADiscountReport.exe
+          # re-zip so the signed exe is the one shipped
+          Remove-Item dist/OTADiscountReport.zip -ErrorAction SilentlyContinue
+          Compress-Archive -Path dist/OTADiscountReport/* -DestinationPath dist/OTADiscountReport.zip -Force
+
+      - name: SHA-256 sidecar
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/OTADiscountReport.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  OTADiscountReport.zip" | Out-File -Encoding ascii dist/OTADiscountReport.zip.sha256
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-v${{ steps.ver.outputs.value }}
+          name: OTA Discount Report v${{ steps.ver.outputs.value }}
+          body: |
+            OTA Discount Comparison desktop app.
+
+            Install: download `OTADiscountReport.zip`, unzip anywhere, run
+            `OTADiscountReport.exe`. After the first install the app auto-updates
+            through the backend mirror (works on GitHub-blocked networks).
+
+            Verify (optional): the SHA-256 is published alongside the zip.
+          files: |
+            dist/OTADiscountReport.zip
+            dist/OTADiscountReport.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

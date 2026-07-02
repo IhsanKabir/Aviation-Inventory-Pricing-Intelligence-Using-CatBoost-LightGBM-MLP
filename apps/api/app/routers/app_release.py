@@ -54,17 +54,38 @@ from ..repositories import user_accounts
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-_GH_REPO = os.environ.get("APP_RELEASE_GITHUB_REPO", "IhsanKabir/iata-code-validator")
-_ASSET = os.environ.get("APP_RELEASE_ASSET_NAME", "IATACodeValidator.exe")
-_GH_API = f"https://api.github.com/repos/{_GH_REPO}/releases/latest"
+# MULTI-APP: one release channel per desktop product, selected by ?app=<key>.
+# "iata" stays the default so existing updaters (no query param) keep working.
+APPS: dict[str, dict[str, str]] = {
+    "iata": {
+        "repo": os.environ.get("APP_RELEASE_GITHUB_REPO", "IhsanKabir/iata-code-validator"),
+        "asset": os.environ.get("APP_RELEASE_ASSET_NAME", "IATACodeValidator.exe"),
+    },
+    "discount-report": {
+        "repo": os.environ.get(
+            "DISCOUNT_APP_GITHUB_REPO",
+            "IhsanKabir/Aviation-Inventory-Pricing-Intelligence-Using-CatBoost-LightGBM-MLP"),
+        "asset": os.environ.get("DISCOUNT_APP_ASSET_NAME", "OTADiscountReport.zip"),
+    },
+}
+_DEFAULT_APP = "iata"
 _GH_TOKEN = os.environ.get("APP_RELEASE_GITHUB_TOKEN", "").strip()
 _PUBLIC_BASE = os.environ.get("APP_PUBLIC_BASE_URL", "").rstrip("/")
 _UA = "aero-pulse-api/app-release-proxy"
 
-# Short in-process cache so up-to-10 Cloud Run instances don't blow GitHub's
-# unauthenticated 60-req/hour/IP limit on the metadata call.
+# Short PER-APP in-process cache so up-to-10 Cloud Run instances don't blow
+# GitHub's unauthenticated 60-req/hour/IP limit on the metadata call. Keyed by
+# app so one product's cached release can never be served for another.
 _CACHE_TTL = 300.0
-_cache: dict[str, object] = {"at": 0.0, "data": None}
+_cache: dict[str, dict[str, object]] = {}
+
+
+def _app_config(app_key: str | None) -> tuple[str, dict[str, str]]:
+    key = (app_key or _DEFAULT_APP).strip().lower()
+    cfg = APPS.get(key)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"Unknown app '{key}'.")
+    return key, cfg
 
 
 def _require_session(db: Session | None, x_user_session: str | None) -> dict:
@@ -84,32 +105,44 @@ def _gh_request(url: str, accept: str) -> urllib.request.Request:
     return urllib.request.Request(url, headers=headers)
 
 
-def _fetch_latest_release() -> dict:
-    """GitHub releases/latest, cached briefly. Raises on transport failure."""
+_NEGATIVE_CACHE_TTL = 60.0   # failed lookups (rate limit, 404) back off briefly too
+
+
+def _fetch_latest_release(app_key: str, cfg: dict[str, str]) -> dict:
+    """GitHub releases/latest for one app, cached briefly per app (success AND
+    failure — otherwise a rate-limited/absent release makes every request hammer
+    GitHub and burn the anonymous quota even faster)."""
     now = time.monotonic()
-    cached = _cache.get("data")
-    if cached is not None and (now - float(_cache.get("at", 0.0))) < _CACHE_TTL:
-        return cached  # type: ignore[return-value]
-    with urllib.request.urlopen(
-        _gh_request(_GH_API, "application/vnd.github+json"), timeout=20,
-    ) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    _cache["data"] = data
-    _cache["at"] = now
+    entry = _cache.get(app_key, {})
+    if entry.get("data") is not None and (now - float(entry.get("at", 0.0))) < _CACHE_TTL:
+        return entry["data"]  # type: ignore[return-value]
+    if entry.get("failed_at") is not None \
+            and (now - float(entry["failed_at"])) < _NEGATIVE_CACHE_TTL:
+        raise RuntimeError("release lookup recently failed (negative cache)")
+    api = f"https://api.github.com/repos/{cfg['repo']}/releases/latest"
+    try:
+        with urllib.request.urlopen(
+            _gh_request(api, "application/vnd.github+json"), timeout=20,
+        ) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        _cache[app_key] = {**entry, "failed_at": now}
+        raise
+    _cache[app_key] = {"data": data, "at": now}
     return data
 
 
-def _asset_url(data: dict) -> str | None:
+def _asset_url(cfg: dict[str, str], data: dict) -> str | None:
     for a in (data.get("assets") or []):
-        if a.get("name") == _ASSET:
+        if a.get("name") == cfg["asset"]:
             return a.get("browser_download_url")
     return None
 
 
-def _sha256_from_release(data: dict) -> str:
+def _sha256_from_release(cfg: dict[str, str], data: dict) -> str:
     """Read the sibling <asset>.sha256 release asset, if CI published one."""
     for a in (data.get("assets") or []):
-        if a.get("name") == f"{_ASSET}.sha256":
+        if a.get("name") == f"{cfg['asset']}.sha256":
             try:
                 with urllib.request.urlopen(
                     _gh_request(a["browser_download_url"], "text/plain"), timeout=15,
@@ -123,46 +156,52 @@ def _sha256_from_release(data: dict) -> str:
 @router.get("/latest")
 def latest_version(
     request: Request,
+    app: str | None = None,
     x_user_session: str | None = Header(default=None),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
-    """Version manifest for the desktop updater. Auth-gated."""
+    """Version manifest for the desktop updater. Auth-gated. ?app=<key> selects
+    the product (default 'iata' for backward compatibility)."""
+    app_key, cfg = _app_config(app)
     _require_session(db, x_user_session)
     try:
-        data = _fetch_latest_release()
+        data = _fetch_latest_release(app_key, cfg)
     except Exception as exc:  # noqa: BLE001
-        log.warning("app/latest: GitHub fetch failed: %s", exc)
+        log.warning("app/latest[%s]: GitHub fetch failed: %s", app_key, exc)
         raise HTTPException(status_code=502, detail="Upstream release unavailable.")
-    if data.get("draft") or data.get("prerelease") or not _asset_url(data):
+    if data.get("draft") or data.get("prerelease") or not _asset_url(cfg, data):
         raise HTTPException(status_code=404, detail="No published release asset.")
     tag = (data.get("tag_name") or "").strip()
     if not tag:
         raise HTTPException(status_code=404, detail="No published release.")
     base = _PUBLIC_BASE or str(request.base_url).rstrip("/")
+    suffix = "" if app_key == _DEFAULT_APP else f"?app={app_key}"
     return {
         "version": tag.lstrip("v"),
         "notes": data.get("body") or "",
-        "download_url": f"{base}/api/v1/app/download",
-        "sha256": _sha256_from_release(data),
+        "download_url": f"{base}/api/v1/app/download{suffix}",
+        "sha256": _sha256_from_release(cfg, data),
     }
 
 
 @router.get("/download")
-def download() -> StreamingResponse:
-    """Stream the latest .exe through this (reachable) host. PUBLIC by design.
+def download(app: str | None = None) -> StreamingResponse:
+    """Stream the latest binary through this (reachable) host. PUBLIC by design.
 
     Intentionally unauthenticated: the website Download button is a plain
     browser navigation that cannot send the X-User-Session header, and the
     binary is ALREADY public on the GitHub release (public repo) — so this
     mirror exposes nothing new. It simply makes the download reachable on
     corporate networks that block GitHub. The desktop updater also hits this
-    route (its session header is just ignored here).
+    route (its session header is just ignored here). ?app=<key> selects the
+    product (default 'iata').
 
     A 302 redirect to GitHub would defeat the purpose — the corporate client
     can't reach GitHub — so we proxy the bytes, chunked (constant memory).
     """
+    app_key, cfg = _app_config(app)
     try:
-        url = _asset_url(_fetch_latest_release())
+        url = _asset_url(cfg, _fetch_latest_release(app_key, cfg))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"release lookup failed: {exc}")
     if not url:
@@ -201,5 +240,5 @@ def download() -> StreamingResponse:
     return StreamingResponse(
         _stream(),
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{_ASSET}"'},
+        headers={"Content-Disposition": f'attachment; filename="{cfg["asset"]}"'},
     )

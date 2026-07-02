@@ -520,6 +520,7 @@ def get_session_user(db: Session, session_token: str | None, *, touch: bool = Tr
                 WHERE s.session_token_hash = :session_token_hash
                   AND s.revoked_at_utc IS NULL
                   AND s.expires_at_utc > :now_utc
+                  AND u.status = 'active'
                 LIMIT 1
                 """
             ),

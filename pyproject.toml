@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "discount-engine"
+version = "0.1.0"
+description = "OTA discount comparison report engine (channel x airline grid from HAR captures)"
+requires-python = ">=3.10"
+dependencies = [
+    "openpyxl>=3.1",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+desktop = [
+    "pywebview>=5.0",
+    "keyring>=25.0",
+    "psutil>=5.9",
+]
+
+# The engine package plus the parser modules it imports (modules/ is an existing
+# top-level package in this repo; discount_engine depends on a subset of it).
+[tool.setuptools]
+packages = ["discount_engine", "modules", "desktop"]

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { signOut as nextAuthSignOut } from "next-auth/react";
 
 const MARKET_ROOT_HREF = "/market";
@@ -14,6 +14,7 @@ const MARKET_ITEMS = [
   { href: "/taxes", label: "Taxes" },
   { href: "/changes", label: "Changes" },
   { href: "/gds", label: "GDS" },
+  { href: "/discount-comparison", label: "OTA Discounts" },
 ];
 const MARKET_HREFS = MARKET_ITEMS.map((item) => item.href);
 
@@ -44,10 +45,49 @@ export function Topbar({
     currentUserName,
     currentUserEmail,
   });
+  // Menu visibility is React state (not CSS :hover) so the submenu stays reachable
+  // for keyboard, touch, and assistive-tech users; hover-only menus exclude all three.
+  const [marketOpen, setMarketOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const marketGroupRef = useRef<HTMLDivElement | null>(null);
+  const marketToggleRef = useRef<HTMLButtonElement | null>(null);
   const adminItems = sessionState.showAdminLink ? ADMIN_NAV_ITEMS : [];
   const isMarketActive =
     isActivePath(pathname, MARKET_ROOT_HREF) ||
     MARKET_HREFS.some((href) => isActivePath(pathname, href));
+
+  useEffect(() => {
+    setMarketOpen(false);
+    setMobileNavOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!marketOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const group = marketGroupRef.current;
+      if (group && event.target instanceof Node && !group.contains(event.target)) {
+        setMarketOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setMarketOpen(false);
+        // Return focus to the disclosure control so keyboard users aren't stranded.
+        marketToggleRef.current?.focus();
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [marketOpen]);
 
   useEffect(() => {
     let active = true;
@@ -91,8 +131,22 @@ export function Topbar({
     await nextAuthSignOut({ callbackUrl: "/" });
   }
 
+  function navLinkProps(href: string) {
+    const active = isActivePath(pathname, href);
+    return {
+      "data-active": active,
+      "aria-current": active ? ("page" as const) : undefined,
+    };
+  }
+
+  function handleMarketBlur(event: React.FocusEvent<HTMLDivElement>) {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setMarketOpen(false);
+    }
+  }
+
   return (
-    <div className="topbar">
+    <header className="topbar">
       <div className="shell topbar-inner">
         <div className="brand">
           <div className="brand-mark">AP</div>
@@ -103,33 +157,63 @@ export function Topbar({
             </div>
           </div>
         </div>
-        <nav className="nav" aria-label="Primary">
-          <Link className="nav-link" href="/" data-active={isActivePath(pathname, "/")}>
+        <button
+          className="nav-toggle"
+          type="button"
+          aria-expanded={mobileNavOpen}
+          aria-controls="primary-nav"
+          onClick={() => setMobileNavOpen((open) => !open)}
+        >
+          <span aria-hidden="true">{mobileNavOpen ? "✕" : "☰"}</span>
+          Menu
+        </button>
+        <nav className="nav" id="primary-nav" aria-label="Primary" data-open={mobileNavOpen}>
+          <Link className="nav-link" href="/" {...navLinkProps("/")}>
             Overview
           </Link>
 
-          <div className="nav-group">
+          <div
+            className="nav-group"
+            ref={marketGroupRef}
+            data-open={marketOpen}
+            onPointerEnter={(event) => {
+              if (event.pointerType === "mouse") {
+                setMarketOpen(true);
+              }
+            }}
+            onPointerLeave={(event) => {
+              if (event.pointerType === "mouse") {
+                setMarketOpen(false);
+              }
+            }}
+            onBlur={handleMarketBlur}
+          >
             <Link
               className="nav-link nav-group-link"
               href={MARKET_ROOT_HREF}
               data-active={isMarketActive}
-              aria-haspopup="menu"
+              aria-current={isActivePath(pathname, MARKET_ROOT_HREF) ? "page" : undefined}
             >
               Market Intelligence
             </Link>
-            <div
-              className="nav-group-menu"
-              id="market-intelligence-menu"
-              aria-label="Market Intelligence pages"
-              role="menu"
+            <button
+              className="nav-group-toggle"
+              type="button"
+              ref={marketToggleRef}
+              aria-expanded={marketOpen}
+              aria-controls="market-intelligence-menu"
+              onClick={() => setMarketOpen((open) => !open)}
             >
+              <span aria-hidden="true">▾</span>
+              <span className="sr-only">Toggle Market Intelligence pages</span>
+            </button>
+            <div className="nav-group-menu" id="market-intelligence-menu">
               {MARKET_ITEMS.map((item) => (
                 <Link
                   key={item.href}
                   className="nav-group-item"
                   href={item.href}
-                  data-active={isActivePath(pathname, item.href)}
-                  role="menuitem"
+                  {...navLinkProps(item.href)}
                 >
                   {item.label}
                 </Link>
@@ -137,35 +221,18 @@ export function Topbar({
             </div>
           </div>
 
-          <Link
-            className="nav-link"
-            href="/forecasting"
-            data-active={isActivePath(pathname, "/forecasting")}
-          >
+          <Link className="nav-link" href="/forecasting" {...navLinkProps("/forecasting")}>
             Forecasting
           </Link>
-          <Link
-            className="nav-link"
-            href="/downloads"
-            data-active={isActivePath(pathname, "/downloads")}
-          >
+          <Link className="nav-link" href="/downloads" {...navLinkProps("/downloads")}>
             Downloads
           </Link>
-          <Link
-            className="nav-link"
-            href="/usage"
-            data-active={isActivePath(pathname, "/usage")}
-          >
+          <Link className="nav-link" href="/usage" {...navLinkProps("/usage")}>
             Usage
           </Link>
 
           {adminItems.map((item) => (
-            <Link
-              key={item.href}
-              className="nav-link"
-              href={item.href}
-              data-active={isActivePath(pathname, item.href)}
-            >
+            <Link key={item.href} className="nav-link" href={item.href} {...navLinkProps(item.href)}>
               {item.label}
             </Link>
           ))}
@@ -188,6 +255,6 @@ export function Topbar({
           )}
         </div>
       </div>
-    </div>
+    </header>
   );
 }

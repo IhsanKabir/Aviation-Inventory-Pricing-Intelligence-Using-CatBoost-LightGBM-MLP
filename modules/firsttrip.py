@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -81,6 +82,12 @@ def _normalize(offer: Dict[str, Any], requested_cabin: str,
     seg0   = segments[0]
     seg_last = segments[-1]
 
+    # Operating carriers across all segments (codeshare detection)
+    operating_airlines = sorted({
+        str(s.get("operatingCarrierCode") or s.get("marketingCarrierCode") or carrier).upper()
+        for s in segments
+    } - {""})
+
     # Build via_airports from intermediate stops
     if len(segments) > 1:
         via = "|".join(s["destinationAirportCode"] for s in segments[:-1])
@@ -113,6 +120,7 @@ def _normalize(offer: Dict[str, Any], requested_cabin: str,
     return {
         "airline":              carrier,
         "operating_airline":    str(seg0.get("operatingCarrierCode") or carrier).upper(),
+        "operating_airlines":   operating_airlines,
         "flight_number":        flight_num,
         "origin":               origin,
         "destination":          destination,
@@ -120,6 +128,7 @@ def _normalize(offer: Dict[str, Any], requested_cabin: str,
         "arrival":              arrival,
         "cabin":                cabin,
         "fare_basis":           fare_basis,
+        "rbd":                  str(seg0.get("rbd") or "").upper().strip(),
         "brand":                "FIRSTTRIP_OTA",
         "price_total_bdt":      price,
         "fare_amount":          base_price,
@@ -206,12 +215,19 @@ def fetch_flights(
     inf: int = 0,
     airline_code: Optional[str] = None,
     timeout: int = 90,
+    return_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     cabin_id = CABIN_MAP.get(cabin.lower(), 1)
+    # Round-trip when return_date given: tripTypeId=2 + an inbound leg. The offer's
+    # finalTotalPrice/finalBasePrice then represent the COMBINED round-trip fare.
+    routes = [{"origin": origin.upper(), "destination": destination.upper(),
+               "departureDate": str(date)}]
+    if return_date:
+        routes.append({"origin": destination.upper(), "destination": origin.upper(),
+                       "departureDate": str(return_date)})
     payload = {
-        "tripTypeId": 1,
-        "routes": [{"origin": origin.upper(), "destination": destination.upper(),
-                     "departureDate": str(date)}],
+        "tripTypeId": 2 if return_date else 1,
+        "routes": routes,
         "adults":   max(1, int(adt or 1)),
         "childs":   max(0, int(chd or 0)),
         "infants":  max(0, int(inf or 0)),
@@ -298,3 +314,221 @@ def fetch_flights(
 def json_safe_loads(text: str) -> Any:
     import json
     return json.loads(text)
+
+
+def _raw_offers(origin: str, destination: str, date: str, cabin: str = "Economy",
+                promo: str = "", timeout: int = 90) -> List[Dict[str, Any]]:
+    """
+    Low-level search returning the RAW airSearchResponses offers, which embed the
+    full coupon/discount breakdown FirstTrip applies per offer. Kept separate from
+    fetch_flights() so the live pipeline contract is untouched.
+    """
+    cabin_id = CABIN_MAP.get(cabin.lower(), 1)
+    payload = {
+        "tripTypeId": 1,
+        "routes": [{"origin": origin.upper(), "destination": destination.upper(),
+                    "departureDate": str(date)}],
+        "adults": 1, "childs": 0, "infants": 0, "cabinClass": cabin_id,
+        "preferredCarriers": [], "prohibitedCarriers": [], "childrenAges": [],
+        "promoCode": promo, "fareType": 1, "isComboFare": False,
+    }
+    sxsrf = _get_sxsrf()
+    headers = {
+        "Content-Type": "application/json", "User-Agent": USER_AGENT,
+        "Origin": "https://firsttrip.com", "Referer": "https://firsttrip.com/",
+        "Accept": "application/json, text/event-stream", "platformtypeid": "1",
+        **({} if not sxsrf else {"sxsrf": sxsrf}),
+    }
+    resp = requests.post(API_SEARCH, json=payload, headers=headers,
+                         timeout=timeout, stream=True)
+    _update_sxsrf(resp)
+    if resp.status_code != 200:
+        return []
+    offers: List[Dict[str, Any]] = []
+    for chunk in resp.text.split("\ndata: "):
+        chunk = chunk.replace("data: ", "", 1).strip()
+        if not chunk:
+            continue
+        try:
+            data = json_safe_loads(chunk)
+            offers += ((data.get("data") or {})
+                       .get("airSearchResponseWithFilters", {})
+                       .get("airSearchResponses", []))
+        except Exception:
+            pass
+    return offers
+
+
+def fetch_b2c_discounts(origin: str, destination: str, date: str,
+                        cabin: str = "Economy",
+                        airline_code: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    FirstTrip B2C coupon discounts, read directly from the live search response.
+
+    Each offer carries the auto-applied coupon (couponCode / couponDiscountRate /
+    couponMaximumDiscountAmount / totalCouponAmount) plus a dynamic-discount slot.
+      * headline_rate = couponDiscountRate  -> % off BASE fare (what the manual
+        report shows, e.g. 16 for BS domestic)
+      * realized_pct  = totalCouponAmount / gross_total * 100 -> effective % off
+        the gross TOTAL after the cap is applied
+    Returns one row per offer; use summarize_b2c_discounts() for the grid cell.
+    """
+    rows: List[Dict[str, Any]] = []
+    for o in _raw_offers(origin, destination, date, cabin):
+        base = _normalize(o, cabin, airline_code)
+        if not base:
+            continue
+        gross = float(o.get("finalTotalPrice") or o.get("totalPrice")
+                      or base.get("price_total_bdt") or 0)
+        if gross <= 0:
+            continue
+        coupon_amt = float(o.get("totalCouponAmount") or 0)
+        rows.append({
+            "channel": "firsttrip",
+            "persona": "B2C",
+            "airline": base["airline"],
+            "origin": base["origin"],
+            "destination": base["destination"],
+            "departure": base["departure"],
+            "flight_number": base["flight_number"],
+            "gross_total_bdt": round(gross),
+            "base_fare_bdt": round(float(o.get("finalBasePrice") or base.get("fare_amount") or 0)),
+            "coupon_code": o.get("couponCode") or "",
+            "headline_rate": float(o.get("couponDiscountRate") or 0),
+            "coupon_cap_bdt": float(o.get("couponMaximumDiscountAmount") or 0) or None,
+            "coupon_amount_bdt": round(coupon_amt),
+            "price_with_coupon_bdt": round(float(o.get("finalTotalPriceWithCoupon") or 0)) or None,
+            "realized_pct": round(coupon_amt / gross * 100, 2) if gross else 0.0,
+            "dynamic_code": o.get("dynamicDiscountCode") or None,
+            "dynamic_rate": float(o.get("dynamicDiscountRate") or 0) or None,
+            "special_code": o.get("specialCouponCode") or None,
+            "special_rate": float(o.get("specialCouponDiscountRate") or 0) or None,
+        })
+    return rows
+
+
+def summarize_b2c_discounts(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Collapse FirstTrip B2C coupon rows into one grid cell per airline: the best
+    available rate, which is the auto-applied coupon OR the dynamic-discount slot
+    (carriers without a coupon, e.g. BG/VQ, still get a dynamic rate). This
+    reproduces the manual report (BS/2A=16, BG=8.7, VQ=5).
+    """
+    by_air: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        by_air.setdefault(r["airline"], []).append(r)
+
+    def best_rate(r: Dict[str, Any]) -> float:
+        return max(r["headline_rate"], r.get("dynamic_rate") or 0.0)
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for airline, items in by_air.items():
+        best = max(items, key=best_rate)
+        coupon_rate = best["headline_rate"]
+        dynamic_rate = best.get("dynamic_rate") or 0.0
+        if dynamic_rate > coupon_rate:
+            rate, code, source = dynamic_rate, best.get("dynamic_code"), "dynamic"
+        else:
+            rate, code, source = coupon_rate, best["coupon_code"], "coupon"
+        out[airline] = {
+            "rate": rate,
+            "code": code,
+            "source": source,                 # "coupon" | "dynamic"
+            "realized_pct": best["realized_pct"],
+            "cap_bdt": best["coupon_cap_bdt"],
+        }
+    return out
+
+
+def _b2b_commission_row(offer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """One agent-commission row from a FirstTrip B2B Search/Progressive offer.
+
+    The logged-in agent offer carries platingCarrier + basePrice and a negative
+    passengerFares.adt.discountPrice (the agent commission). Commission % is
+    taken on base fare to match the manual report.
+    """
+    carrier = str(offer.get("platingCarrier") or "").upper().strip()
+    base = float(offer.get("basePrice") or 0)
+    pax = (offer.get("passengerFares") or {}).get("adt") or {}
+    disc = float(pax.get("discountPrice") or 0)
+    if not carrier or base <= 0:
+        return None
+
+    origin = destination = ""
+    departure = None
+    directions = offer.get("directions") or []
+    if directions and directions[0]:
+        leg = directions[0][0] or {}
+        origin = str(leg.get("from") or "").upper()
+        destination = str(leg.get("to") or "").upper()
+        segments = leg.get("segments") or []
+        if segments:
+            departure = segments[0].get("departure")
+
+    commission = abs(disc)
+    return {
+        "channel": "firsttrip_b2b",
+        "persona": "B2B",
+        "airline": carrier,
+        "origin": origin,
+        "destination": destination,
+        "departure": departure,
+        "base_fare_bdt": round(base),
+        "gross_total_bdt": round(float(offer.get("previousTotalFare") or 0)),
+        "net_total_bdt": round(float(offer.get("totalPrice") or 0)),
+        "commission_bdt": round(commission, 2),
+        "commission_pct": round(commission / base * 100, 2),
+    }
+
+
+def parse_b2b_commissions(har_path: str | Path) -> List[Dict[str, Any]]:
+    """
+    FirstTrip B2B agent commissions from a logged-in booking.firsttrip.com HAR.
+
+    The agent search hits api.firsttrip.com/api/Search/Progressive, an SSE stream
+    of `data: {"searchResponse": {"airSearchResponses": [...]}}` chunks. Each offer
+    exposes the agent commission as a negative passengerFares.adt.discountPrice;
+    commission % = |discountPrice| / basePrice. HAR-based (cookie/JWT session).
+    """
+    import json as _json
+    har = _json.loads(Path(har_path).read_text(encoding="utf-8-sig"))
+    entries = har.get("log", {}).get("entries", [])
+    rows: List[Dict[str, Any]] = []
+    seen: set = set()
+    for entry in entries:
+        if "/api/Search/Progressive" not in entry.get("request", {}).get("url", ""):
+            continue
+        text = (entry.get("response", {}).get("content", {}) or {}).get("text", "") or ""
+        for chunk in text.split("\ndata: "):
+            chunk = chunk.replace("data: ", "", 1).strip()
+            try:
+                data = _json.loads(chunk)
+            except (ValueError, _json.JSONDecodeError):
+                continue
+            search_response = data.get("searchResponse") or {}
+            for offer in search_response.get("airSearchResponses") or []:
+                row = _b2b_commission_row(offer)
+                if not row:
+                    continue
+                sig = (row["airline"], row["origin"], row["destination"],
+                       row["departure"], row["base_fare_bdt"])
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                rows.append(row)
+    return rows
+
+
+def summarize_b2b_commissions(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Per airline: best (highest) agent commission % for the grid cell."""
+    by_air: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        by_air.setdefault(r["airline"], []).append(r)
+    out: Dict[str, Dict[str, Any]] = {}
+    for airline, items in by_air.items():
+        best = max(items, key=lambda r: r["commission_pct"])
+        out[airline] = {
+            "commission_pct": best["commission_pct"],
+            "commission_bdt": best["commission_bdt"],
+        }
+    return out

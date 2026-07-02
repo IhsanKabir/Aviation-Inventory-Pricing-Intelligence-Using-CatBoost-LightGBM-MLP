@@ -1,0 +1,123 @@
+/* OTA Discount Comparison grid — palette mirrors the xlsx writer exactly
+   (discount_engine/grid.py): navy header 1F4E79/white, best C6EFCE/006100,
+   2nd DDEBF7/1F4E79, changed FFC7CE/9C0006, Best row 1F2937/white. */
+
+.dg-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dg-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.dg-subtitle {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.dg-banner-warn {
+  background: #fff7e6;
+  border: 1px solid #f0c36d;
+  color: #8a6100;
+  padding: 10px 14px;
+  border-radius: 8px;
+}
+
+.dg-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dg-history-chip--active {
+  background: #1f4e79;
+  color: #ffffff;
+}
+
+.dg-block-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.dg-block-title h2 {
+  font-size: 1rem;
+}
+
+.dg-legend {
+  display: inline-flex;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.dg-legend-item {
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.dg-legend--highest { background: #c6efce; color: #006100; }
+.dg-legend--second  { background: #ddebf7; color: #1f4e79; }
+.dg-legend--changed { background: #ffc7ce; color: #9c0006; }
+
+.dg-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.85rem;
+}
+
+.dg-table th,
+.dg-table td {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.dg-table thead th {
+  background: #1f4e79;
+  color: #ffffff;
+  position: sticky;
+  top: 0;
+}
+
+.dg-table tbody th[scope="row"] {
+  text-align: left;
+  font-weight: 600;
+  background: var(--paper);
+}
+
+.dg-cell--highest { background: #c6efce; color: #006100; font-weight: 700; }
+.dg-cell--second  { background: #ddebf7; color: #1f4e79; }
+.dg-cell--changed { background: #ffc7ce; color: #9c0006; }
+
+.dg-best-row th,
+.dg-best-row td {
+  background: #1f2937;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.dg-status-warn {
+  margin-left: 6px;
+  cursor: help;
+}
+
+.dg-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.dg-error {
+  color: var(--alert);
+}

@@ -20,7 +20,17 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pandas sqlalchemy psycopg2-binary openpyxl requests
+          python -m pip install pytest httpx
 
       - name: Run CI checks
         run: |
           python tools/ci_checks.py --allow-db-skip --reports-dir output/reports --timestamp-tz utc
+
+      - name: Engine + API + desktop tests
+        run: |
+          python -m pytest \
+            tests/test_true_base.py tests/test_grid_truebase.py \
+            tests/test_engine_report.py tests/test_highlight.py \
+            tests/test_sync_payload_no_secrets.py \
+            tests/test_discount_reports_api.py tests/test_desktop_backend.py \
+            -q

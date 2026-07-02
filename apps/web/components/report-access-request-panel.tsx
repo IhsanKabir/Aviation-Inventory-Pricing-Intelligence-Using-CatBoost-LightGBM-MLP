@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 
 import type { AuthenticatedUser, ReportAccessRequest } from "@/lib/api";
 
@@ -59,7 +59,6 @@ export function ReportAccessRequestPanel({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const requestedStartDate = requestWindow?.startDate || undefined;
   const requestedEndDate = requestWindow?.endDate || requestWindow?.startDate || undefined;
-  const stableScopeSummary = useMemo(() => scopeSummary, [scopeSummary]);
 
   async function submitRequest() {
     setSubmitError(null);
@@ -119,7 +118,7 @@ export function ReportAccessRequestPanel({
           {description}
         </div>
         <div className="table-list" style={{ marginTop: "0.9rem" }}>
-          {stableScopeSummary.map((item) => (
+          {scopeSummary.map((item) => (
             <div className="table-row" key={item}>
               <strong>{item}</strong>
             </div>
@@ -183,7 +182,11 @@ export function ReportAccessRequestPanel({
             />
           </label>
 
-          {submitError ? <div className="status-banner warn">{submitError}</div> : null}
+          {submitError ? (
+            <div className="status-banner warn" role="alert">
+              {submitError}
+            </div>
+          ) : null}
 
           <div className="button-row">
             <button className="button-link" data-pending={isPending} disabled={!currentUser} onClick={submitRequest} type="button">

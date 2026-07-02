@@ -6,6 +6,9 @@ on:
     branches: [ master ]
     paths:
       - "apps/api/**"
+      - "discount_engine/**"   # the API imports the report engine (highlights/sanitize/xlsx)
+      - "modules/**"           # ...which imports the HAR parsers + true_base
+      - "pyproject.toml"
       - "requirements.txt"
       - ".github/workflows/deploy-api-cloud-run.yml"
 
@@ -58,6 +61,11 @@ jobs:
           fi
           if [ -n "${{ secrets.GOOGLE_CLIENT_SECRET }}" ]; then
             ENV_VARS="${ENV_VARS},GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}"
+          fi
+          # Shared secret that authenticates the web's NextAuth->API OAuth bridge.
+          # MUST match OAUTH_BRIDGE_SECRET on Vercel or Google sign-in fails closed.
+          if [ -n "${{ secrets.OAUTH_BRIDGE_SECRET }}" ]; then
+            ENV_VARS="${ENV_VARS},OAUTH_BRIDGE_SECRET=${{ secrets.OAUTH_BRIDGE_SECRET }}"
           fi
           gcloud run deploy "${CLOUD_RUN_SERVICE}" \
             --project "${GCP_PROJECT_ID}" \

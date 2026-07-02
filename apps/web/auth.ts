@@ -30,7 +30,10 @@ async function createApiSession(input: {
     const response = await fetch(`${getApiBaseUrl()}/api/v1/user-auth/oauth-login`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        // Proves this call comes from OUR server (NextAuth already verified the
+        // Google sign-in). The API fails closed without a matching secret.
+        "X-OAuth-Bridge-Secret": process.env.OAUTH_BRIDGE_SECRET ?? ""
       },
       body: JSON.stringify({
         email: input.email,

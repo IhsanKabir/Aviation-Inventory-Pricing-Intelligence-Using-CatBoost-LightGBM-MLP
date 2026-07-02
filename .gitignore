@@ -87,3 +87,9 @@ apps/web/.next/
 apps/web/out/
 apps/web/.turbo/
 apps/web/.vercel/
+
+# Build artifacts (added 2026-07-03)
+apps/web/tsconfig.tsbuildinfo
+*.egg-info/
+dist/
+build/

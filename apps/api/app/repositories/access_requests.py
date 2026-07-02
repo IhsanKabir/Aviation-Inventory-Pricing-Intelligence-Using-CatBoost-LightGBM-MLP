@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 
-VALID_PAGE_KEYS = {"routes", "operations", "changes", "penalties", "taxes"}
+VALID_PAGE_KEYS = {"routes", "operations", "changes", "penalties", "taxes", "discount-comparison"}
 VALID_STATUSES = {"pending", "approved", "rejected", "payment_required"}
 
 
@@ -452,6 +452,45 @@ def require_approved_request(
     if not _scope_matches(approved_scope, current_scope):
         raise PermissionError("The current scope does not match the approved request.")
     return request_payload
+
+
+def find_approved_request_for_email(
+    db: Session,
+    *,
+    page_key: str,
+    email: str | None,
+) -> dict[str, Any] | None:
+    """Latest APPROVED request for this page by requester email (case-insensitive).
+
+    Desktop/API clients authenticate with a session token and don't track request
+    ids, so page access is resolved by the signed-in user's email instead. Returns
+    the request payload or None.
+    """
+    normalized_page_key = _normalize_text(page_key)
+    if normalized_page_key not in VALID_PAGE_KEYS:
+        raise ValueError("Unsupported page key")
+    normalized_email = _normalize_text(email)
+    if not normalized_email:
+        return None
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT request_id
+                FROM report_access_requests
+                WHERE page_key = :page_key
+                  AND status = 'approved'
+                  AND LOWER(requester_email) = LOWER(:email)
+                ORDER BY decided_at_utc DESC NULLS LAST, created_at_utc DESC
+                LIMIT 1
+                """
+            ),
+            {"page_key": normalized_page_key, "email": normalized_email},
+        )
+        .mappings()
+        .first()
+    )
+    return get_request(db, row["request_id"]) if row else None
 
 
 def _scope_matches(approved_scope: dict[str, Any], current_scope: dict[str, Any]) -> bool:

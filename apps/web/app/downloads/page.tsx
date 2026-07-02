@@ -51,6 +51,8 @@ interface Product {
 const TRAVELPORT_REPO = "IhsanKabir/Process_Optimization_Using_pywinauto";
 const IATA_REPO = "IhsanKabir/iata-code-validator";
 const MAILER_REPO = "IhsanKabir/bulk-mailer";
+const DISCOUNT_REPO =
+  "IhsanKabir/Aviation-Inventory-Pricing-Intelligence-Using-CatBoost-LightGBM-MLP";
 
 // Reachable download mirror for corporate networks that block GitHub. The
 // Cloud Run backend streams the latest IATA exe over a public route; once a
@@ -58,6 +60,7 @@ const MAILER_REPO = "IhsanKabir/bulk-mailer";
 // the one-time bootstrap for firewalled users (no manual hand-out).
 const IATA_DOWNLOAD_URL =
   "https://aero-pulse-api-591603094460.asia-south1.run.app/api/v1/app/download";
+const DISCOUNT_DOWNLOAD_URL = `${IATA_DOWNLOAD_URL}?app=discount-report`;
 
 const PRODUCTS: Product[] = [
   {
@@ -184,6 +187,18 @@ const PRODUCTS: Product[] = [
       },
     ],
   },
+  {
+    slug: "discount-report",
+    name: "OTA Discount Comparison",
+    tagline:
+      "Compare airline discounts across OTA channels (FirstTrip, ShareTrip, GoZayaan, BDFare, AKIJ, Amy). Point it at your HAR capture folder — it analyzes locally, shows the colored best-discount grid, exports Excel, and syncs the result to the team dashboard. HAR files never leave your machine.",
+    repo: DISCOUNT_REPO,
+    assetMatch: (n) => n === "OTADiscountReport.zip" || n.endsWith(".zip"),
+    requirements:
+      "Windows 10/11 · 8 GB RAM recommended (HAR parsing) · Sign-in with an approved discount-comparison access request",
+    latestDownloadOverride: DISCOUNT_DOWNLOAD_URL,
+    fallback: [],
+  },
 ];
 
 function parseGitHubReleases(items: GitHubRelease[], product: Product): Release[] {
@@ -278,6 +293,29 @@ function ProductCard({
       ? { ...releases[0], exe_url: product.latestDownloadOverride }
       : releases[0];
   const older = releases.slice(1);
+
+  // No releases yet (new product) or GitHub API rate-limited with an empty
+  // fallback — render a friendly empty state instead of crashing on latest.label.
+  if (!latest) {
+    return (
+      <>
+        <div style={{ marginBottom: "32px" }}>
+          <h1 className="page-title" style={{ marginBottom: "8px" }}>
+            {product.name}
+          </h1>
+          <p className="page-copy">{product.tagline}</p>
+        </div>
+        <div className="card" style={{ padding: "28px 32px", marginBottom: "32px" }}>
+          <p className="page-copy" style={{ margin: 0 }}>
+            No releases are published yet. Check back soon
+            {product.latestDownloadOverride
+              ? " — or try the direct mirror once the first build ships."
+              : "."}
+          </p>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>

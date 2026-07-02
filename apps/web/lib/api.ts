@@ -582,7 +582,13 @@ export type AuthenticatedUser = {
   session_expires_at_utc?: string | null;
 };
 
-export type ReportPageKey = "routes" | "operations" | "changes" | "penalties" | "taxes";
+export type ReportPageKey =
+  | "routes"
+  | "operations"
+  | "changes"
+  | "penalties"
+  | "taxes"
+  | "discount-comparison";
 
 type FetchResult<T> = {
   ok: boolean;
@@ -604,7 +610,7 @@ function normalizeApiBaseUrl(raw: string): string {
   return raw.trim().replace(/\s+/g, "").replace(/\/+$/, "");
 }
 
-function getConfiguredApiBaseUrl(): string | null {
+export function getConfiguredApiBaseUrl(): string | null {
   const candidate = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "";
   const normalized = normalizeApiBaseUrl(candidate);
   return normalized || null;

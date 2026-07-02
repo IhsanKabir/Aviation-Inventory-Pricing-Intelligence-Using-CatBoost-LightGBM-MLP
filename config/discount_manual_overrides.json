@@ -1,0 +1,15 @@
+{
+  "_comment": "Manual cell overrides for OTA channels that can't be captured live/HAR on a given day. Shape: {row_label: {DOM|INTL: {airline: \"value\"}}}. Manual values are authoritative for the cells they name. ShareTrip-B2C below sourced from the 25/06/2026 1100hrs manual report (Commission.xlsx) because ShareTrip's DAC-CGP search returned 'flight not found' on 2026-06-29.",
+  "ShareTrip-B2C": {
+    "DOM": {
+      "BS": "9(Bkash), 18 (EBL)",
+      "2A": "8.5(Bkash), 18 (EBL)",
+      "BG": "8 (Bkash), 18 (EBL)",
+      "VQ": "7.5(Bkash), 18 (EBL)"
+    },
+    "INTL": {
+      "BS": "7.1, 18 (EBL)",
+      "BG": "6.5, 18 (EBL)"
+    }
+  }
+}

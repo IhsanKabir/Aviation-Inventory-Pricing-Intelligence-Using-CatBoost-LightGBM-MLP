@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OTA Discount Comparison</title>
+<style>
+  /* Palette mirrors discount_engine/grid.py + the web viewer exactly. */
+  :root {
+    --navy: #1f4e79; --slate: #1f2937; --line: #d7dbe0; --muted: #6b7280;
+    --green-bg: #c6efce; --green-tx: #006100;
+    --blue-bg: #ddebf7; --blue-tx: #1f4e79;
+    --red-bg: #ffc7ce; --red-tx: #9c0006;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", Calibri, sans-serif; margin: 0; background: #f5f6f8; color: #111827; }
+  header.bar { background: var(--navy); color: #fff; padding: 10px 18px; display: flex; justify-content: space-between; align-items: center; }
+  header.bar h1 { font-size: 15px; margin: 0; }
+  header.bar .who { font-size: 12px; opacity: .9; }
+  main { padding: 14px 18px 40px; display: flex; flex-direction: column; gap: 14px; max-width: 1400px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+  label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 4px; }
+  input { padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; min-width: 200px; }
+  button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--navy); color: #fff; font-size: 13px; cursor: pointer; }
+  button.secondary { background: #e5e7eb; color: #111827; }
+  button.big { font-size: 14px; padding: 10px 22px; }
+  button:disabled { opacity: .5; cursor: default; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { border: 1px solid var(--line); padding: 5px 9px; text-align: center; white-space: nowrap; }
+  thead th { background: var(--navy); color: #fff; }
+  tbody th { text-align: left; background: #fafafa; }
+  td.hl-highest { background: var(--green-bg); color: var(--green-tx); font-weight: 700; }
+  td.hl-second  { background: var(--blue-bg);  color: var(--blue-tx); }
+  td.hl-changed { background: var(--red-bg);   color: var(--red-tx); }
+  tr.best th, tr.best td { background: var(--slate); color: #fff; font-weight: 700; }
+  .banner { padding: 10px 14px; border-radius: 8px; font-size: 13px; }
+  .banner.warn { background: #fff7e6; border: 1px solid #f0c36d; color: #8a6100; }
+  .banner.err { background: var(--red-bg); border: 1px solid #e79aa3; color: var(--red-tx); }
+  .banner.ok { background: var(--green-bg); border: 1px solid #9fd6ab; color: var(--green-tx); }
+  .legend span { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 6px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .scan-bad { color: var(--red-tx); font-weight: 600; }
+  #status { font-size: 13px; color: var(--muted); }
+  .grid-title { display: flex; justify-content: space-between; align-items: baseline; margin: 4px 0 8px; }
+  .grid-title h2 { font-size: 14px; margin: 0; }
+  .table-wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>OTA Discount Comparison</h1>
+  <div class="who" id="who">…</div>
+</header>
+<main>
+  <section class="card" id="login-card" style="display:none">
+    <div class="row">
+      <label>Email <input id="email" type="email" autocomplete="username"></label>
+      <label>Password <input id="password" type="password" autocomplete="current-password"></label>
+      <button onclick="doLogin()">Sign in</button>
+      <span class="muted">Offline runs work without signing in — login is only needed to sync.</span>
+    </div>
+    <div id="login-error" class="banner err" style="display:none;margin-top:8px"></div>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <label>HAR capture folder
+        <input id="har_dir" readonly placeholder="Pick the folder with today's .har files">
+      </label>
+      <button class="secondary" onclick="pickFolder()">Browse…</button>
+      <label>Live routes (FirstTrip B2C) <input id="routes"></label>
+      <label>Travel date (YYYY-MM-DD) <input id="travel_date" placeholder="2026-07-30"></label>
+      <button class="secondary" onclick="saveConfig()">Save</button>
+      <button class="big" id="run-btn" onclick="runReport()">Run report</button>
+    </div>
+    <div id="status" style="margin-top:8px"></div>
+    <div class="table-wrap" id="scan-wrap" style="display:none;margin-top:10px">
+      <table id="scan-table">
+        <thead><tr><th>Use</th><th>File</th><th>Channel</th><th>Size (MB)</th><th>RAM check</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div id="banners"></div>
+
+  <section class="card" id="result-card" style="display:none">
+    <div class="row" style="justify-content:space-between">
+      <div id="report-meta" class="muted"></div>
+      <div>
+        <button class="secondary" onclick="exportXlsx()">Export xlsx</button>
+        <button onclick="syncNow()">Sync to dashboard</button>
+        <span class="legend">
+          <span style="background:var(--green-bg);color:var(--green-tx)">Best</span>
+          <span style="background:var(--blue-bg);color:var(--blue-tx)">2nd</span>
+          <span style="background:var(--red-bg);color:var(--red-tx)">Change</span>
+        </span>
+      </div>
+    </div>
+    <div id="grids"></div>
+  </section>
+</main>
+
+<script>
+let state = null;
+let lastReport = null;
+let scanFiles = [];
+
+const api = () => window.pywebview.api;
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+}
+
+function fmtCell(raw) {
+  const t = String(raw ?? "").trim();
+  if (!t) return "—";
+  if (/^-?\d+(\.\d+)?$/.test(t)) return t + "%";
+  return t.replace(/(\d+(?:\.\d+)?)/g, "$1%");
+}
+
+async function refreshState() {
+  state = await api().get_state();
+  document.getElementById("who").textContent = state.logged_in
+    ? `${state.email}${state.outbox_count ? ` · ${state.outbox_count} pending sync` : ""} · v${state.version}`
+    : `not signed in · v${state.version}`;
+  document.getElementById("login-card").style.display = state.logged_in ? "none" : "";
+  document.getElementById("har_dir").value = state.har_dir;
+  document.getElementById("routes").value = state.routes;
+  document.getElementById("travel_date").value = state.travel_date;
+  if (state.insecure_token_store) {
+    addBanner("warn", "No OS keyring available — the session token is stored in the config file. Prefer a machine with Windows Credential Manager.");
+  }
+}
+
+function addBanner(kind, text) {
+  const div = document.createElement("div");
+  div.className = `banner ${kind}`;
+  div.textContent = text;
+  div.style.marginBottom = "8px";
+  document.getElementById("banners").appendChild(div);
+  setTimeout(() => div.remove(), 12000);
+}
+
+async function doLogin() {
+  const result = await api().login(
+    document.getElementById("email").value,
+    document.getElementById("password").value);
+  const errorBox = document.getElementById("login-error");
+  if (!result.ok) {
+    errorBox.textContent = result.error;
+    errorBox.style.display = "";
+    return;
+  }
+  errorBox.style.display = "none";
+  if (result.outbox_flushed) addBanner("ok", `Synced ${result.outbox_flushed} queued report(s).`);
+  await refreshState();
+}
+
+async function pickFolder() {
+  const scan = await api().pick_folder();
+  await refreshState();
+  renderScan(scan);
+}
+
+async function saveConfig() {
+  await api().set_config(
+    "", document.getElementById("routes").value,
+    document.getElementById("travel_date").value, "");
+  const scan = await api().scan();
+  renderScan(scan);
+  addBanner("ok", "Saved.");
+}
+
+function renderScan(scan) {
+  const wrap = document.getElementById("scan-wrap");
+  if (!scan.ok) { wrap.style.display = "none"; if (scan.error) setStatus(scan.error); return; }
+  scanFiles = scan.files;
+  const body = document.querySelector("#scan-table tbody");
+  body.innerHTML = scan.files.map((f, i) => `
+    <tr>
+      <td><input type="checkbox" data-idx="${i}" ${f.ram_ok ? "checked" : ""}></td>
+      <td style="text-align:left">${esc(f.file)}</td>
+      <td>${esc(f.channel)}</td>
+      <td>${f.size_mb}</td>
+      <td>${f.ram_ok ? "OK" : '<span class="scan-bad">low RAM — unchecked</span>'}</td>
+    </tr>`).join("");
+  wrap.style.display = "";
+  if (scan.ram_gate_active && scan.files.some(f => !f.ram_ok)) {
+    addBanner("warn", "Some captures are larger than the free-RAM safety margin. They start unchecked — re-check to force, or free memory first.");
+  }
+}
+
+function setStatus(text) { document.getElementById("status").textContent = text; }
+
+async function runReport() {
+  const skips = scanFiles
+    .filter((f, i) => { const cb = document.querySelector(`input[data-idx="${i}"]`); return cb && !cb.checked; })
+    .map(f => f.path);
+  document.getElementById("run-btn").disabled = true;
+  setStatus("Running — parsing HAR captures locally (this can take a few minutes)…");
+  const poll = setInterval(async () => {
+    const s = await api().get_state();
+    if (s.status) setStatus(s.status);
+  }, 1500);
+  try {
+    const result = await api().run(skips);
+    if (!result.ok) { addBanner("err", result.error); setStatus("Failed."); return; }
+    lastReport = result.report;
+    renderReport(result.report, result.prev_available);
+    setStatus("Done.");
+  } finally {
+    clearInterval(poll);
+    document.getElementById("run-btn").disabled = false;
+  }
+}
+
+function gridTable(title, block, channelStatus) {
+  const rows = block.rows.filter(r => r.kind !== "sep");
+  const head = `<tr><th>OTA</th>${block.columns.map(c => `<th>${esc(c)}</th>`).join("")}</tr>`;
+  const body = rows.map(r => `
+    <tr>
+      <th>${esc(r.label)}${channelStatus[r.label] === "captured_but_empty"
+        ? ' <span title="Capture parsed to zero rows — not a 0% discount">⚠</span>' : ""}</th>
+      ${block.columns.map(c => {
+        const flag = (r.highlights || {})[c] || "none";
+        return `<td class="${flag !== "none" ? "hl-" + flag : ""}">${esc(fmtCell((r.cells || {})[c]))}</td>`;
+      }).join("")}
+    </tr>`).join("");
+  const best = `<tr class="best"><th>Best (OTA)</th>${block.columns.map(c =>
+    `<td>${esc((block.best || {})[c]?.display || "—")}</td>`).join("")}</tr>`;
+  return `
+    <div class="grid-title"><h2>${esc(title)}</h2></div>
+    <div class="table-wrap"><table><thead>${head}</thead><tbody>${body}${best}</tbody></table></div>`;
+}
+
+function renderReport(report, prevAvailable) {
+  document.getElementById("result-card").style.display = "";
+  document.getElementById("report-meta").textContent =
+    `${report.report_date} / ${report.report_time}hrs` +
+    (prevAvailable ? " · changes vs previous synced report" : " · no previous report (no change diff)");
+  document.getElementById("banners").innerHTML = "";
+  if (report.normalized === false) {
+    addBanner("warn", "NOT NORMALIZED: no exact-base source (FirstTrip B2B HAR / live route) — BDFare & AKIJ are on their own base. Capture a FirstTrip B2B HAR to fix.");
+  }
+  const grids = document.getElementById("grids");
+  grids.innerHTML = "";
+  for (const [rt, label] of [["INTL", "INTERNATIONAL"], ["DOM", "DOMESTIC"]]) {
+    const block = (report.grids || {})[rt];
+    if (block && block.columns.length) {
+      grids.innerHTML += gridTable(
+        `${report.report_date} (${label}) / ${report.report_time}hrs`,
+        block, report.channel_status || {});
+    }
+  }
+}
+
+async function exportXlsx() {
+  const result = await api().export_xlsx();
+  addBanner(result.ok ? "ok" : "err", result.ok ? `Saved: ${result.path}` : result.error);
+}
+
+async function syncNow() {
+  if (lastReport && lastReport.normalized === false) {
+    if (!confirm("This report is NOT normalized (BDFare/AKIJ on their own base). Sync anyway?")) return;
+  }
+  const result = await api().sync_now();
+  if (result.ok) addBanner("ok", `Synced ${result.synced} to the team dashboard.`);
+  else if (result.queued) addBanner("warn", `Sync failed (${result.error}) — queued in the outbox; it retries on next launch.`);
+  else addBanner("err", result.error + (result.needs_login ? " — sign in again." : ""));
+  await refreshState();
+}
+
+window.addEventListener("pywebviewready", async () => {
+  await refreshState();
+  if (state.har_dir) renderScan(await api().scan());
+});
+</script>
+</body>
+</html>

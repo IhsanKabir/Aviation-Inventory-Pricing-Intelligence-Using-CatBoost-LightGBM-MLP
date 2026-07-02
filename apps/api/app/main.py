@@ -21,8 +21,9 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import engine, get_optional_db
-from .repositories import access_requests, exporting, reporting, usage, user_accounts
+from .repositories import access_requests, discount_reports, exporting, reporting, usage, user_accounts
 from .routers import app_release as app_release_router
+from .routers import discount_reports as discount_reports_router
 from .routers import gds as gds_router
 from .routers import travelport_feedback as travelport_feedback_router
 
@@ -57,6 +58,11 @@ app.include_router(
     app_release_router.router,
     prefix="/api/v1/app",
     tags=["App Updates"],
+)
+app.include_router(
+    discount_reports_router.router,
+    prefix="/api/v1/discount-reports",
+    tags=["Discount Reports"],
 )
 
 
@@ -133,6 +139,7 @@ def startup() -> None:
     access_requests.ensure_tables(engine)
     user_accounts.ensure_tables(engine)
     usage.ensure_tables(engine)
+    discount_reports.ensure_tables(engine)
 
 
 @app.middleware("http")
@@ -323,12 +330,25 @@ def login_user(
     return {"user": user, "session_token": session_token, "session": session_payload}
 
 
+# Shared secret proving the caller is OUR web backend (which has already verified
+# the Google sign-in via NextAuth) — without it, this endpoint would mint a real
+# session for ANY client-asserted email. Fail closed when unconfigured.
+_OAUTH_BRIDGE_SECRET = os.environ.get("OAUTH_BRIDGE_SECRET", "").strip()
+
+
 @app.post("/api/v1/user-auth/oauth-login")
 def oauth_login_user(
     body: UserOAuthLoginBody,
     request: Request,
+    x_oauth_bridge_secret: str | None = Header(default=None),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
+    if not _OAUTH_BRIDGE_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="OAuth bridge is not configured (set OAUTH_BRIDGE_SECRET).")
+    if not hmac.compare_digest(x_oauth_bridge_secret or "", _OAUTH_BRIDGE_SECRET):
+        raise HTTPException(status_code=403, detail="Invalid OAuth bridge secret.")
     required_db = _require_access_request_db(db)
     try:
         user = user_accounts.upsert_oauth_user(
