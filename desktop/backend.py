@@ -459,24 +459,25 @@ class DesktopApi:
         return {"ok": True, "path": str(path)}
 
     # -------------------------------------------------------------------- sync
-    def _post_report(self, payload: dict[str, Any]) -> tuple[bool, int, str]:
+    def _post_report(self, payload: dict[str, Any]) -> tuple[bool, int, str, dict[str, Any]]:
         token = self._token()
         if not token:
-            return False, 401, "Sign in is required."
+            return False, 401, "Sign in is required.", {}
         try:
             response = requests.post(
                 f"{self.api_base}/api/v1/discount-reports",
                 json={"report": payload, "client_version": __version__},
                 headers={"X-User-Session": token}, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as exc:
-            return False, 0, f"API unreachable: {exc}"
-        if response.status_code == 200:
-            return True, 200, ""
+            return False, 0, f"API unreachable: {exc}", {}
         try:
-            detail = str(response.json().get("detail", response.reason))
+            body = response.json()
         except ValueError:
-            detail = response.reason or str(response.status_code)
-        return False, response.status_code, detail
+            body = {}
+        if response.status_code == 200:
+            return True, 200, "", body
+        detail = str(body.get("detail", response.reason or response.status_code))
+        return False, response.status_code, detail, body
 
     def sync_now(self) -> dict[str, Any]:
         if not self._report:
@@ -486,10 +487,11 @@ class DesktopApi:
         payload = sanitize_report_for_sync(self._report)
         report_date_iso = datetime.strptime(
             payload["report_date"], "%d/%m/%Y").date().isoformat()
-        ok, status, error = self._post_report(payload)
+        ok, status, error, body = self._post_report(payload)
         if ok:
             self._outbox.mark_done(report_date_iso)
             return {"ok": True, "synced": report_date_iso,
+                    "uses_remaining": body.get("uses_remaining"),
                     "outbox_count": self._outbox.count()}
         if status in (401, 403):    # auth problems don't belong in the outbox
             return {"ok": False, "error": error, "needs_login": status == 401}
@@ -500,7 +502,7 @@ class DesktopApi:
     def flush_outbox(self) -> dict[str, Any]:
         sent = failed = 0
         for report_date_iso, payload in self._outbox.pending():
-            ok, status, _error = self._post_report(payload)
+            ok, status, _error, _body = self._post_report(payload)
             if ok:
                 self._outbox.mark_done(report_date_iso)
                 sent += 1

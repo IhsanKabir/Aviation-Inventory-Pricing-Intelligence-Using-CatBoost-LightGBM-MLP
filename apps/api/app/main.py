@@ -85,6 +85,9 @@ class AccessRequestCreateBody(BaseModel):
 class AccessRequestUpdateBody(BaseModel):
     status: str
     decision_note: str | None = None
+    # Per-use plan cap: number of METERED uses (discount-report syncs) included.
+    # None/omitted = unlimited within the approved date window.
+    use_quota: int | None = Field(default=None, ge=0)
 
 
 class UserRegisterBody(BaseModel):
@@ -669,6 +672,7 @@ def update_access_request(
             request_id=request_id,
             status=body.status,
             decision_note=body.decision_note,
+            use_quota=body.use_quota,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -565,6 +565,8 @@ export type ReportAccessRequest = {
   notes?: string | null;
   request_scope?: Record<string, unknown> | null;
   decision_note?: string | null;
+  use_quota?: number | null;
+  use_count?: number | null;
   decided_at_utc?: string | null;
   created_at_utc?: string | null;
   updated_at_utc?: string | null;

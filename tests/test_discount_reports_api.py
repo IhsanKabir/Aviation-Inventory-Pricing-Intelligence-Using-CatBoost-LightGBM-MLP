@@ -53,6 +53,9 @@ def client(monkeypatch):
                 "replaced_existing": False}
 
     monkeypatch.setattr(dr_router.discount_reports, "upsert_report", fake_upsert)
+    monkeypatch.setattr(dr_router.access_requests, "consume_use",
+                        lambda db, *, request, action, user_id, email:
+                        {"allowed": True, "used": 1, "quota": None, "remaining": None})
     yield TestClient(main.app), stored
     main.app.dependency_overrides.pop(get_optional_db, None)
 
@@ -165,6 +168,40 @@ def test_read_colors_against_stored_previous(client, monkeypatch):
     assert row["highlights"]["BS"] == "changed"           # 11 -> 12: server-computed red
     assert body["prev_report_date"] == "2026-07-01"
     assert body["report"]["grids"]["DOM"]["best"]["BS"]["display"] == "12% · USBA"
+
+
+def test_sync_consumes_a_use_and_reports_remaining(client, monkeypatch):
+    c, _ = client
+    calls = []
+
+    def fake_consume(db, *, request, action, user_id, email):
+        calls.append(action)
+        return {"allowed": True, "used": 3, "quota": 30, "remaining": 27}
+
+    monkeypatch.setattr(dr_router.access_requests, "consume_use", fake_consume)
+    r = c.post("/api/v1/discount-reports", json=_payload(),
+               headers={"X-User-Session": "good"})
+    assert r.status_code == 200 and r.json()["uses_remaining"] == 27
+    assert calls == ["sync"]
+
+    # reads are FREE: no consume on GET
+    monkeypatch.setattr(dr_router.discount_reports, "get_report",
+                        lambda db, report_date=None, team_id="default": None)
+    r = c.get("/api/v1/discount-reports/latest", headers={"X-User-Session": "good"})
+    assert r.status_code == 404          # empty store, but importantly...
+    assert calls == ["sync"]             # ...no extra consume happened
+
+
+def test_sync_blocked_when_quota_exhausted(client, monkeypatch):
+    c, stored = client
+    monkeypatch.setattr(dr_router.access_requests, "consume_use",
+                        lambda db, *, request, action, user_id, email:
+                        {"allowed": False, "used": 30, "quota": 30, "remaining": 0})
+    r = c.post("/api/v1/discount-reports", json=_payload(),
+               headers={"X-User-Session": "good"})
+    assert r.status_code == 403
+    assert "30/30" in r.json()["detail"]
+    assert stored == {}                  # nothing persisted past the quota
 
 
 if __name__ == "__main__":

@@ -341,7 +341,10 @@ async function syncNow() {
     if (!confirm("This report is NOT normalized (BDFare/AKIJ on their own base). Sync anyway?")) return;
   }
   const result = await api().sync_now();
-  if (result.ok) addBanner("ok", `Synced ${result.synced} to the team dashboard.`);
+  if (result.ok) {
+    const left = (result.uses_remaining ?? null) !== null ? ` · ${result.uses_remaining} plan use(s) left` : "";
+    addBanner("ok", `Synced ${result.synced} to the team dashboard.${left}`);
+  }
   else if (result.queued) addBanner("warn", `Sync failed (${result.error}) — queued in the outbox; it retries on next launch.`);
   else addBanner("err", result.error + (result.needs_login ? " — sign in again." : ""));
   await refreshState();

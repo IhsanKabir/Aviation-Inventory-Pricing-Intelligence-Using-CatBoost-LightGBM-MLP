@@ -62,12 +62,13 @@ def _require_user(db: Session, x_user_session: str | None) -> dict[str, Any]:
     return user
 
 
-def _require_page_access(db: Session, user: dict[str, Any]) -> None:
+def _require_page_access(db: Session, user: dict[str, Any]) -> dict[str, Any]:
+    """Returns the approved request (callers that meter usage need its quota)."""
     email = user.get("email")
     approved = access_requests.find_approved_request_for_email(
         db, page_key=PAGE_KEY, email=email)
     if approved:
-        return
+        return approved
     # Tier-aware 403s: payment plans and expired windows get specific messages.
     payment = access_requests.find_latest_request_for_email(
         db, page_key=PAGE_KEY, email=email, statuses=("payment_required",))
@@ -131,7 +132,7 @@ def submit_report(
 ) -> dict[str, Any]:
     required_db = _require_db(db)
     user = _require_user(required_db, x_user_session)
-    _require_page_access(required_db, user)
+    approved = _require_page_access(required_db, user)
 
     sanitized = sanitize_report_for_sync(body.report)   # server-side: never trust the client
     # Cap AFTER sanitizing: the sanitizer can EXPAND terse fields (a short source
@@ -143,6 +144,18 @@ def submit_report(
                                    "sanitized report, never raw capture data.")
     report_date = _parse_report_date(sanitized)
 
+    # PER-USE METERING: a sync is the billable unit; reads stay free for the team.
+    # Usage is always recorded (analytics); the quota only blocks when set.
+    use = access_requests.consume_use(
+        required_db, request=approved, action="sync",
+        user_id=user.get("user_id"), email=user.get("email"))
+    if not use["allowed"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Your plan's included uses are exhausted "
+                   f"({use['used']}/{use['quota']} synced reports). "
+                   "Ask the admin to renew or extend your plan.")
+
     result = discount_reports.upsert_report(
         required_db,
         report_date=report_date,
@@ -151,6 +164,7 @@ def submit_report(
         submitted_by_email=user.get("email"),
     )
     result["normalized"] = bool(sanitized.get("normalized"))
+    result["uses_remaining"] = use["remaining"]     # None = unlimited plan
     return result
 
 

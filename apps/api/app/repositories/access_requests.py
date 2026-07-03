@@ -63,6 +63,29 @@ def ensure_tables(engine: Engine | None) -> None:
         )
         conn.execute(text("ALTER TABLE report_access_requests ADD COLUMN IF NOT EXISTS requester_user_id TEXT NULL"))
         conn.execute(text("ALTER TABLE report_access_requests ADD COLUMN IF NOT EXISTS requester_email TEXT NULL"))
+        conn.execute(text("ALTER TABLE report_access_requests ADD COLUMN IF NOT EXISTS use_quota INTEGER NULL"))
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS report_access_request_usage (
+                    usage_id TEXT PRIMARY KEY,
+                    request_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    user_id TEXT NULL,
+                    email TEXT NULL,
+                    created_at_utc TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_access_request_usage_request
+                ON report_access_request_usage (request_id)
+                """
+            )
+        )
 
 
 def _normalize_text(value: Any) -> str | None:
@@ -203,6 +226,7 @@ def _row_to_payload(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "requested_end_date": row.get("requested_end_date").isoformat() if row.get("requested_end_date") else None,
         "notes": row.get("notes"),
         "request_scope": normalize_request_scope(scope),
+        "use_quota": row.get("use_quota"),
         "decision_note": row.get("decision_note"),
         "decided_at_utc": row.get("decided_at_utc").isoformat() if row.get("decided_at_utc") else None,
         "created_at_utc": row.get("created_at_utc").isoformat() if row.get("created_at_utc") else None,
@@ -308,6 +332,7 @@ def get_request(db: Session, request_id: str) -> dict[str, Any] | None:
                     notes,
                     request_scope,
                     decision_note,
+                    use_quota,
                     decided_at_utc,
                     created_at_utc,
                     updated_at_utc
@@ -320,7 +345,11 @@ def get_request(db: Session, request_id: str) -> dict[str, Any] | None:
         .mappings()
         .first()
     )
-    return _row_to_payload(dict(row)) if row else None
+    if not row:
+        return None
+    payload = _row_to_payload(dict(row))
+    payload["use_count"] = count_usage(db, request_id)
+    return payload
 
 
 def list_requests(
@@ -366,6 +395,7 @@ def list_requests(
                 notes,
                 request_scope,
                 decision_note,
+                use_quota,
                 decided_at_utc,
                 created_at_utc,
                 updated_at_utc
@@ -394,10 +424,15 @@ def update_request_status(
     request_id: str,
     status: str,
     decision_note: str | None,
+    use_quota: int | None = None,
 ) -> dict[str, Any] | None:
+    """Decide a request. `use_quota` caps METERED actions (discount-report syncs)
+    for per-use plans: None = unlimited within the date window; N = N total uses."""
     normalized_status = _normalize_text(status)
     if normalized_status not in VALID_STATUSES:
         raise ValueError("Unsupported access-request status")
+    if use_quota is not None and int(use_quota) < 0:
+        raise ValueError("use_quota must be a non-negative integer")
     now = _utcnow()
     db.execute(
         text(
@@ -406,6 +441,7 @@ def update_request_status(
             SET
                 status = :status,
                 decision_note = :decision_note,
+                use_quota = :use_quota,
                 decided_at_utc = :decided_at_utc,
                 updated_at_utc = :updated_at_utc
             WHERE request_id = :request_id
@@ -415,12 +451,67 @@ def update_request_status(
             "request_id": request_id,
             "status": normalized_status,
             "decision_note": _normalize_text(decision_note),
+            "use_quota": int(use_quota) if use_quota is not None else None,
             "decided_at_utc": now,
             "updated_at_utc": now,
         },
     )
     db.commit()
     return get_request(db, request_id)
+
+
+def count_usage(db: Session, request_id: str, action: str | None = None) -> int:
+    """Metered events recorded against a request (optionally one action type)."""
+    action_sql = " AND action = :action" if action else ""
+    row = db.execute(
+        text(
+            f"""
+            SELECT COUNT(*) AS n
+            FROM report_access_request_usage
+            WHERE request_id = :request_id{action_sql}
+            """
+        ),
+        {"request_id": request_id, "action": action},
+    ).mappings().first()
+    return int(row["n"]) if row else 0
+
+
+def consume_use(
+    db: Session,
+    *,
+    request: dict[str, Any],
+    action: str,
+    user_id: str | None,
+    email: str | None,
+) -> dict[str, Any]:
+    """Record one metered use against an approved request, enforcing its quota.
+
+    Usage is ALWAYS recorded (billing analytics even on unlimited plans); the
+    quota only blocks when use_quota is set and already reached. Returns
+    {allowed, used, quota, remaining}.
+    """
+    request_id = str(request.get("request_id"))
+    quota = request.get("use_quota")
+    used = count_usage(db, request_id, action)
+    if quota is not None and used >= int(quota):
+        return {"allowed": False, "used": used, "quota": int(quota), "remaining": 0}
+    db.execute(
+        text(
+            """
+            INSERT INTO report_access_request_usage (
+                usage_id, request_id, action, user_id, email, created_at_utc
+            ) VALUES (:usage_id, :request_id, :action, :user_id, :email, :now)
+            """
+        ),
+        {"usage_id": str(uuid4()), "request_id": request_id, "action": action,
+         "user_id": user_id, "email": email, "now": _utcnow()},
+    )
+    db.commit()
+    used += 1
+    remaining = (int(quota) - used) if quota is not None else None
+    return {"allowed": True, "used": used,
+            "quota": int(quota) if quota is not None else None,
+            "remaining": remaining}
 
 
 def require_approved_request(

@@ -33,6 +33,7 @@ export function AdminAccessRequestsDashboard({
   const [items, setItems] = useState(initialItems);
   const [statusFilter, setStatusFilter] = useState<AdminStatusFilter>("all");
   const [decisionNotes, setDecisionNotes] = useState<Record<string, string>>({});
+  const [useQuotas, setUseQuotas] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -69,6 +70,7 @@ export function AdminAccessRequestsDashboard({
   }
 
   async function applyDecision(requestId: string, status: ReportAccessRequest["status"]) {
+    const item = items.find((candidate) => candidate.request_id === requestId);
     setError(null);
     try {
       const response = await fetch(`/api/admin/access-requests/${encodeURIComponent(requestId)}`, {
@@ -78,7 +80,11 @@ export function AdminAccessRequestsDashboard({
         },
         body: JSON.stringify({
           status,
-          decision_note: decisionNotes[requestId] || undefined
+          decision_note: decisionNotes[requestId] || undefined,
+          use_quota:
+            useQuotas[requestId] !== undefined && useQuotas[requestId] !== ""
+              ? Number(useQuotas[requestId])
+              : (item?.use_quota ?? undefined)
         })
       });
       const payload = (await response.json().catch(() => null)) as ReportAccessRequest | { detail?: string } | null;
@@ -155,6 +161,11 @@ export function AdminAccessRequestsDashboard({
                     <span>{item.requester_email || item.requester_contact || "No contact provided"}</span>
                     <span>{item.page_key}</span>
                     <span>Submitted {item.created_at_utc || "-"}</span>
+                    {item.use_quota !== null && item.use_quota !== undefined ? (
+                      <span>Uses: {item.use_count ?? 0}/{item.use_quota}</span>
+                    ) : item.use_count ? (
+                      <span>Uses: {item.use_count} (unlimited)</span>
+                    ) : null}
                   </div>
                   {item.requester_user_id ? (
                     <div className="mono admin-request-user-id">
@@ -194,6 +205,17 @@ export function AdminAccessRequestsDashboard({
                   placeholder={item.decision_note || "Optional approval, rejection, or payment note"}
                   type="text"
                   value={decisionNotes[item.request_id] ?? ""}
+                />
+              </label>
+
+              <label className="field">
+                <span>Use quota (metered syncs; blank = unlimited)</span>
+                <input
+                  min={0}
+                  onChange={(event) => setUseQuotas((current) => ({ ...current, [item.request_id]: event.target.value }))}
+                  placeholder={item.use_quota !== null && item.use_quota !== undefined ? String(item.use_quota) : "unlimited"}
+                  type="number"
+                  value={useQuotas[item.request_id] ?? ""}
                 />
               </label>
 
