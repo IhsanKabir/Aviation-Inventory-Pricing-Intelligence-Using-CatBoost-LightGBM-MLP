@@ -110,3 +110,23 @@ export async function getDiscountHistory(
     token,
   );
 }
+
+export interface DiscountAccess {
+  status: string;
+  allowed: boolean;
+  detail: string;
+  email?: string;
+  plan?: {
+    start_date: string | null;
+    end_date: string | null;
+    use_quota: number | null;
+    uses_used: number;
+    uses_remaining: number | null;
+  };
+}
+
+export async function getDiscountAccess(
+  token: string,
+): Promise<DiscountFetchResult<DiscountAccess>> {
+  return fetchDiscountApi<DiscountAccess>("/api/v1/discount-reports/access", token);
+}

@@ -354,7 +354,13 @@ async function syncNow() {
 async function showAccess() {
   if (!state.logged_in) return;
   const a = await api().check_access();
-  if (a.status && a.status !== "approved" && a.status !== "unknown") {
+  if (a.status === "approved" && a.plan) {
+    const bits = [];
+    if (a.plan.end_date) bits.push(`valid to ${a.plan.end_date}`);
+    if (a.plan.use_quota !== null) bits.push(`${a.plan.uses_remaining}/${a.plan.use_quota} syncs left`);
+    else bits.push("unlimited syncs");
+    addBanner("ok", `Plan: ${bits.join(" · ")}`);
+  } else if (a.status && a.status !== "approved" && a.status !== "unknown") {
     const kind = (a.status === "pending" || a.status === "none") ? "warn" : "err";
     addBanner(kind, `Access: ${a.detail}`);
   }

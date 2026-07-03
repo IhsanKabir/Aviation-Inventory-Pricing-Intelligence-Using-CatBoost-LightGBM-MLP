@@ -216,13 +216,28 @@ def access_status(
     x_user_session: str | None = Header(default=None),
     db: Session | None = Depends(get_optional_db),
 ) -> dict[str, Any]:
-    """The signed-in user's current discount-report access. The desktop calls this
-    before a run so a rejected/none user is stopped up front, not after the work."""
+    """The signed-in user's current discount-report access + plan details (window +
+    metered uses left). The desktop calls it before a run so a rejected/none user is
+    stopped up front, and both surfaces show the user their standing."""
     required_db = _require_db(db)
     user = _require_user(required_db, x_user_session)
     access = resolve_access(required_db, user.get("email"))
-    return {"status": access["status"], "allowed": access["allowed"],
-            "detail": access["detail"], "email": user.get("email")}
+    result: dict[str, Any] = {
+        "status": access["status"], "allowed": access["allowed"],
+        "detail": access["detail"], "email": user.get("email"),
+    }
+    req = access.get("request")
+    if req:
+        quota = req.get("use_quota")
+        used = access_requests.count_usage(required_db, str(req["request_id"]), "sync")
+        result["plan"] = {
+            "start_date": req.get("requested_start_date"),
+            "end_date": req.get("requested_end_date"),
+            "use_quota": quota,
+            "uses_used": used,
+            "uses_remaining": (int(quota) - used) if quota is not None else None,
+        }
+    return result
 
 
 @router.get("/latest")

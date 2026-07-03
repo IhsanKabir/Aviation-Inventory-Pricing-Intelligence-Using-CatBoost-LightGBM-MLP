@@ -137,9 +137,10 @@ export default async function DiscountComparisonPage({ searchParams }: PageProps
     );
   }
 
-  const [reportResult, historyResult, accessRequest] = await Promise.all([
+  const [reportResult, historyResult, accessResult, accessRequest] = await Promise.all([
     getDiscountReport(token, selectedDate),
     getDiscountHistory(token),
+    getDiscountAccess(token),
     requestId
       ? getReportAccessRequest(requestId)
       : Promise.resolve({ ok: true, data: null, error: undefined }),
@@ -215,10 +216,24 @@ export default async function DiscountComparisonPage({ searchParams }: PageProps
   const stored = reportResult.data;
   const report: DiscountReportPayload = stored.report;
   const history = historyResult.data?.items ?? [];
+  const plan = accessResult.data?.plan;
   const xlsxHref = `/api/discount-comparison/xlsx${selectedDate ? `?date=${encodeURIComponent(selectedDate)}` : ""}`;
 
   return (
     <div className="page dg-page">
+      {plan ? (
+        <div className="dg-plan-strip">
+          <span>Your plan</span>
+          {plan.end_date ? <span className="dg-plan-chip">valid to {plan.end_date}</span> : <span className="dg-plan-chip">no expiry</span>}
+          {plan.use_quota !== null ? (
+            <span className="dg-plan-chip">
+              {plan.uses_remaining} of {plan.use_quota} syncs left
+            </span>
+          ) : (
+            <span className="dg-plan-chip">unlimited syncs</span>
+          )}
+        </div>
+      ) : null}
       <section className="card dg-header">
         <div>
           <h1>OTA Discount Comparison</h1>
