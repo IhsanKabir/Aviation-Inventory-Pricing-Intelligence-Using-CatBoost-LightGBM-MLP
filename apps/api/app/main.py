@@ -295,6 +295,18 @@ def health(db: Session | None = Depends(get_optional_db)) -> dict:
     return reporting.get_health(db)
 
 
+@app.get("/api/v1/user-auth/bridge-check")
+def oauth_bridge_check(x_oauth_bridge_secret: str | None = Header(default=None)) -> dict:
+    """Diagnose the Google-sign-in loop without exposing the secret: reports whether
+    the API has a bridge secret configured and whether the caller's header MATCHES.
+    Google sign-in only works when the web app sends a header that matches here."""
+    configured = bool(_OAUTH_BRIDGE_SECRET)
+    matches = configured and hmac.compare_digest(
+        x_oauth_bridge_secret or "", _OAUTH_BRIDGE_SECRET)
+    return {"configured": configured, "header_present": bool(x_oauth_bridge_secret),
+            "matches": matches}
+
+
 @app.post("/api/v1/user-auth/register")
 def register_user(
     body: UserRegisterBody,

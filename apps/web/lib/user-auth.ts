@@ -56,15 +56,21 @@ export async function getCurrentUserSession() {
   if (oauthSession?.apiSessionToken && oauthSession.apiUser) {
     return {
       token: oauthSession.apiSessionToken,
-      user: oauthSession.apiUser
+      user: oauthSession.apiUser,
+      bridgeFailed: false
     };
   }
 
   const cookieStore = await cookies();
   const token = cookieStore.get(USER_SESSION_COOKIE)?.value || "";
   if (!token) {
-    return { token: "", user: null as AuthenticatedUser | null };
+    // A Google sign-in that reached NextAuth but never obtained an API session
+    // token means the server-side OAuth bridge failed (usually an
+    // OAUTH_BRIDGE_SECRET mismatch between Vercel and the API). Signal it so the
+    // UI can explain the loop instead of silently bouncing back to "sign in".
+    const bridgeFailed = Boolean(oauthSession?.user?.email);
+    return { token: "", user: null as AuthenticatedUser | null, bridgeFailed };
   }
   const user = await fetchCurrentUser(token);
-  return { token, user };
+  return { token, user, bridgeFailed: false };
 }

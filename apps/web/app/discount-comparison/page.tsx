@@ -105,15 +105,33 @@ export default async function DiscountComparisonPage({ searchParams }: PageProps
   const selectedDate = firstParam(params, "date") ?? undefined;
   const requestId = firstParam(params, "request_id") ?? undefined;
 
-  const { token, user } = await getCurrentUserSession();
+  const { token, user, bridgeFailed } = await getCurrentUserSession();
 
   if (!user) {
     return (
       <div className="page dg-page">
         <section className="card dg-notice">
           <h1>OTA Discount Comparison</h1>
-          <p>Sign in to view the team discount grid.</p>
-          <Link className="button-link" href="/login">Sign in</Link>
+          {bridgeFailed ? (
+            <>
+              <p className="dg-error">
+                You&apos;re signed in with Google, but the server couldn&apos;t
+                establish your session — this is why sign-in keeps looping. The
+                site&apos;s <code>OAUTH_BRIDGE_SECRET</code> must match the
+                API&apos;s; an admin needs to set them and redeploy.
+              </p>
+              <Link className="button-link" href="/login?next=/discount-comparison">
+                Try again
+              </Link>
+            </>
+          ) : (
+            <>
+              <p>Sign in to view the team discount grid.</p>
+              <Link className="button-link" href="/login?next=/discount-comparison">
+                Sign in
+              </Link>
+            </>
+          )}
         </section>
       </div>
     );
@@ -156,7 +174,7 @@ export default async function DiscountComparisonPage({ searchParams }: PageProps
         <section className="card dg-notice">
           <h1>OTA Discount Comparison</h1>
           <p>Your session has expired. Sign in again to view the report.</p>
-          <Link className="button-link" href="/login">Sign in</Link>
+          <Link className="button-link" href="/login?next=/discount-comparison">Sign in</Link>
         </section>
       </div>
     );

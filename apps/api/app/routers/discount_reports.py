@@ -65,40 +65,68 @@ def _require_user(db: Session, x_user_session: str | None) -> dict[str, Any]:
     return user
 
 
-def _require_page_access(db: Session, user: dict[str, Any]) -> dict[str, Any]:
-    """Returns the approved request (callers that meter usage need its quota)."""
-    email = user.get("email")
+def resolve_access(db: Session, email: str | None) -> dict[str, Any]:
+    """Resolve a user's discount-report access into a structured status. Reused by
+    the gate (raises 403) and by GET /access (so the desktop can block a REJECTED
+    user from even running, not just syncing). Statuses:
+      approved | rejected | payment_required | pending | expired | not_started |
+      none  (never requested).
+    `blocking` is True when the user must NOT proceed (rejected/payment/none/…);
+    an approved+in-window user is the only allowed=True case.
+    """
     approved = access_requests.find_approved_request_for_email(
         db, page_key=PAGE_KEY, email=email)
     if approved:
-        return approved
-    # Tier-aware 403s: payment plans and expired windows get specific messages.
+        return {"status": "approved", "allowed": True, "request": approved,
+                "detail": "Access approved."}
+
     payment = access_requests.find_latest_request_for_email(
         db, page_key=PAGE_KEY, email=email, statuses=("payment_required",))
     if payment:
-        raise HTTPException(
-            status_code=403,
-            detail=payment.get("decision_note")
-            or "Payment is required to activate your discount-report plan. "
-               "Contact the admin to renew.")
+        return {"status": "payment_required", "allowed": False,
+                "detail": payment.get("decision_note")
+                or "Payment is required to activate your discount-report plan. "
+                   "Contact the admin to renew."}
+
+    rejected = access_requests.find_latest_request_for_email(
+        db, page_key=PAGE_KEY, email=email, statuses=("rejected",))
+    if rejected:
+        return {"status": "rejected", "allowed": False,
+                "detail": rejected.get("decision_note")
+                or "Your discount-report access request was rejected. Contact the "
+                   "admin if you believe this is a mistake."}
+
     windowed = access_requests.find_latest_request_for_email(
         db, page_key=PAGE_KEY, email=email, statuses=("approved",))
     if windowed:   # approved once, but the date window doesn't cover today
-        today = access_requests.local_today()
         start = windowed.get("requested_start_date")
-        if start and str(start) > today.isoformat():
-            raise HTTPException(
-                status_code=403,
-                detail=f"Your discount-report plan starts on {start}.")
-        raise HTTPException(
-            status_code=403,
-            detail="Your discount-report access period has expired "
-                   f"(ended {windowed.get('requested_end_date')}). Submit a new "
-                   "request or ask the admin to renew your plan.")
-    raise HTTPException(
-        status_code=403,
-        detail="An approved 'discount-comparison' access request is required. "
-               "Submit one from the web app and ask an admin to approve it.")
+        if start and str(start) > access_requests.local_today().isoformat():
+            return {"status": "not_started", "allowed": False,
+                    "detail": f"Your discount-report plan starts on {start}."}
+        return {"status": "expired", "allowed": False,
+                "detail": "Your discount-report access period has expired "
+                          f"(ended {windowed.get('requested_end_date')}). Submit a "
+                          "new request or ask the admin to renew your plan."}
+
+    pending = access_requests.find_latest_request_for_email(
+        db, page_key=PAGE_KEY, email=email, statuses=("pending",))
+    if pending:
+        return {"status": "pending", "allowed": False,
+                "detail": "Your discount-report access request is awaiting admin "
+                          "approval."}
+
+    return {"status": "none", "allowed": False,
+            "detail": "An approved 'discount-comparison' access request is required. "
+                      "Submit one from the web app and ask an admin to approve it."}
+
+
+def _require_page_access(db: Session, user: dict[str, Any]) -> dict[str, Any]:
+    """Returns the approved request (callers that meter usage need its quota),
+    or raises a tier-aware 403."""
+    access = resolve_access(db, user.get("email"))
+    if access["allowed"]:
+        return access["request"]
+    raise HTTPException(status_code=403, detail=access["detail"])
 
 
 def _parse_report_date(report: dict[str, Any]) -> date:
@@ -181,6 +209,20 @@ def submit_report(
     result["uses_remaining"] = use["remaining"]     # None = unlimited plan
     result["duplicate"] = use.get("duplicate", False)
     return result
+
+
+@router.get("/access")
+def access_status(
+    x_user_session: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict[str, Any]:
+    """The signed-in user's current discount-report access. The desktop calls this
+    before a run so a rejected/none user is stopped up front, not after the work."""
+    required_db = _require_db(db)
+    user = _require_user(required_db, x_user_session)
+    access = resolve_access(required_db, user.get("email"))
+    return {"status": access["status"], "allowed": access["allowed"],
+            "detail": access["detail"], "email": user.get("email")}
 
 
 @router.get("/latest")

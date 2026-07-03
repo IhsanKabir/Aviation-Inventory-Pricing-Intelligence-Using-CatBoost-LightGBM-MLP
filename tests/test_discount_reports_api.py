@@ -207,6 +207,36 @@ def test_sync_blocked_when_quota_exhausted(client, monkeypatch):
     assert stored == {}                  # nothing persisted past the quota
 
 
+def test_access_endpoint_reports_status(client, monkeypatch):
+    c, _ = client
+
+    def statuses(db, *, page_key, email, statuses=("approved",), enforce_window=False):
+        if "rejected" in statuses:
+            return {"request_id": "r", "decision_note": "Not this cycle."}
+        return None
+
+    # not approved + a rejected request on file -> status rejected, blocking
+    monkeypatch.setattr(dr_router.access_requests, "find_approved_request_for_email",
+                        lambda db, *, page_key, email: None)
+    monkeypatch.setattr(dr_router.access_requests, "find_latest_request_for_email", statuses)
+    r = c.get("/api/v1/discount-reports/access", headers={"X-User-Session": "good"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "rejected" and body["allowed"] is False
+    assert "Not this cycle." in body["detail"]
+
+
+def test_rejected_user_sync_gets_rejected_message(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setattr(dr_router.access_requests, "find_approved_request_for_email",
+                        lambda db, *, page_key, email: None)
+    monkeypatch.setattr(dr_router.access_requests, "find_latest_request_for_email",
+                        lambda db, *, page_key, email, statuses=("approved",), enforce_window=False:
+                        ({"request_id": "r", "decision_note": ""} if "rejected" in statuses else None))
+    r = c.post("/api/v1/discount-reports", json=_payload(), headers={"X-User-Session": "good"})
+    assert r.status_code == 403 and "rejected" in r.json()["detail"].lower()
+
+
 if __name__ == "__main__":
     import subprocess
     raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"]))

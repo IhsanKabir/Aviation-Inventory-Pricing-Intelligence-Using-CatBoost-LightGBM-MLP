@@ -174,6 +174,7 @@ async function doLogin() {
   errorBox.style.display = "none";
   if (result.outbox_flushed) addBanner("ok", `Synced ${result.outbox_flushed} queued report(s).`);
   await refreshState();
+  showAccess();
 }
 
 async function changePassword() {
@@ -350,6 +351,15 @@ async function syncNow() {
   await refreshState();
 }
 
+async function showAccess() {
+  if (!state.logged_in) return;
+  const a = await api().check_access();
+  if (a.status && a.status !== "approved" && a.status !== "unknown") {
+    const kind = (a.status === "pending" || a.status === "none") ? "warn" : "err";
+    addBanner(kind, `Access: ${a.detail}`);
+  }
+}
+
 async function flushPending() {
   if (!state.logged_in || !state.outbox_count) return;
   const r = await api().flush_outbox();
@@ -363,6 +373,7 @@ window.addEventListener("pywebviewready", async () => {
   if (state.har_dir) renderScan(await api().scan());
   checkUpdate();
   flushPending();
+  showAccess();
 });
 </script>
 </body>

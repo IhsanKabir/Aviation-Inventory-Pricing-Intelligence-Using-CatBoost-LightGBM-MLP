@@ -281,6 +281,26 @@ class DesktopApi:
         webbrowser.open(url)
         return {"ok": True}
 
+    def check_access(self) -> dict[str, Any]:
+        """The signed-in user's discount-report access status from the server.
+        Returns {status, allowed, detail} or {status:'unknown'} when signed out /
+        offline (so an approved user can still work offline)."""
+        token = self._token()
+        if not token:
+            return {"status": "signed_out", "allowed": False,
+                    "detail": "Sign in to sync; local runs work without signing in."}
+        try:
+            r = requests.get(f"{self.api_base}/api/v1/discount-reports/access",
+                             headers={"X-User-Session": token}, timeout=15)
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code == 401:
+                return {"status": "signed_out", "allowed": False,
+                        "detail": "Session expired — sign in again."}
+        except requests.RequestException:
+            pass
+        return {"status": "unknown", "allowed": False, "detail": ""}
+
     def logout(self) -> dict[str, Any]:
         token = self._token()
         if token:
@@ -413,6 +433,15 @@ class DesktopApi:
             routes = _parse_routes(state["routes"])
         except SystemExit as exc:
             return {"ok": False, "error": str(exc)}
+
+        # Block up front if the server has explicitly DENIED this user — no point
+        # running the HARs if they can never be used. Denials only (rejected /
+        # payment / expired); pending/none/offline still run locally (sync-gated).
+        access = self.check_access()
+        if access.get("status") in ("rejected", "payment_required", "expired", "not_started"):
+            return {"ok": False, "error": access.get("detail")
+                    or "Your access to the discount report is not active.",
+                    "access_blocked": True}
 
         self._busy, self._status = True, "Parsing HAR captures…"
         # The engine reports per-channel problems via print(); a windowed exe has no
