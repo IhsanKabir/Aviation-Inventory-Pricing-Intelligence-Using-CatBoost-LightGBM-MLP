@@ -80,18 +80,19 @@ def test_login_stores_token_and_flushes_outbox(api, monkeypatch):
 def test_sync_posts_sanitized_payload(api, monkeypatch):
     api._store_token("tok-1")
     api._report = _report()
-    captured = {}
+    posts = []   # sync_now also fires an async usage ping — capture per-call
 
     def fake_post(url, json=None, headers=None, timeout=None):
-        captured.update({"url": url, "json": json, "headers": headers})
+        posts.append({"url": url, "json": json, "headers": headers})
         return FakeResponse(200, {})
 
     monkeypatch.setattr(backend_mod.requests, "post", fake_post)
     result = api.sync_now()
     assert result["ok"] and result["synced"] == "2026-07-02"
-    assert captured["headers"]["X-User-Session"] == "tok-1"
-    assert "routes" not in captured["json"]["report"]          # sanitized before send
-    assert captured["json"]["report"]["grids"]["DOM"]["rows"][0]["cells"]["BS"] == "12"
+    sync_post = next(p for p in posts if "/discount-reports" in p["url"])
+    assert sync_post["headers"]["X-User-Session"] == "tok-1"
+    assert "routes" not in sync_post["json"]["report"]         # sanitized before send
+    assert sync_post["json"]["report"]["grids"]["DOM"]["rows"][0]["cells"]["BS"] == "12"
 
 
 def test_sync_network_failure_queues_but_auth_failure_does_not(api, monkeypatch):

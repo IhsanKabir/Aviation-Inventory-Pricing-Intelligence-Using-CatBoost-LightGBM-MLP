@@ -49,11 +49,13 @@ const WINDOW_DAYS_DEFAULT = 30;
 const APP_LABEL: Record<string, string> = {
   "iata-validator": "IATA Code Validator",
   "travelport-auto": "TravelportAuto",
+  "ota-discount-report": "OTA Discount Report",
 };
 
 const APP_BADGE_COLOR: Record<string, string> = {
   "iata-validator": "#0d9488", // teal
   "travelport-auto": "#1d4ed8", // blue
+  "ota-discount-report": "#1f4e79", // navy (matches the report grid)
 };
 
 function formatLabel(appId: string): string {

@@ -118,6 +118,27 @@ class DesktopApi:
         self._config.pop("token_fallback", None)
         self._save_config()
 
+    # ------------------------------------------------------------------- usage
+    def _log_usage(self, action: str, count: int = 0, target: str | None = None) -> None:
+        """Fire-and-forget usage ping to the /usage dashboard (never blocks or
+        breaks the flow; silently skipped when signed out or offline)."""
+        token = self._token()
+        if not token:
+            return
+        import threading
+
+        def _send() -> None:
+            try:
+                requests.post(
+                    f"{self.api_base}/api/v1/lookups/log",
+                    json={"app_id": APP_ID, "action": action,
+                          "target": target, "count": int(count)},
+                    headers={"X-User-Session": token}, timeout=10)
+            except requests.RequestException:
+                pass
+
+        threading.Thread(target=_send, daemon=True).start()
+
     # ------------------------------------------------------------------- state
     def get_state(self) -> dict[str, Any]:
         return {
@@ -403,6 +424,9 @@ class DesktopApi:
             colored = apply_highlights(report, self._prev_payload)
             self._report = report
             self._status = "Done."
+            self._log_usage("run_report",
+                            count=sum(len(v) for v in hars.values()),
+                            target=report.get("report_date"))
 
             warnings: list[str] = []
             if routes and not travel_date and not any(rd for _o, _d, rd in routes):
@@ -451,6 +475,7 @@ class DesktopApi:
         if target_path.suffix.lower() != ".xlsx":
             target_path = target_path.with_suffix(".xlsx")
         path = write_single_sheet_xlsx(self._report, self._prev_payload, target_path)
+        self._log_usage("export_xlsx", count=1)
         try:    # open Explorer with the file selected, so it's impossible to miss
             import subprocess
             subprocess.Popen(["explorer", "/select,", str(path)])
@@ -490,6 +515,7 @@ class DesktopApi:
         ok, status, error, body = self._post_report(payload)
         if ok:
             self._outbox.mark_done(report_date_iso)
+            self._log_usage("sync_report", count=1, target=report_date_iso)
             return {"ok": True, "synced": report_date_iso,
                     "uses_remaining": body.get("uses_remaining"),
                     "outbox_count": self._outbox.count()}
