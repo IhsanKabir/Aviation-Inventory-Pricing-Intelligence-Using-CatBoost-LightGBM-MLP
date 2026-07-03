@@ -58,8 +58,22 @@
       <label>Password <input id="password" type="password" autocomplete="current-password"></label>
       <button onclick="doLogin()">Sign in</button>
       <span class="muted">Offline runs work without signing in — login is only needed to sync.</span>
+      <button class="secondary" onclick="api().open_account_page()"
+              title="Signed up with Google? The desktop app needs a password — create one on the website's Account page.">
+        No password yet? Create one on the website</button>
     </div>
     <div id="login-error" class="banner err" style="display:none;margin-top:8px"></div>
+  </section>
+
+  <section class="card" id="account-card" style="display:none">
+    <details>
+      <summary class="muted" style="cursor:pointer">Account: change password</summary>
+      <div class="row" style="margin-top:8px">
+        <label>New password <input id="new_password" type="password" autocomplete="new-password"></label>
+        <label>Confirm <input id="confirm_password" type="password" autocomplete="new-password"></label>
+        <button class="secondary" onclick="changePassword()">Save password</button>
+      </div>
+    </details>
   </section>
 
   <section class="card">
@@ -126,6 +140,7 @@ async function refreshState() {
     ? `${state.email}${state.outbox_count ? ` · ${state.outbox_count} pending sync` : ""} · v${state.version}`
     : `not signed in · v${state.version}`;
   document.getElementById("login-card").style.display = state.logged_in ? "none" : "";
+  document.getElementById("account-card").style.display = state.logged_in ? "" : "none";
   document.getElementById("har_dir").value = state.har_dir;
   document.getElementById("routes").value = state.routes;
   document.getElementById("travel_date").value = state.travel_date;
@@ -156,6 +171,33 @@ async function doLogin() {
   errorBox.style.display = "none";
   if (result.outbox_flushed) addBanner("ok", `Synced ${result.outbox_flushed} queued report(s).`);
   await refreshState();
+}
+
+async function changePassword() {
+  const pw = document.getElementById("new_password").value;
+  const confirm_ = document.getElementById("confirm_password").value;
+  if (pw !== confirm_) { addBanner("err", "Passwords do not match."); return; }
+  const result = await api().change_password(pw);
+  if (!result.ok) { addBanner("err", result.error); return; }
+  document.getElementById("new_password").value = "";
+  document.getElementById("confirm_password").value = "";
+  addBanner("ok", "Password changed.");
+}
+
+async function checkUpdate() {
+  try {
+    const u = await api().check_update();
+    if (u.update_available) {
+      const div = document.createElement("div");
+      div.className = "banner warn";
+      div.style.marginBottom = "8px";
+      div.innerHTML = `Update v${esc(u.version)} is available. ` +
+        `<button class="secondary" style="margin-left:8px">Download update</button>` +
+        ` <span class="muted">then close the app and replace OTADiscountReport.exe</span>`;
+      div.querySelector("button").onclick = () => api().open_download(u.download_url);
+      document.getElementById("banners").appendChild(div);
+    }
+  } catch (e) { /* offline — ignore */ }
 }
 
 async function pickFolder() {
@@ -301,6 +343,7 @@ async function syncNow() {
 window.addEventListener("pywebviewready", async () => {
   await refreshState();
   if (state.har_dir) renderScan(await api().scan());
+  checkUpdate();
 });
 </script>
 </body>

@@ -5,6 +5,6 @@ run the comparison LOCALLY (HARs never leave the machine), view the colored grid
 export the xlsx, and sync the sanitized result JSON to the team dashboard.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 APP_ID = "ota-discount-report"

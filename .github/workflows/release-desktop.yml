@@ -49,17 +49,16 @@ jobs:
           fi
 
       - name: Install build deps
+        # PINNED to the locally-verified stack — pywebview's .NET backend
+        # (pythonnet/clr_loader) is version-sensitive inside PyInstaller bundles.
         run: |
           python -m pip install --upgrade pip
-          pip install openpyxl requests pywebview keyring psutil pyinstaller
+          pip install openpyxl requests keyring psutil
+          pip install pywebview==6.2.1 pythonnet==3.1.0 clr-loader==0.3.1
+          pip install pyinstaller==6.21.0 pyinstaller-hooks-contrib==2026.6
 
-      - name: Build (one-folder)
+      - name: Build (one-file exe)
         run: pyinstaller desktop/build.spec --noconfirm
-
-      - name: Package as zip
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist/OTADiscountReport/* -DestinationPath dist/OTADiscountReport.zip -Force
 
       # --- Optional Authenticode signing (only if a cert secret is configured) ---
       - name: Code-sign
@@ -73,16 +72,13 @@ jobs:
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
           & "C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe" sign `
             /f $pfx /p $env:WINDOWS_CERT_PASSWORD /tr http://timestamp.digicert.com `
-            /td sha256 /fd sha256 dist/OTADiscountReport/OTADiscountReport.exe
-          # re-zip so the signed exe is the one shipped
-          Remove-Item dist/OTADiscountReport.zip -ErrorAction SilentlyContinue
-          Compress-Archive -Path dist/OTADiscountReport/* -DestinationPath dist/OTADiscountReport.zip -Force
+            /td sha256 /fd sha256 dist/OTADiscountReport.exe
 
       - name: SHA-256 sidecar
         shell: pwsh
         run: |
-          $hash = (Get-FileHash dist/OTADiscountReport.zip -Algorithm SHA256).Hash.ToLower()
-          "$hash  OTADiscountReport.zip" | Out-File -Encoding ascii dist/OTADiscountReport.zip.sha256
+          $hash = (Get-FileHash dist/OTADiscountReport.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  OTADiscountReport.exe" | Out-File -Encoding ascii dist/OTADiscountReport.exe.sha256
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -92,13 +88,13 @@ jobs:
           body: |
             OTA Discount Comparison desktop app.
 
-            Install: download `OTADiscountReport.zip`, unzip anywhere, run
-            `OTADiscountReport.exe`. After the first install the app auto-updates
-            through the backend mirror (works on GitHub-blocked networks).
+            Install: download `OTADiscountReport.exe` and double-click — nothing
+            to unzip or install. The app checks for updates on launch through the
+            backend mirror (works on GitHub-blocked networks).
 
-            Verify (optional): the SHA-256 is published alongside the zip.
+            Verify (optional): the SHA-256 is published alongside the exe.
           files: |
-            dist/OTADiscountReport.zip
-            dist/OTADiscountReport.zip.sha256
+            dist/OTADiscountReport.exe
+            dist/OTADiscountReport.exe.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

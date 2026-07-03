@@ -193,9 +193,9 @@ const PRODUCTS: Product[] = [
     tagline:
       "Compare airline discounts across OTA channels (FirstTrip, ShareTrip, GoZayaan, BDFare, AKIJ, Amy). Point it at your HAR capture folder — it analyzes locally, shows the colored best-discount grid, exports Excel, and syncs the result to the team dashboard. HAR files never leave your machine.",
     repo: DISCOUNT_REPO,
-    assetMatch: (n) => n === "OTADiscountReport.zip" || n.endsWith(".zip"),
+    assetMatch: (n) => n === "OTADiscountReport.exe" || n.endsWith(".exe"),
     requirements:
-      "Windows 10/11 · 8 GB RAM recommended (HAR parsing) · Sign-in with an approved discount-comparison access request",
+      "Windows 10/11 · single .exe, no install · 8 GB RAM recommended (HAR parsing) · Sign-in with an approved discount-comparison access request",
     guideUrl: "/discount-comparison/guide",
     latestDownloadOverride: DISCOUNT_DOWNLOAD_URL,
     fallback: [],

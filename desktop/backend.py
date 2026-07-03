@@ -28,6 +28,7 @@ from . import APP_ID, __version__
 from .outbox import Outbox
 
 DEFAULT_API_BASE = "https://aero-pulse-api-591603094460.asia-south1.run.app"
+DEFAULT_WEB_BASE = "https://aviation-inventory-pricing-intellig.vercel.app"
 KEYRING_SERVICE = "ota-discount-report"
 KEYRING_ENTRY = "session-token"
 RAM_HEADROOM_FACTOR = 2.5           # need ~2.5x the HAR size free to parse safely
@@ -171,6 +172,75 @@ class DesktopApi:
         flushed = self.flush_outbox()
         return {"ok": True, "email": self._config["email"],
                 "outbox_flushed": flushed.get("sent", 0)}
+
+    def open_account_page(self) -> dict[str, Any]:
+        """Open the website's /account page — where Google-sign-in users create the
+        password the desktop app signs in with."""
+        import webbrowser
+        web_base = str(self._config.get("web_base") or DEFAULT_WEB_BASE).rstrip("/")
+        webbrowser.open(f"{web_base}/account")
+        return {"ok": True}
+
+    def change_password(self, new_password: str) -> dict[str, Any]:
+        """Change the signed-in user's password (min 8 chars)."""
+        token = self._token()
+        if not token:
+            return {"ok": False, "error": "Sign in first."}
+        if len(new_password or "") < 8:
+            return {"ok": False, "error": "Password must be at least 8 characters."}
+        try:
+            response = requests.post(
+                f"{self.api_base}/api/v1/user-auth/set-password",
+                json={"password": new_password},
+                headers={"X-User-Session": token}, timeout=REQUEST_TIMEOUT)
+        except requests.RequestException as exc:
+            return {"ok": False, "error": f"API unreachable: {exc}"}
+        if response.status_code == 401:
+            return {"ok": False, "error": "Session expired — sign in again.",
+                    "needs_login": True}
+        if response.status_code != 200:
+            try:
+                return {"ok": False, "error": str(response.json().get("detail", response.reason))}
+            except ValueError:
+                return {"ok": False, "error": response.reason or str(response.status_code)}
+        return {"ok": True}
+
+    def check_update(self) -> dict[str, Any]:
+        """Compare the running version with the release channel (auth-gated
+        /app/latest); silent no-op when signed out or offline."""
+        token = self._token()
+        if not token:
+            return {"update_available": False}
+        try:
+            response = requests.get(
+                f"{self.api_base}/api/v1/app/latest?app=discount-report",
+                headers={"X-User-Session": token}, timeout=15)
+            if response.status_code != 200:
+                return {"update_available": False}
+            latest = response.json()
+        except (requests.RequestException, ValueError):
+            return {"update_available": False}
+
+        def _ver(v: str) -> tuple[int, ...]:
+            try:
+                return tuple(int(x) for x in str(v).split("."))
+            except ValueError:
+                return (0,)
+
+        newer = _ver(latest.get("version", "0")) > _ver(__version__)
+        return {"update_available": newer, "version": latest.get("version"),
+                "download_url": latest.get("download_url"),
+                "notes": (latest.get("notes") or "")[:400]}
+
+    def open_download(self, url: str) -> dict[str, Any]:
+        """Open the (public) mirror download in the browser. Only our own hosts."""
+        allowed = (self.api_base,
+                   str(self._config.get("web_base") or DEFAULT_WEB_BASE).rstrip("/"))
+        if not str(url).startswith(allowed):
+            return {"ok": False, "error": "Refusing to open a non-app URL."}
+        import webbrowser
+        webbrowser.open(url)
+        return {"ok": True}
 
     def logout(self) -> dict[str, Any]:
         token = self._token()

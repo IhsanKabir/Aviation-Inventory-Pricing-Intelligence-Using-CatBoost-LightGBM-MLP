@@ -65,7 +65,7 @@ APPS: dict[str, dict[str, str]] = {
         "repo": os.environ.get(
             "DISCOUNT_APP_GITHUB_REPO",
             "IhsanKabir/Aviation-Inventory-Pricing-Intelligence-Using-CatBoost-LightGBM-MLP"),
-        "asset": os.environ.get("DISCOUNT_APP_ASSET_NAME", "OTADiscountReport.zip"),
+        "asset": os.environ.get("DISCOUNT_APP_ASSET_NAME", "OTADiscountReport.exe"),
     },
 }
 _DEFAULT_APP = "iata"
