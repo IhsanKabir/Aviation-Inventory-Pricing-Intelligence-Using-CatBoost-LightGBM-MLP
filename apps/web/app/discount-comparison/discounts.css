@@ -121,3 +121,77 @@
 .dg-error {
   color: var(--alert);
 }
+
+/* --- Guide page: workflow diagram (self-contained, no images) --- */
+
+.dg-flow {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.dg-flow-step {
+  flex: 1 1 130px;
+  min-width: 120px;
+  background: #f3f6fa;
+  border: 1.5px solid #1f4e79;
+  border-radius: 10px;
+  padding: 10px 12px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.dg-flow-step .dg-flow-num {
+  display: inline-block;
+  background: #1f4e79;
+  color: #fff;
+  border-radius: 999px;
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0 auto;
+}
+
+.dg-flow-step strong { font-size: 0.85rem; }
+.dg-flow-step span { font-size: 0.75rem; color: var(--muted); }
+
+.dg-flow-step--accent { background: #1f2937; border-color: #1f2937; }
+.dg-flow-step--accent strong, .dg-flow-step--accent span { color: #fff; }
+
+.dg-flow-arrow {
+  align-self: center;
+  color: #1f4e79;
+  font-size: 20px;
+  font-weight: 700;
+  padding: 0 2px;
+}
+
+.dg-cat {
+  border: 1px solid var(--line);
+  border-left: 5px solid #1f4e79;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.dg-cat--b { border-left-color: #9c6500; }
+.dg-cat--c { border-left-color: #006100; }
+
+.dg-cat h3 { margin: 0 0 6px; font-size: 0.95rem; }
+.dg-cat .dg-cat-sites { font-size: 0.8rem; color: var(--muted); margin-bottom: 8px; }
+
+.dg-exception {
+  background: #fff7e6;
+  border: 1px solid #f0c36d;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  margin-top: 8px;
+}

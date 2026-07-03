@@ -210,16 +210,20 @@ class DesktopApi:
         /app/latest); silent no-op when signed out or offline."""
         token = self._token()
         if not token:
-            return {"update_available": False}
+            return {"update_available": False,
+                    "error": "Sign in to check for updates (the update channel is "
+                             "account-gated)."}
         try:
             response = requests.get(
                 f"{self.api_base}/api/v1/app/latest?app=discount-report",
                 headers={"X-User-Session": token}, timeout=15)
             if response.status_code != 200:
-                return {"update_available": False}
+                return {"update_available": False,
+                        "error": f"Update check failed ({response.status_code})."}
             latest = response.json()
-        except (requests.RequestException, ValueError):
-            return {"update_available": False}
+        except (requests.RequestException, ValueError) as exc:
+            return {"update_available": False,
+                    "error": f"Update check failed: offline? ({exc})"}
 
         def _ver(v: str) -> tuple[int, ...]:
             try:
@@ -436,9 +440,22 @@ class DesktopApi:
         if self._window:
             target = self._window.create_file_dialog(
                 webview.SAVE_DIALOG, save_filename=default_name)
+        # pywebview returns a tuple/list on some platforms and a plain string on
+        # others; Path(str(tuple)) silently wrote to a garbage filename in the
+        # exe's temp cwd — the "exported file isn't there" field bug.
+        if isinstance(target, (tuple, list)):
+            target = target[0] if target else None
         if not target:
-            target = str(Path(tempfile.gettempdir()) / default_name)
-        path = write_single_sheet_xlsx(self._report, self._prev_payload, Path(str(target)))
+            return {"ok": False, "error": "Export cancelled."}
+        target_path = Path(str(target))
+        if target_path.suffix.lower() != ".xlsx":
+            target_path = target_path.with_suffix(".xlsx")
+        path = write_single_sheet_xlsx(self._report, self._prev_payload, target_path)
+        try:    # open Explorer with the file selected, so it's impossible to miss
+            import subprocess
+            subprocess.Popen(["explorer", "/select,", str(path)])
+        except OSError:
+            pass
         return {"ok": True, "path": str(path)}
 
     # -------------------------------------------------------------------- sync

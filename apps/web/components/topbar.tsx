@@ -230,6 +230,9 @@ export function Topbar({
           <Link className="nav-link" href="/usage" {...navLinkProps("/usage")}>
             Usage
           </Link>
+          <Link className="nav-link" href="/account" {...navLinkProps("/account")}>
+            Account
+          </Link>
 
           {adminItems.map((item) => (
             <Link key={item.href} className="nav-link" href={item.href} {...navLinkProps(item.href)}>
