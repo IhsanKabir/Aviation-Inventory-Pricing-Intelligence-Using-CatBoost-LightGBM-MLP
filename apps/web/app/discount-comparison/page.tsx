@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ReportAccessRequestPanel } from "@/components/report-access-request-panel";
 import { getReportAccessRequest } from "@/lib/api";
 import {
+  getDiscountAccess,
   getDiscountHistory,
   getDiscountReport,
   type DiscountGridBlock,
