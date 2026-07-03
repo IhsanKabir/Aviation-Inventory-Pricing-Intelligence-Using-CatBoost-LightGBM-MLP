@@ -69,8 +69,10 @@ def upsert_report(
     submitted_by_user_id: str | None,
     submitted_by_email: str | None,
     team_id: str = DEFAULT_TEAM_ID,
+    commit: bool = True,
 ) -> dict[str, Any]:
-    """Insert or overwrite the canonical report for (team, date)."""
+    """Insert or overwrite the canonical report for (team, date). Pass commit=False
+    to let the caller commit this together with metering in one transaction."""
     now = _utcnow()
     row = (
         db.execute(
@@ -108,7 +110,8 @@ def upsert_report(
         .mappings()
         .first()
     )
-    db.commit()
+    if commit:
+        db.commit()
     return {
         "report_id": row["report_id"],
         "report_date": report_date.isoformat(),

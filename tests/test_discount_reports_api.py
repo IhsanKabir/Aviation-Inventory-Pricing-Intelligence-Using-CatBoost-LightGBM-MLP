@@ -37,7 +37,10 @@ def _payload(report_date="02/07/2026", bs="12"):
 @pytest.fixture()
 def client(monkeypatch):
     """TestClient with a fake DB + auth/access/storage seams; each test tweaks them."""
-    fake_db = object()
+    class _FakeDb:
+        def commit(self): pass
+        def rollback(self): pass
+    fake_db = _FakeDb()
     main.app.dependency_overrides[get_optional_db] = lambda: fake_db
     monkeypatch.setattr(dr_router.user_accounts, "get_session_user",
                         lambda db, token, touch=True: USER if token == "good" else None)
@@ -47,15 +50,15 @@ def client(monkeypatch):
     stored: dict[str, dict] = {}
 
     def fake_upsert(db, *, report_date, report_data, submitted_by_user_id,
-                    submitted_by_email, team_id="default"):
+                    submitted_by_email, team_id="default", commit=True):
         stored[report_date.isoformat()] = report_data
         return {"report_id": "rep-1", "report_date": report_date.isoformat(),
                 "replaced_existing": False}
 
     monkeypatch.setattr(dr_router.discount_reports, "upsert_report", fake_upsert)
     monkeypatch.setattr(dr_router.access_requests, "consume_use",
-                        lambda db, *, request, action, user_id, email:
-                        {"allowed": True, "used": 1, "quota": None, "remaining": None})
+                        lambda db, *, request, action, user_id, email, sync_id=None, commit=True:
+                        {"allowed": True, "used": 1, "quota": None, "remaining": None, "duplicate": False})
     yield TestClient(main.app), stored
     main.app.dependency_overrides.pop(get_optional_db, None)
 
@@ -174,9 +177,9 @@ def test_sync_consumes_a_use_and_reports_remaining(client, monkeypatch):
     c, _ = client
     calls = []
 
-    def fake_consume(db, *, request, action, user_id, email):
+    def fake_consume(db, *, request, action, user_id, email, sync_id=None, commit=True):
         calls.append(action)
-        return {"allowed": True, "used": 3, "quota": 30, "remaining": 27}
+        return {"allowed": True, "used": 3, "quota": 30, "remaining": 27, "duplicate": False}
 
     monkeypatch.setattr(dr_router.access_requests, "consume_use", fake_consume)
     r = c.post("/api/v1/discount-reports", json=_payload(),
@@ -195,8 +198,8 @@ def test_sync_consumes_a_use_and_reports_remaining(client, monkeypatch):
 def test_sync_blocked_when_quota_exhausted(client, monkeypatch):
     c, stored = client
     monkeypatch.setattr(dr_router.access_requests, "consume_use",
-                        lambda db, *, request, action, user_id, email:
-                        {"allowed": False, "used": 30, "quota": 30, "remaining": 0})
+                        lambda db, *, request, action, user_id, email, sync_id=None, commit=True:
+                        {"allowed": False, "used": 30, "quota": 30, "remaining": 0, "duplicate": False})
     r = c.post("/api/v1/discount-reports", json=_payload(),
                headers={"X-User-Session": "good"})
     assert r.status_code == 403

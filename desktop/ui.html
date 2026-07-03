@@ -350,10 +350,19 @@ async function syncNow() {
   await refreshState();
 }
 
+async function flushPending() {
+  if (!state.logged_in || !state.outbox_count) return;
+  const r = await api().flush_outbox();
+  if (r.sent) addBanner("ok", `Synced ${r.sent} queued report(s).`);
+  if (r.rejected) addBanner("warn", `${r.rejected} queued report(s) declined (${r.error || "plan limit"}); moved out of the queue.`);
+  await refreshState();
+}
+
 window.addEventListener("pywebviewready", async () => {
   await refreshState();
   if (state.har_dir) renderScan(await api().scan());
   checkUpdate();
+  flushPending();
 });
 </script>
 </body>

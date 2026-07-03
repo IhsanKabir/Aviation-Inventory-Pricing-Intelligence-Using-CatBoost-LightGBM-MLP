@@ -307,12 +307,21 @@ function ProductCard({
           <p className="page-copy">{product.tagline}</p>
         </div>
         <div className="card" style={{ padding: "28px 32px", marginBottom: "32px" }}>
-          <p className="page-copy" style={{ margin: 0 }}>
-            No releases are published yet. Check back soon
-            {product.latestDownloadOverride
-              ? " — or try the direct mirror once the first build ships."
-              : "."}
-          </p>
+          {product.latestDownloadOverride ? (
+            <>
+              <p className="page-copy" style={{ marginTop: 0 }}>
+                Release details are unavailable right now (GitHub may be rate-limited),
+                but the latest build is always downloadable from the mirror:
+              </p>
+              <a className="button-link" href={product.latestDownloadOverride}>
+                Download latest
+              </a>
+            </>
+          ) : (
+            <p className="page-copy" style={{ margin: 0 }}>
+              No releases are published yet. Check back soon.
+            </p>
+          )}
         </div>
       </>
     );

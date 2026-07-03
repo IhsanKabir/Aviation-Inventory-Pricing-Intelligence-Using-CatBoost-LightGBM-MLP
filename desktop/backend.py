@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
@@ -52,6 +53,15 @@ except Exception:                   # noqa: BLE001
 def config_dir() -> Path:
     base = os.environ.get("APPDATA") or str(Path.home() / ".config")
     return Path(base) / "OTADiscountReport"
+
+
+def _sync_id_for(payload: dict[str, Any]) -> str:
+    """Deterministic id for a report payload: same report (incl. generated_at) ->
+    same id, so an outbox retry dedupes server-side and never double-bills a use.
+    A genuinely new run has a fresh generated_at -> a new id."""
+    import hashlib
+    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:32]
 
 
 class DesktopApi:
@@ -156,13 +166,17 @@ class DesktopApi:
             "has_report": self._report is not None,
         }
 
-    def set_config(self, api_base: str = "", routes: str = "",
-                   travel_date: str = "", har_dir: str = "") -> dict[str, Any]:
+    # Sentinel: set_config leaves a field untouched unless a value is passed. The
+    # UI always sends the current textbox contents, so "" MEANS clear for routes /
+    # travel_date (otherwise an expired date could never be removed and would keep
+    # hard-failing run()).
+    def set_config(self, api_base: str | None = None, routes: str | None = None,
+                   travel_date: str | None = None, har_dir: str | None = None) -> dict[str, Any]:
         if api_base:
             self._config["api_base"] = api_base.strip().rstrip("/")
-        if routes:
+        if routes is not None:
             self._config["routes"] = routes.strip()
-        if travel_date:
+        if travel_date is not None:
             self._config["travel_date"] = travel_date.strip()
         if har_dir:
             self._config["har_dir"] = har_dir.strip()
@@ -247,10 +261,10 @@ class DesktopApi:
                     "error": f"Update check failed: offline? ({exc})"}
 
         def _ver(v: str) -> tuple[int, ...]:
-            try:
-                return tuple(int(x) for x in str(v).split("."))
-            except ValueError:
-                return (0,)
+            # Per-segment parse so a stray prefix/suffix can't collapse the whole
+            # version to (0,) and hide every update (the original .split() bug).
+            parts = re.findall(r"\d+", str(v))
+            return tuple(int(x) for x in parts) or (0,)
 
         newer = _ver(latest.get("version", "0")) > _ver(__version__)
         return {"update_available": newer, "version": latest.get("version"),
@@ -390,9 +404,11 @@ class DesktopApi:
                 return {"ok": False,
                         "error": f"Travel date must be YYYY-MM-DD (got {travel_date!r})."}
             if parsed <= date.today():
-                return {"ok": False,
-                        "error": f"Travel date {travel_date} is not in the future — the "
-                                 "live FirstTrip B2C search needs a future travel date."}
+                # A stale date silently skips the live fetch rather than hard-failing
+                # the whole run; clear it and warn.
+                travel_date = ""
+                self._config["travel_date"] = ""
+                self._save_config()
         try:
             routes = _parse_routes(state["routes"])
         except SystemExit as exc:
@@ -430,9 +446,9 @@ class DesktopApi:
 
             warnings: list[str] = []
             if routes and not travel_date and not any(rd for _o, _d, rd in routes):
-                warnings.append("Routes are set but no travel date — the live "
-                                "FirstTrip B2C fetch was SKIPPED. Enter a future "
-                                "date (YYYY-MM-DD) and re-run.")
+                warnings.append("No future travel date — the live FirstTrip B2C "
+                                "fetch was SKIPPED (a past date is cleared "
+                                "automatically). Enter a future date and re-run.")
             elif routes and report.get("channel_status", {}).get(
                     "Firsttrip-B2C") == "captured_but_empty":
                 warnings.append("The live FirstTrip B2C fetch returned no data — "
@@ -491,7 +507,8 @@ class DesktopApi:
         try:
             response = requests.post(
                 f"{self.api_base}/api/v1/discount-reports",
-                json={"report": payload, "client_version": __version__},
+                json={"report": payload, "client_version": __version__,
+                      "sync_id": _sync_id_for(payload)},
                 headers={"X-User-Session": token}, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as exc:
             return False, 0, f"API unreachable: {exc}", {}
@@ -526,14 +543,24 @@ class DesktopApi:
                 "outbox_count": self._outbox.count()}
 
     def flush_outbox(self) -> dict[str, Any]:
-        sent = failed = 0
+        sent = failed = rejected = 0
+        last_error = ""
         for report_date_iso, payload in self._outbox.pending():
-            ok, status, _error, _body = self._post_report(payload)
+            ok, status, error, _body = self._post_report(payload)
             if ok:
                 self._outbox.mark_done(report_date_iso)
                 sent += 1
+            elif status == 403:
+                # Quota exhausted / plan expired / access revoked: this payload will
+                # NEVER be accepted — move it aside so it stops zombie-retrying, and
+                # surface why. (Idempotent sync_id means no risk if it was billed.)
+                self._outbox.reject(report_date_iso)
+                rejected += 1
+                last_error = error
             else:
                 failed += 1
+                last_error = error
                 if status in (0, 401):   # offline or expired session: stop retrying
                     break
-        return {"sent": sent, "failed": failed, "outbox_count": self._outbox.count()}
+        return {"sent": sent, "failed": failed, "rejected": rejected,
+                "error": last_error, "outbox_count": self._outbox.count()}

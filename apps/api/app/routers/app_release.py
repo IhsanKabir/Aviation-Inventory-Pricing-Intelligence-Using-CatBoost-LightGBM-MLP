@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -177,11 +178,20 @@ def latest_version(
     base = _PUBLIC_BASE or str(request.base_url).rstrip("/")
     suffix = "" if app_key == _DEFAULT_APP else f"?app={app_key}"
     return {
-        "version": tag.lstrip("v"),
+        "version": _version_from_tag(tag),
         "notes": data.get("body") or "",
         "download_url": f"{base}/api/v1/app/download{suffix}",
         "sha256": _sha256_from_release(cfg, data),
     }
+
+
+def _version_from_tag(tag: str) -> str:
+    """Extract the dotted numeric version from a release tag. Handles both
+    'v1.2.3' (iata) and 'desktop-v0.1.5' (discount) — `lstrip('v')` failed the
+    latter (leading 'd'), so every discount-app updater saw a non-numeric
+    version and reported 'up to date' forever. Falls back to the raw tag."""
+    m = re.search(r"v?(\d+(?:\.\d+)*)\s*$", tag)
+    return m.group(1) if m else tag
 
 
 @router.get("/download")

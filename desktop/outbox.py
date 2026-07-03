@@ -39,5 +39,18 @@ class Outbox:
     def mark_done(self, report_date_iso: str) -> None:
         self._path_for(report_date_iso).unlink(missing_ok=True)
 
+    def reject(self, report_date_iso: str) -> None:
+        """Move a permanently-refused payload (403) out of the retry queue into
+        rejected/ so it stops re-firing, but keep it for inspection."""
+        src = self._path_for(report_date_iso)
+        if not src.exists():
+            return
+        rejected_dir = self.directory / "rejected"
+        rejected_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            src.replace(rejected_dir / src.name)
+        except OSError:
+            src.unlink(missing_ok=True)
+
     def count(self) -> int:
         return len(list(self.directory.glob("report_*.json")))

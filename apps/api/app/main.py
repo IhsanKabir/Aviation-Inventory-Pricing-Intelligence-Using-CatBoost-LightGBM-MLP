@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from .config import settings
+from . import ratelimit
 from .db import engine, get_optional_db
 from .repositories import access_requests, discount_reports, exporting, reporting, usage, user_accounts
 from .routers import app_release as app_release_router
@@ -220,7 +221,7 @@ def _enforce_report_access(
 def _require_admin_token(x_admin_token: str | None) -> None:
     if not settings.report_access_admin_token:
         raise HTTPException(status_code=503, detail="Admin approval token is not configured.")
-    if x_admin_token != settings.report_access_admin_token:
+    if not hmac.compare_digest(str(x_admin_token or ""), str(settings.report_access_admin_token)):
         raise HTTPException(status_code=403, detail="Invalid admin approval token.")
 
 
@@ -300,6 +301,7 @@ def register_user(
     request: Request,
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
+    ratelimit.enforce_auth(request, body.email)
     required_db = _require_access_request_db(db)
     try:
         user = user_accounts.register_user(
@@ -325,6 +327,7 @@ def login_user(
     request: Request,
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
+    ratelimit.enforce_auth(request, body.email)
     required_db = _require_access_request_db(db)
     try:
         user = user_accounts.authenticate_user(required_db, email=body.email, password=body.password)
@@ -350,11 +353,13 @@ _OAUTH_BRIDGE_SECRET = os.environ.get("OAUTH_BRIDGE_SECRET", "").strip()
 @app.post("/api/v1/user-auth/set-password")
 def set_user_password(
     body: SetPasswordBody,
+    request: Request,
     x_user_session: str | None = Header(default=None),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
     """Set/replace the signed-in user's password. Lets Google-sign-in users
     (who have no known password) create one for the desktop app."""
+    ratelimit.enforce_auth(request)
     user = _require_user_session(db, x_user_session)
     try:
         user_accounts.set_password(

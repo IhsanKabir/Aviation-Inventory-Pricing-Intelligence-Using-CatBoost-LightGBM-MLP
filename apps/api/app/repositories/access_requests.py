@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -16,6 +16,19 @@ VALID_STATUSES = {"pending", "approved", "rejected", "payment_required"}
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+# The team operates in Dhaka (UTC+6); plan date windows are evaluated against the
+# LOCAL date, not the DB server's UTC CURRENT_DATE, so a plan doesn't start 6h late.
+try:
+    from zoneinfo import ZoneInfo
+    _DHAKA = ZoneInfo("Asia/Dhaka")
+except Exception:  # noqa: BLE001 — tzdata missing; fall back to fixed +6 offset
+    _DHAKA = timezone(timedelta(hours=6))
+
+
+def local_today() -> date:
+    return datetime.now(_DHAKA).date()
 
 
 def ensure_tables(engine: Engine | None) -> None:
@@ -73,6 +86,7 @@ def ensure_tables(engine: Engine | None) -> None:
                     action TEXT NOT NULL,
                     user_id TEXT NULL,
                     email TEXT NULL,
+                    sync_id TEXT NULL,
                     created_at_utc TIMESTAMPTZ NOT NULL
                 )
                 """
@@ -83,6 +97,18 @@ def ensure_tables(engine: Engine | None) -> None:
                 """
                 CREATE INDEX IF NOT EXISTS ix_access_request_usage_request
                 ON report_access_request_usage (request_id)
+                """
+            )
+        )
+        # Existing DBs: add the idempotency column (fresh DBs already have it above).
+        conn.execute(text(
+            "ALTER TABLE report_access_request_usage ADD COLUMN IF NOT EXISTS sync_id TEXT NULL"))
+        conn.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_access_request_usage_sync
+                ON report_access_request_usage (request_id, action, sync_id)
+                WHERE sync_id IS NOT NULL
                 """
             )
         )
@@ -483,33 +509,84 @@ def consume_use(
     action: str,
     user_id: str | None,
     email: str | None,
+    sync_id: str | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """Record one metered use against an approved request, enforcing its quota.
 
-    Usage is ALWAYS recorded (billing analytics even on unlimited plans); the
-    quota only blocks when use_quota is set and already reached. Returns
-    {allowed, used, quota, remaining}.
+    ATOMIC: the quota check and the insert are a single `INSERT ... SELECT ...
+    WHERE (count) < quota` so two concurrent syncs can't both slip past a capped
+    plan. IDEMPOTENT: if `sync_id` was already recorded for this (request, action)
+    the existing row is returned and NOT re-billed — an outbox retry after a 5xx
+    won't double-charge. Usage is always recorded (billing analytics on unlimited
+    plans too). Pass `commit=False` to let the caller commit metering + the report
+    write together (so a later failure doesn't burn a use). Returns
+    {allowed, used, quota, remaining, duplicate}.
     """
     request_id = str(request.get("request_id"))
     quota = request.get("use_quota")
+
+    # Idempotency: a retry of the same sync must not bill again.
+    if sync_id:
+        existing = db.execute(
+            text(
+                """
+                SELECT 1 FROM report_access_request_usage
+                WHERE request_id = :request_id AND action = :action AND sync_id = :sync_id
+                LIMIT 1
+                """
+            ),
+            {"request_id": request_id, "action": action, "sync_id": sync_id},
+        ).first()
+        if existing:
+            used = count_usage(db, request_id, action)
+            remaining = (int(quota) - used) if quota is not None else None
+            return {"allowed": True, "duplicate": True, "used": used,
+                    "quota": int(quota) if quota is not None else None,
+                    "remaining": remaining}
+
+    params = {"usage_id": str(uuid4()), "request_id": request_id, "action": action,
+              "user_id": user_id, "email": email, "sync_id": sync_id, "now": _utcnow()}
+    if quota is None:
+        db.execute(
+            text(
+                """
+                INSERT INTO report_access_request_usage
+                    (usage_id, request_id, action, user_id, email, sync_id, created_at_utc)
+                VALUES (:usage_id, :request_id, :action, :user_id, :email, :sync_id, :now)
+                """
+            ),
+            params,
+        )
+        inserted = True
+    else:
+        # Atomic guarded insert: rows appear only while the current count is under
+        # the cap, so concurrent callers can never both exceed it.
+        params["quota"] = int(quota)
+        result = db.execute(
+            text(
+                """
+                INSERT INTO report_access_request_usage
+                    (usage_id, request_id, action, user_id, email, sync_id, created_at_utc)
+                SELECT :usage_id, :request_id, :action, :user_id, :email, :sync_id, :now
+                WHERE (
+                    SELECT COUNT(*) FROM report_access_request_usage
+                    WHERE request_id = :request_id AND action = :action
+                ) < :quota
+                """
+            ),
+            params,
+        )
+        inserted = (result.rowcount or 0) > 0
+
+    if commit:
+        db.commit()
     used = count_usage(db, request_id, action)
-    if quota is not None and used >= int(quota):
-        return {"allowed": False, "used": used, "quota": int(quota), "remaining": 0}
-    db.execute(
-        text(
-            """
-            INSERT INTO report_access_request_usage (
-                usage_id, request_id, action, user_id, email, created_at_utc
-            ) VALUES (:usage_id, :request_id, :action, :user_id, :email, :now)
-            """
-        ),
-        {"usage_id": str(uuid4()), "request_id": request_id, "action": action,
-         "user_id": user_id, "email": email, "now": _utcnow()},
-    )
-    db.commit()
-    used += 1
+    if not inserted:
+        return {"allowed": False, "duplicate": False, "used": used,
+                "quota": int(quota) if quota is not None else None, "remaining": 0}
     remaining = (int(quota) - used) if quota is not None else None
-    return {"allowed": True, "used": used,
+    return {"allowed": True, "duplicate": False, "used": used,
             "quota": int(quota) if quota is not None else None,
             "remaining": remaining}
 
@@ -580,9 +657,11 @@ def find_latest_request_for_email(
     normalized_email = _normalize_text(email)
     if not normalized_email or not statuses:
         return None
+    # Evaluate the window against the Dhaka-local date (bind param, not the DB's
+    # UTC CURRENT_DATE) so plans don't start 6h late / run 6h long.
     window_sql = (
-        "AND (requested_start_date IS NULL OR requested_start_date <= CURRENT_DATE) "
-        "AND (requested_end_date IS NULL OR requested_end_date >= CURRENT_DATE)"
+        "AND (requested_start_date IS NULL OR requested_start_date <= :as_of) "
+        "AND (requested_end_date IS NULL OR requested_end_date >= :as_of)"
         if enforce_window else "")
     row = (
         db.execute(
@@ -599,7 +678,7 @@ def find_latest_request_for_email(
                 """
             ),
             {"page_key": normalized_page_key, "email": normalized_email,
-             "statuses": list(statuses)},
+             "statuses": list(statuses), "as_of": local_today()},
         )
         .mappings()
         .first()

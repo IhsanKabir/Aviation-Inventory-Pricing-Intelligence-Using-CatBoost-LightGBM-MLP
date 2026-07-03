@@ -302,7 +302,7 @@ def set_user_status(db: Session, *, user_id: str, status: str) -> dict[str, Any]
 def register_user(db: Session, *, email: str, password: str, full_name: str | None = None) -> dict[str, Any]:
     normalized_email = _normalize_email(email)
     if get_user_by_email(db, normalized_email):
-        raise ValueError("An account already exists for this email.")
+        raise ValueError("Could not create the account with those details.")
     now = _utcnow()
     user_id = str(uuid4())
     db.execute(

@@ -46,6 +46,9 @@ REPORT_DATE_FUTURE_DAYS = 2             # ...but a future date would SHADOW /lat
 class DiscountReportBody(BaseModel):
     report: dict[str, Any] = Field(..., description="sanitize_report_for_sync payload")
     client_version: str | None = None
+    # Stable per-report id from the desktop, so an outbox retry after a network
+    # blip does not bill a second metered use for the same report.
+    sync_id: str | None = None
 
 
 def _require_db(db: Session | None) -> Session:
@@ -78,13 +81,19 @@ def _require_page_access(db: Session, user: dict[str, Any]) -> dict[str, Any]:
             detail=payment.get("decision_note")
             or "Payment is required to activate your discount-report plan. "
                "Contact the admin to renew.")
-    expired = access_requests.find_latest_request_for_email(
+    windowed = access_requests.find_latest_request_for_email(
         db, page_key=PAGE_KEY, email=email, statuses=("approved",))
-    if expired:   # approved once, but the date window no longer covers today
+    if windowed:   # approved once, but the date window doesn't cover today
+        today = access_requests.local_today()
+        start = windowed.get("requested_start_date")
+        if start and str(start) > today.isoformat():
+            raise HTTPException(
+                status_code=403,
+                detail=f"Your discount-report plan starts on {start}.")
         raise HTTPException(
             status_code=403,
             detail="Your discount-report access period has expired "
-                   f"(ended {expired.get('requested_end_date')}). Submit a new "
+                   f"(ended {windowed.get('requested_end_date')}). Submit a new "
                    "request or ask the admin to renew your plan.")
     raise HTTPException(
         status_code=403,
@@ -145,11 +154,14 @@ def submit_report(
     report_date = _parse_report_date(sanitized)
 
     # PER-USE METERING: a sync is the billable unit; reads stay free for the team.
-    # Usage is always recorded (analytics); the quota only blocks when set.
+    # Atomic + idempotent (sync_id), and committed TOGETHER with the report write
+    # below (commit=False) so a storage failure can't burn a use.
     use = access_requests.consume_use(
         required_db, request=approved, action="sync",
-        user_id=user.get("user_id"), email=user.get("email"))
+        user_id=user.get("user_id"), email=user.get("email"),
+        sync_id=body.sync_id, commit=False)
     if not use["allowed"]:
+        required_db.rollback()
         raise HTTPException(
             status_code=403,
             detail=f"Your plan's included uses are exhausted "
@@ -162,9 +174,12 @@ def submit_report(
         report_data=sanitized,
         submitted_by_user_id=user.get("user_id"),
         submitted_by_email=user.get("email"),
+        commit=False,
     )
+    required_db.commit()    # metering + storage land atomically
     result["normalized"] = bool(sanitized.get("normalized"))
     result["uses_remaining"] = use["remaining"]     # None = unlimited plan
+    result["duplicate"] = use.get("duplicate", False)
     return result
 
 

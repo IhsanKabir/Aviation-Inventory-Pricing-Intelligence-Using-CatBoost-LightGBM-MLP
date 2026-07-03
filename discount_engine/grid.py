@@ -350,7 +350,9 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
             added = 0
             for (o, d), rws in groups.items():
                 if (o, d) not in live_covered:
-                    b2c_rows_by_route[(o, d, "har")] = rws
+                    # UNION across multiple failsafe HARs for the same route, don't
+                    # overwrite — a second B2C HAR should add coverage, not replace it.
+                    b2c_rows_by_route.setdefault((o, d, "har"), []).extend(rws)
                     added += len(rws)
             if added:
                 b2c_har_used.append(Path(h).name)
@@ -375,16 +377,31 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
     tb_tag = "  [true-base]" if true_base is not None else ""
 
     # Per-channel capture status: "ok" | "captured_but_empty" (a HAR was provided but
-    # parsed to zero cells — e.g. the ShareTrip body-eviction trap) | "manual" |
-    # "not_attempted". Lets a viewer distinguish "no discount" from "capture failed".
+    # parsed to zero cells — e.g. the ShareTrip body-eviction trap) | "parse_failed"
+    # (a HAR raised, e.g. a truncated DevTools export) | "manual" | "not_attempted".
     channel_status: dict[str, str] = {}
 
     def add(label: str, hars: Optional[list[str]], collector, prefix: str) -> None:
         if not hars:
             return
-        channel_cells[label] = _merge_cells([collector(h) for h in hars])
+        # Isolate each HAR: one corrupt/truncated export must not kill the whole run
+        # (the FT B2C paths already do this). Partial results from the others still
+        # merge, and the failure is surfaced via channel_status + the run log.
+        parsed, failed = [], []
+        for h in hars:
+            try:
+                parsed.append(collector(h))
+            except Exception as exc:  # noqa: BLE001
+                failed.append(Path(h).name)
+                print(f"  ! {label}: could not parse {Path(h).name}: {exc}")
+        channel_cells[label] = _merge_cells(parsed)
         sources[label] = f"{prefix}: {', '.join(Path(h).name for h in hars)}"
-        channel_status[label] = "ok" if channel_cells[label] else "captured_but_empty"
+        if channel_cells[label]:
+            channel_status[label] = "ok"
+        elif failed:
+            channel_status[label] = "parse_failed"
+        else:
+            channel_status[label] = "captured_but_empty"
 
     add("AKIJ AIR-B2B", akij_hars,
         lambda h: collect_akij(h, "realized_discount_pct", true_base), "HAR")
