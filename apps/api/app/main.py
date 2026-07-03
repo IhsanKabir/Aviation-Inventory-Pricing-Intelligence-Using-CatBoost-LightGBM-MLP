@@ -101,6 +101,10 @@ class UserLoginBody(BaseModel):
     password: str
 
 
+class AdminUserStatusBody(BaseModel):
+    status: str   # "active" | "disabled"
+
+
 class SetPasswordBody(BaseModel):
     password: str
 
@@ -655,6 +659,36 @@ def list_access_requests(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"items": items}
+
+
+@app.get("/api/v1/admin/users")
+def admin_list_users(
+    x_admin_token: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    """All accounts for the admin console (admin-token gated)."""
+    _require_admin_token(x_admin_token)
+    required_db = _require_access_request_db(db)
+    return {"items": user_accounts.list_users(required_db)}
+
+
+@app.patch("/api/v1/admin/users/{user_id}")
+def admin_set_user_status(
+    user_id: str,
+    body: AdminUserStatusBody,
+    x_admin_token: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    """Account kill switch: 'disabled' revokes every live session immediately."""
+    _require_admin_token(x_admin_token)
+    required_db = _require_access_request_db(db)
+    try:
+        payload = user_accounts.set_user_status(required_db, user_id=user_id, status=body.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not payload:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return payload
 
 
 @app.patch("/api/v1/access-requests/{request_id}")

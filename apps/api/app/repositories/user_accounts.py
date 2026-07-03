@@ -223,6 +223,82 @@ def set_password(db: Session, *, user_id: str, new_password: str) -> None:
     db.commit()
 
 
+VALID_USER_STATUSES = {"active", "disabled"}
+
+
+def list_users(db: Session, *, limit: int = 200) -> list[dict[str, Any]]:
+    """All accounts for the admin console (no password hashes), newest first."""
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT user_id, email, full_name, status, auth_provider,
+                       created_at_utc, last_login_at_utc
+                FROM report_users
+                ORDER BY created_at_utc DESC
+                LIMIT :limit
+                """
+            ),
+            {"limit": max(1, min(int(limit), 1000))},
+        )
+        .mappings()
+        .all()
+    )
+    return [
+        {
+            "user_id": r["user_id"],
+            "email": r["email"],
+            "full_name": r["full_name"],
+            "status": r["status"],
+            "auth_provider": r.get("auth_provider"),
+            "created_at_utc": r["created_at_utc"].isoformat() if r["created_at_utc"] else None,
+            "last_login_at_utc": r["last_login_at_utc"].isoformat() if r["last_login_at_utc"] else None,
+        }
+        for r in rows
+    ]
+
+
+def set_user_status(db: Session, *, user_id: str, status: str) -> dict[str, Any] | None:
+    """The account kill switch. Disabling also revokes EVERY live session so the
+    user is out immediately (get_session_user additionally filters on status, so
+    even a missed session dies at the next request)."""
+    normalized = str(status or "").strip().lower()
+    if normalized not in VALID_USER_STATUSES:
+        raise ValueError("status must be 'active' or 'disabled'")
+    now = _utcnow()
+    db.execute(
+        text(
+            """
+            UPDATE report_users
+            SET status = :status, updated_at_utc = :now
+            WHERE user_id = :user_id
+            """
+        ),
+        {"status": normalized, "now": now, "user_id": user_id},
+    )
+    if normalized != "active":
+        db.execute(
+            text(
+                """
+                UPDATE report_user_sessions
+                SET revoked_at_utc = :now
+                WHERE user_id = :user_id AND revoked_at_utc IS NULL
+                """
+            ),
+            {"now": now, "user_id": user_id},
+        )
+    db.commit()
+    row = (
+        db.execute(
+            text("SELECT user_id, email, full_name, status FROM report_users WHERE user_id = :user_id"),
+            {"user_id": user_id},
+        )
+        .mappings()
+        .first()
+    )
+    return dict(row) if row else None
+
+
 def register_user(db: Session, *, email: str, password: str, full_name: str | None = None) -> dict[str, Any]:
     normalized_email = _normalize_email(email)
     if get_user_by_email(db, normalized_email):

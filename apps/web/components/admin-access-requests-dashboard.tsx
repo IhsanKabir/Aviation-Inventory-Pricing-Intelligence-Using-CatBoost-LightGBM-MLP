@@ -34,15 +34,23 @@ export function AdminAccessRequestsDashboard({
   const [statusFilter, setStatusFilter] = useState<AdminStatusFilter>("all");
   const [decisionNotes, setDecisionNotes] = useState<Record<string, string>>({});
   const [useQuotas, setUseQuotas] = useState<Record<string, string>>({});
+  const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const filteredItems = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const bySearch = needle
+      ? items.filter((item) =>
+          `${item.requester_email ?? ""} ${item.requester_name ?? ""} ${item.page_key}`
+            .toLowerCase()
+            .includes(needle))
+      : items;
     if (statusFilter === "all") {
-      return items;
+      return bySearch;
     }
-    return items.filter((item) => item.status === statusFilter);
-  }, [items, statusFilter]);
+    return bySearch.filter((item) => item.status === statusFilter);
+  }, [items, statusFilter, search]);
 
   const statusOptions = useMemo(
     () =>
@@ -116,6 +124,13 @@ export function AdminAccessRequestsDashboard({
       <div className="admin-toolbar">
         <div>
           <div className="admin-section-kicker">Queue filters</div>
+          <input
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search email, name, or page…"
+            style={{ minWidth: 260, margin: "6px 0" }}
+            type="search"
+            value={search}
+          />
           <div className="chip-row admin-filter-row">
             {statusOptions.map(({ status, count }) => (
             <button
@@ -161,6 +176,13 @@ export function AdminAccessRequestsDashboard({
                     <span>{item.requester_email || item.requester_contact || "No contact provided"}</span>
                     <span>{item.page_key}</span>
                     <span>Submitted {item.created_at_utc || "-"}</span>
+                    {item.status === "approved" && item.requested_end_date ? (
+                      <span className={item.requested_end_date < new Date().toISOString().slice(0, 10) ? "admin-chip-expired" : undefined}>
+                        {item.requested_end_date < new Date().toISOString().slice(0, 10)
+                          ? `EXPIRED ${item.requested_end_date}`
+                          : `expires ${item.requested_end_date}`}
+                      </span>
+                    ) : null}
                     {item.use_quota !== null && item.use_quota !== undefined ? (
                       <span>Uses: {item.use_count ?? 0}/{item.use_quota}</span>
                     ) : item.use_count ? (
@@ -220,15 +242,38 @@ export function AdminAccessRequestsDashboard({
               </label>
 
               <div className="button-row admin-decision-row">
-                <button className="button-link" data-pending={isPending} onClick={() => applyDecision(item.request_id, "approved")} type="button">
-                  Approve
-                </button>
+                {item.status !== "approved" ? (
+                  <button className="button-link" data-pending={isPending} onClick={() => applyDecision(item.request_id, "approved")} type="button">
+                    Approve
+                  </button>
+                ) : (
+                  <>
+                    <button className="button-link" data-pending={isPending} onClick={() => applyDecision(item.request_id, "approved")} type="button">
+                      Update plan (quota/note)
+                    </button>
+                    <button
+                      className="button-link ghost"
+                      data-pending={isPending}
+                      onClick={() => {
+                        if (window.confirm(`Revoke ${item.requester_email || "this user"}'s ${item.page_key} access?`)) {
+                          applyDecision(item.request_id, "rejected");
+                        }
+                      }}
+                      style={{ color: "var(--alert)" }}
+                      type="button"
+                    >
+                      Revoke access
+                    </button>
+                  </>
+                )}
                 <button className="button-link ghost" data-pending={isPending} onClick={() => applyDecision(item.request_id, "payment_required")} type="button">
                   Mark payment required
                 </button>
-                <button className="button-link ghost" data-pending={isPending} onClick={() => applyDecision(item.request_id, "rejected")} type="button">
-                  Reject
-                </button>
+                {item.status !== "approved" && item.status !== "rejected" ? (
+                  <button className="button-link ghost" data-pending={isPending} onClick={() => applyDecision(item.request_id, "rejected")} type="button">
+                    Reject
+                  </button>
+                ) : null}
               </div>
             </div>
           ))}

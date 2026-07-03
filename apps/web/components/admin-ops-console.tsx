@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { AdminAccessRequestsDashboard } from "@/components/admin-access-requests-dashboard";
+import { AdminUsersPanel } from "@/components/admin-users-panel";
 import { AdminSearchConfigPanel } from "@/components/admin-search-config-panel";
 import type { ReportAccessRequest } from "@/lib/api";
 import type { AdminSearchConfig } from "@/lib/search-config";
@@ -86,6 +87,17 @@ export function AdminOpsConsole({
           </div>
         </div>
         <AdminAccessRequestsDashboard initialItems={initialItems} onItemsChange={setAccessItems} />
+      </section>
+
+      <section className="admin-section">
+        <div className="admin-section-header">
+          <div>
+            <div className="admin-section-kicker">Accounts</div>
+            <h2>User accounts</h2>
+            <p>The kill switch: disable an account to revoke every live session instantly (web and desktop). Re-enable restores sign-in; page access still needs its approved request.</p>
+          </div>
+        </div>
+        <AdminUsersPanel />
       </section>
 
       <section className="admin-section">
