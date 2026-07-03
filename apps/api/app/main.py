@@ -98,6 +98,10 @@ class UserLoginBody(BaseModel):
     password: str
 
 
+class SetPasswordBody(BaseModel):
+    password: str
+
+
 class UserOAuthLoginBody(BaseModel):
     email: str
     full_name: str | None = None
@@ -334,6 +338,24 @@ def login_user(
 # the Google sign-in via NextAuth) — without it, this endpoint would mint a real
 # session for ANY client-asserted email. Fail closed when unconfigured.
 _OAUTH_BRIDGE_SECRET = os.environ.get("OAUTH_BRIDGE_SECRET", "").strip()
+
+
+@app.post("/api/v1/user-auth/set-password")
+def set_user_password(
+    body: SetPasswordBody,
+    x_user_session: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    """Set/replace the signed-in user's password. Lets Google-sign-in users
+    (who have no known password) create one for the desktop app."""
+    user = _require_user_session(db, x_user_session)
+    try:
+        user_accounts.set_password(
+            _require_access_request_db(db), user_id=user["user_id"], new_password=body.password
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "email": user.get("email")}
 
 
 @app.post("/api/v1/user-auth/oauth-login")

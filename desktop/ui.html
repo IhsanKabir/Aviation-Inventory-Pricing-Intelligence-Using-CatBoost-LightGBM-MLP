@@ -68,6 +68,7 @@
         <input id="har_dir" readonly placeholder="Pick the folder with today's .har files">
       </label>
       <button class="secondary" onclick="pickFolder()">Browse…</button>
+      <button class="secondary" onclick="archiveHars()" title="Move all .har files into archive/YYYY-MM-DD/ so today's captures start clean">Archive old HARs</button>
       <label>Live routes (FirstTrip B2C) <input id="routes"></label>
       <label>Travel date (YYYY-MM-DD) <input id="travel_date" placeholder="2026-07-30"></label>
       <button class="secondary" onclick="saveConfig()">Save</button>
@@ -163,6 +164,14 @@ async function pickFolder() {
   renderScan(scan);
 }
 
+async function archiveHars() {
+  if (!confirm("Move ALL .har files in this folder into archive/" + new Date().toISOString().slice(0,10) + "/ ?")) return;
+  const result = await api().archive_hars();
+  if (!result.ok) { addBanner("err", result.error); return; }
+  addBanner("ok", result.moved ? `Archived ${result.moved} file(s) to ${result.dest}` : "Folder is already empty.");
+  renderScan(await api().scan());
+}
+
 async function saveConfig() {
   await api().set_config(
     "", document.getElementById("routes").value,
@@ -194,6 +203,11 @@ function renderScan(scan) {
 function setStatus(text) { document.getElementById("status").textContent = text; }
 
 async function runReport() {
+  // Auto-save the CURRENT inputs first — running with a typed-but-unsaved travel
+  // date silently skipped the live FT B2C fetch (real field bug, 2026-07-03).
+  await api().set_config(
+    "", document.getElementById("routes").value,
+    document.getElementById("travel_date").value, "");
   const skips = scanFiles
     .filter((f, i) => { const cb = document.querySelector(`input[data-idx="${i}"]`); return cb && !cb.checked; })
     .map(f => f.path);
@@ -205,14 +219,27 @@ async function runReport() {
   }, 1500);
   try {
     const result = await api().run(skips);
+    showRunLog(result.log);
     if (!result.ok) { addBanner("err", result.error); setStatus("Failed."); return; }
     lastReport = result.report;
     renderReport(result.report, result.prev_available);
+    for (const w of result.warnings || []) addBanner("warn", w);
     setStatus("Done.");
   } finally {
     clearInterval(poll);
     document.getElementById("run-btn").disabled = false;
   }
+}
+
+function showRunLog(log) {
+  let box = document.getElementById("run-log");
+  if (!box) {
+    box = document.createElement("details");
+    box.id = "run-log";
+    box.innerHTML = '<summary class="muted" style="cursor:pointer">Run log (engine warnings & channel notes)</summary><pre style="font-size:11px;white-space:pre-wrap;background:#f8f9fb;border:1px solid var(--line);border-radius:6px;padding:8px;max-height:220px;overflow:auto"></pre>';
+    document.getElementById("status").after(box);
+  }
+  box.querySelector("pre").textContent = (log || "").trim() || "(no engine output)";
 }
 
 function gridTable(title, block, channelStatus) {

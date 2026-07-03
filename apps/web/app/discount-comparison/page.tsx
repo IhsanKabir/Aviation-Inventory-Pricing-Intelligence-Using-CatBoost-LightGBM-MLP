@@ -171,6 +171,9 @@ export default async function DiscountComparisonPage({ searchParams }: PageProps
             {selectedDate
               ? `No report is stored for ${selectedDate}.`
               : "No discount report has been synced yet. Run the desktop app against today's HAR captures and press Sync."}
+        </p>
+        <p>
+          <Link className="button-link" href="/discount-comparison/guide">HAR collection guide</Link>
           </p>
           {selectedDate ? (
             <Link className="button-link" href="/discount-comparison">View latest</Link>
@@ -207,7 +210,10 @@ export default async function DiscountComparisonPage({ searchParams }: PageProps
             {stored.prev_report_date ? ` · changes vs ${stored.prev_report_date}` : " · first stored report (no change diff)"}
           </p>
         </div>
-        <a className="button-link" href={xlsxHref}>Download xlsx</a>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Link className="button-link" href="/discount-comparison/guide">HAR guide</Link>
+          <a className="button-link" href={xlsxHref}>Download xlsx</a>
+        </div>
       </section>
 
       {report.normalized === false ? (

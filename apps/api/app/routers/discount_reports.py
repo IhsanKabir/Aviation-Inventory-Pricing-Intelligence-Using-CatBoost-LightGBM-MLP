@@ -63,13 +63,32 @@ def _require_user(db: Session, x_user_session: str | None) -> dict[str, Any]:
 
 
 def _require_page_access(db: Session, user: dict[str, Any]) -> None:
+    email = user.get("email")
     approved = access_requests.find_approved_request_for_email(
-        db, page_key=PAGE_KEY, email=user.get("email"))
-    if not approved:
+        db, page_key=PAGE_KEY, email=email)
+    if approved:
+        return
+    # Tier-aware 403s: payment plans and expired windows get specific messages.
+    payment = access_requests.find_latest_request_for_email(
+        db, page_key=PAGE_KEY, email=email, statuses=("payment_required",))
+    if payment:
         raise HTTPException(
             status_code=403,
-            detail="An approved 'discount-comparison' access request is required. "
-                   "Submit one from the web app and ask an admin to approve it.")
+            detail=payment.get("decision_note")
+            or "Payment is required to activate your discount-report plan. "
+               "Contact the admin to renew.")
+    expired = access_requests.find_latest_request_for_email(
+        db, page_key=PAGE_KEY, email=email, statuses=("approved",))
+    if expired:   # approved once, but the date window no longer covers today
+        raise HTTPException(
+            status_code=403,
+            detail="Your discount-report access period has expired "
+                   f"(ended {expired.get('requested_end_date')}). Submit a new "
+                   "request or ask the admin to renew your plan.")
+    raise HTTPException(
+        status_code=403,
+        detail="An approved 'discount-comparison' access request is required. "
+               "Submit one from the web app and ask an admin to approve it.")
 
 
 def _parse_report_date(report: dict[str, Any]) -> date:

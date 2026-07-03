@@ -200,6 +200,29 @@ def get_user_by_email(db: Session, email: str) -> dict[str, Any] | None:
     return _row_to_user_payload(dict(row)) if row else None
 
 
+def set_password(db: Session, *, user_id: str, new_password: str) -> None:
+    """Set/replace the account password (session-authenticated caller).
+
+    Exists chiefly for Google-sign-in users: upsert_oauth_user seeds a RANDOM
+    password hash, so they cannot use email+password surfaces (the desktop app)
+    until they set one here.
+    """
+    if len(new_password or "") < 8:
+        raise ValueError("Password must be at least 8 characters.")
+    db.execute(
+        text(
+            """
+            UPDATE report_users
+            SET password_hash = :password_hash, updated_at_utc = :now
+            WHERE user_id = :user_id
+            """
+        ),
+        {"password_hash": _hash_password(new_password), "now": _utcnow(),
+         "user_id": user_id},
+    )
+    db.commit()
+
+
 def register_user(db: Session, *, email: str, password: str, full_name: str | None = None) -> dict[str, Any]:
     normalized_email = _normalize_email(email)
     if get_user_by_email(db, normalized_email):

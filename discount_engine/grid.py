@@ -318,6 +318,7 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
                  sharetrip_hars: Optional[list[str]] = None,
                  akij_hars: Optional[list[str]] = None,
                  bdfare_hars: Optional[list[str]] = None,
+                 firsttrip_b2c_hars: Optional[list[str]] = None,
                  manual_overrides: Optional[dict[str, Any]] = None,
                  use_true_base: bool = True,
                  run_dt: Optional[datetime] = None) -> dict[str, Any]:
@@ -330,6 +331,30 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
     ft_b2b_rows_per_har = [firsttrip.parse_b2b_commissions(h)
                            for h in (firsttrip_b2b_hars or [])]
     b2c_rows_by_route = _fetch_firsttrip_b2c(routes, date) if routes else {}
+
+    # FT B2C HAR FAILSAFE: when the live fetch is blocked (offline/CF-challenged)
+    # or wasn't configured, a saved b2c-api.firsttrip.com search HAR supplies the
+    # same rows. Live wins per route; the HAR only fills routes live didn't cover.
+    b2c_har_used: list[str] = []
+    if firsttrip_b2c_hars:
+        live_covered = {(o, d) for (o, d, _dt), rws in b2c_rows_by_route.items() if rws}
+        for h in firsttrip_b2c_hars:
+            try:
+                har_rows = firsttrip.parse_b2c_har(h)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ! FT B2C HAR {Path(h).name}: {exc}")
+                continue
+            groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+            for r in har_rows:
+                groups.setdefault((r["origin"], r["destination"]), []).append(r)
+            added = 0
+            for (o, d), rws in groups.items():
+                if (o, d) not in live_covered:
+                    b2c_rows_by_route[(o, d, "har")] = rws
+                    added += len(rws)
+            if added:
+                b2c_har_used.append(Path(h).name)
+                print(f"  FT B2C failsafe: {added} offers from {Path(h).name}")
 
     # True-base oracle: BDFare/AKIJ domestic cells get recomputed on the canonical base
     # so the grid shows the ACTUAL % (on by default; --no-true-base opts out). Built
@@ -379,9 +404,14 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
     add("Go Zayaan", gozayaan_hars, collect_gozayaan, "HAR")
     add("Amy", amy_hars, collect_amy, "HAR")
 
-    if routes:
+    if routes or b2c_rows_by_route:
         channel_cells["Firsttrip-B2C"] = _collect_firsttrip_b2c_rows(b2c_rows_by_route)
-        sources["Firsttrip-B2C"] = f"live: {len(routes)} route(s)"
+        parts = []
+        if routes:
+            parts.append(f"live: {len(routes)} route(s)")
+        if b2c_har_used:
+            parts.append(f"HAR failsafe: {', '.join(b2c_har_used)}")
+        sources["Firsttrip-B2C"] = " | ".join(parts)
         channel_status["Firsttrip-B2C"] = ("ok" if channel_cells["Firsttrip-B2C"]
                                            else "captured_but_empty")
 
@@ -771,6 +801,7 @@ def write_single_sheet_xlsx(report: dict[str, Any],
 
 # Substrings that identify which channel a HAR belongs to (first match wins).
 HAR_SIGNATURES: list[tuple[str, str]] = [
+    ("firsttrip_b2c", "b2c-api.firsttrip.com"),   # before b2b: hostname is specific
     ("firsttrip_b2b", "/api/Search/Progressive"),
     ("bdfare", "/bdfare-search/api/"),
     ("amy", "amyx.amybd.com"),
@@ -779,6 +810,10 @@ HAR_SIGNATURES: list[tuple[str, str]] = [
     ("gozayaan", "production.gozayaan.com/api/flight"),
     ("sharetrip", "/flight/search/available-flights"),
 ]
+
+# Cap the content sniff: request URLs appear early in a HAR, and reading a 500 MB
+# capture whole just to identify it was the original memory bug (review P0).
+_SNIFF_BYTES = 4_000_000
 
 
 # Filename hints take precedence (collector names files by channel; downloads are named by site).
@@ -789,6 +824,8 @@ FILENAME_HINTS: list[tuple[str, str]] = [
     ("gozayaan", "gozyaan"),
     ("gozayaan", "goz"),  # catch typos (gozyaaaan, gozaayan, …); no other channel filename has "goz"
     ("sharetrip", "sharetrip"),
+    ("firsttrip_b2c", "b2c-api.firsttrip"),
+    ("firsttrip_b2c", "firsttrip_b2c"),
     ("firsttrip_b2b", "booking.firsttrip"),
     ("firsttrip_b2b", "firsttrip_b2b"),
     ("amy", "amyweb"),
@@ -797,13 +834,14 @@ FILENAME_HINTS: list[tuple[str, str]] = [
 
 
 def detect_channel(har_path: Path) -> Optional[str]:
-    """Identify a HAR's channel by filename first, then by scanning request URLs."""
+    """Identify a HAR's channel by filename first, then by sniffing the head."""
     name = har_path.name.lower()
     for channel, hint in FILENAME_HINTS:
         if hint in name:
             return channel
     try:
-        text = har_path.read_text(encoding="utf-8", errors="ignore")
+        with open(har_path, encoding="utf-8", errors="ignore") as f:
+            text = f.read(_SNIFF_BYTES)
     except OSError:
         return None
     for channel, needle in HAR_SIGNATURES:

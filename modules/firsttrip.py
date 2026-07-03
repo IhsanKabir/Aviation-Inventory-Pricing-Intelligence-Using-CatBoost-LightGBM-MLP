@@ -373,8 +373,16 @@ def fetch_b2c_discounts(origin: str, destination: str, date: str,
         the gross TOTAL after the cap is applied
     Returns one row per offer; use summarize_b2c_discounts() for the grid cell.
     """
+    return _b2c_rows_from_offers(_raw_offers(origin, destination, date, cabin),
+                                 cabin, airline_code)
+
+
+def _b2c_rows_from_offers(offers: List[Dict[str, Any]], cabin: str = "Economy",
+                          airline_code: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Offer dicts -> B2C discount rows. Shared by the LIVE fetch and the HAR
+    failsafe (parse_b2c_har) — same response shape either way."""
     rows: List[Dict[str, Any]] = []
-    for o in _raw_offers(origin, destination, date, cabin):
+    for o in offers:
         base = _normalize(o, cabin, airline_code)
         if not base:
             continue
@@ -405,6 +413,36 @@ def fetch_b2c_discounts(origin: str, destination: str, date: str,
             "special_rate": float(o.get("specialCouponDiscountRate") or 0) or None,
         })
     return rows
+
+
+def parse_b2c_har(har_path: str) -> List[Dict[str, Any]]:
+    """FirstTrip B2C rows from a SAVED b2c-api.firsttrip.com Search HAR.
+
+    FAILSAFE for fetch_b2c_discounts: when the live fetch is blocked (offline,
+    firewall, Cloudflare challenge), capture the same search in the browser and
+    export it — the HAR body carries the identical SSE stream, so this yields the
+    same rows and feeds the same summarize/true-base pipeline.
+    """
+    import json as _json
+    har = _json.loads(Path(har_path).read_text(encoding="utf-8-sig"))
+    offers: List[Dict[str, Any]] = []
+    for entry in (har.get("log") or {}).get("entries", []):
+        url = (entry.get("request") or {}).get("url", "")
+        if "b2c-api.firsttrip.com" not in url or "/flight/api/v1/Search" not in url:
+            continue
+        text = ((entry.get("response") or {}).get("content") or {}).get("text") or ""
+        for chunk in text.split("\ndata: "):
+            chunk = chunk.replace("data: ", "", 1).strip()
+            if not chunk:
+                continue
+            try:
+                data = json_safe_loads(chunk)
+                offers += ((data.get("data") or {})
+                           .get("airSearchResponseWithFilters", {})
+                           .get("airSearchResponses", []))
+            except Exception:  # noqa: BLE001 — skip malformed SSE chunks
+                pass
+    return _b2c_rows_from_offers(offers)
 
 
 def summarize_b2c_discounts(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:

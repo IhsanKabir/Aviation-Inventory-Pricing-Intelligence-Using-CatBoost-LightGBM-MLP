@@ -196,6 +196,7 @@ const PRODUCTS: Product[] = [
     assetMatch: (n) => n === "OTADiscountReport.zip" || n.endsWith(".zip"),
     requirements:
       "Windows 10/11 · 8 GB RAM recommended (HAR parsing) · Sign-in with an approved discount-comparison access request",
+    guideUrl: "/discount-comparison/guide",
     latestDownloadOverride: DISCOUNT_DOWNLOAD_URL,
     fallback: [],
   },

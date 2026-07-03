@@ -77,10 +77,44 @@ def test_unapproved_user_is_403(client, monkeypatch):
     c, _ = client
     monkeypatch.setattr(dr_router.access_requests, "find_approved_request_for_email",
                         lambda db, *, page_key, email: None)
+    monkeypatch.setattr(dr_router.access_requests, "find_latest_request_for_email",
+                        lambda db, *, page_key, email, statuses=("approved",),
+                        enforce_window=False: None)
     r = c.post("/api/v1/discount-reports", json=_payload(),
                headers={"X-User-Session": "good"})
     assert r.status_code == 403
     assert "discount-comparison" in r.json()["detail"]
+
+
+def test_tier_403_messages(client, monkeypatch):
+    """payment_required and expired-window approvals get specific 403 details."""
+    c, _ = client
+    monkeypatch.setattr(dr_router.access_requests, "find_approved_request_for_email",
+                        lambda db, *, page_key, email: None)
+
+    def payment_lookup(db, *, page_key, email, statuses=("approved",),
+                       enforce_window=False):
+        if "payment_required" in statuses:
+            return {"request_id": "r-p",
+                    "decision_note": "Weekly plan expired - pay to renew."}
+        return None
+
+    monkeypatch.setattr(dr_router.access_requests, "find_latest_request_for_email",
+                        payment_lookup)
+    r = c.get("/api/v1/discount-reports/latest", headers={"X-User-Session": "good"})
+    assert r.status_code == 403 and "pay to renew" in r.json()["detail"]
+
+    def expired_lookup(db, *, page_key, email, statuses=("approved",),
+                       enforce_window=False):
+        if "approved" in statuses and not enforce_window:
+            return {"request_id": "r-e", "requested_end_date": "2026-06-30"}
+        return None
+
+    monkeypatch.setattr(dr_router.access_requests, "find_latest_request_for_email",
+                        expired_lookup)
+    r = c.get("/api/v1/discount-reports/latest", headers={"X-User-Session": "good"})
+    assert r.status_code == 403 and "expired" in r.json()["detail"]
+    assert "2026-06-30" in r.json()["detail"]
 
 
 def test_oversized_payload_is_413(client):

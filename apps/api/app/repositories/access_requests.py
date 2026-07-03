@@ -460,32 +460,55 @@ def find_approved_request_for_email(
     page_key: str,
     email: str | None,
 ) -> dict[str, Any] | None:
-    """Latest APPROVED request for this page by requester email (case-insensitive).
+    """Latest APPROVED request for this page by requester email (case-insensitive),
+    honoring the requested date window — an approval whose end date has passed no
+    longer grants access. That is how time-boxed tiers (day/week/month/year) work:
+    the admin approves with the matching end date; expiry is automatic.
 
     Desktop/API clients authenticate with a session token and don't track request
-    ids, so page access is resolved by the signed-in user's email instead. Returns
-    the request payload or None.
+    ids, so page access is resolved by the signed-in user's email instead.
     """
+    return find_latest_request_for_email(
+        db, page_key=page_key, email=email,
+        statuses=("approved",), enforce_window=True)
+
+
+def find_latest_request_for_email(
+    db: Session,
+    *,
+    page_key: str,
+    email: str | None,
+    statuses: tuple[str, ...] = ("approved",),
+    enforce_window: bool = False,
+) -> dict[str, Any] | None:
+    """Latest request for (page, email) in the given statuses; optionally only
+    those whose requested start/end window covers today."""
     normalized_page_key = _normalize_text(page_key)
     if normalized_page_key not in VALID_PAGE_KEYS:
         raise ValueError("Unsupported page key")
     normalized_email = _normalize_text(email)
-    if not normalized_email:
+    if not normalized_email or not statuses:
         return None
+    window_sql = (
+        "AND (requested_start_date IS NULL OR requested_start_date <= CURRENT_DATE) "
+        "AND (requested_end_date IS NULL OR requested_end_date >= CURRENT_DATE)"
+        if enforce_window else "")
     row = (
         db.execute(
             text(
-                """
+                f"""
                 SELECT request_id
                 FROM report_access_requests
                 WHERE page_key = :page_key
-                  AND status = 'approved'
+                  AND status = ANY(:statuses)
                   AND LOWER(requester_email) = LOWER(:email)
+                  {window_sql}
                 ORDER BY decided_at_utc DESC NULLS LAST, created_at_utc DESC
                 LIMIT 1
                 """
             ),
-            {"page_key": normalized_page_key, "email": normalized_email},
+            {"page_key": normalized_page_key, "email": normalized_email,
+             "statuses": list(statuses)},
         )
         .mappings()
         .first()

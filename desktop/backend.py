@@ -8,6 +8,8 @@ no keyring backend exists, and the UI surfaces that as insecure.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -197,7 +199,9 @@ class DesktopApi:
             return {"ok": False, "error": "Pick the HAR capture folder first.", "files": []}
         available = psutil.virtual_memory().available if _HAS_PSUTIL else None
         files: list[dict[str, Any]] = []
-        for channel, paths in auto_detect_hars(Path(har_dir)).items():
+        detected = auto_detect_hars(Path(har_dir))
+        recognized = {p for paths in detected.values() for p in paths}
+        for channel, paths in detected.items():
             for p in paths:
                 size = Path(p).stat().st_size
                 needed = int(size * RAM_HEADROOM_FACTOR)
@@ -208,10 +212,45 @@ class DesktopApi:
                     "size_mb": round(size / 1e6, 1),
                     "ram_ok": (available is None) or (available > needed),
                 })
+        # Unknown sites: show them so an ignored capture is VISIBLE, not silent.
+        for p in sorted(Path(har_dir).glob("*.har")):
+            if str(p) not in recognized:
+                files.append({
+                    "file": p.name, "path": str(p),
+                    "channel": "unrecognized (site not supported yet)",
+                    "size_mb": round(p.stat().st_size / 1e6, 1),
+                    "ram_ok": False,
+                })
         files.sort(key=lambda f: f["size_mb"])   # smallest-first: cheap wins land first
         return {"ok": True, "files": files,
                 "available_ram_mb": round(available / 1e6) if available else None,
                 "ram_gate_active": _HAS_PSUTIL}
+
+    def archive_hars(self) -> dict[str, Any]:
+        """Move every .har in the capture folder into archive/YYYY-MM-DD/ so the
+        next day starts clean. Never deletes; same-name collisions get a suffix."""
+        har_dir = self._config.get("har_dir") or ""
+        if not har_dir or not Path(har_dir).is_dir():
+            return {"ok": False, "error": "Pick the HAR capture folder first."}
+        hars = sorted(Path(har_dir).glob("*.har"))
+        if not hars:
+            return {"ok": True, "moved": 0, "dest": ""}
+        dest = Path(har_dir) / "archive" / date.today().isoformat()
+        dest.mkdir(parents=True, exist_ok=True)
+        moved = 0
+        for h in hars:
+            target = dest / h.name
+            n = 1
+            while target.exists():
+                target = dest / f"{h.stem}_{n}{h.suffix}"
+                n += 1
+            try:
+                h.rename(target)
+                moved += 1
+            except OSError as exc:
+                return {"ok": False, "moved": moved,
+                        "error": f"Could not move {h.name}: {exc} (file open?)"}
+        return {"ok": True, "moved": moved, "dest": str(dest)}
 
     # --------------------------------------------------------------------- run
     def _fetch_previous_payload(self, before: date) -> Optional[dict[str, Any]]:
@@ -248,41 +287,72 @@ class DesktopApi:
         har_dir = state["har_dir"]
         if not har_dir or not Path(har_dir).is_dir():
             return {"ok": False, "error": "Pick the HAR capture folder first."}
+        travel_date = (state["travel_date"] or "").strip()
+        if travel_date:
+            try:
+                parsed = datetime.strptime(travel_date, "%Y-%m-%d").date()
+            except ValueError:
+                return {"ok": False,
+                        "error": f"Travel date must be YYYY-MM-DD (got {travel_date!r})."}
+            if parsed <= date.today():
+                return {"ok": False,
+                        "error": f"Travel date {travel_date} is not in the future — the "
+                                 "live FirstTrip B2C search needs a future travel date."}
         try:
             routes = _parse_routes(state["routes"])
         except SystemExit as exc:
             return {"ok": False, "error": str(exc)}
 
         self._busy, self._status = True, "Parsing HAR captures…"
+        # The engine reports per-channel problems via print(); a windowed exe has no
+        # console, so capture the output and hand the log to the UI — a dead live
+        # fetch must be VISIBLE, not silent.
+        log_buffer = io.StringIO()
         try:
             skips = set(skip_paths or [])
             detected = auto_detect_hars(Path(har_dir))
             hars = {ch: [p for p in paths if p not in skips]
                     for ch, paths in detected.items()}
-            report = build_report(
-                state["travel_date"] or None, routes,
-                gozayaan_hars=hars.get("gozayaan"), amy_hars=hars.get("amy"),
-                firsttrip_b2b_hars=hars.get("firsttrip_b2b"),
-                sharetrip_hars=hars.get("sharetrip"),
-                akij_hars=hars.get("akij"), bdfare_hars=hars.get("bdfare"),
-                use_true_base=True,
-            )
+            with contextlib.redirect_stdout(log_buffer):
+                report = build_report(
+                    travel_date or None, routes,
+                    gozayaan_hars=hars.get("gozayaan"), amy_hars=hars.get("amy"),
+                    firsttrip_b2b_hars=hars.get("firsttrip_b2b"),
+                    sharetrip_hars=hars.get("sharetrip"),
+                    akij_hars=hars.get("akij"), bdfare_hars=hars.get("bdfare"),
+                    firsttrip_b2c_hars=hars.get("firsttrip_b2c"),
+                    use_true_base=True,
+                )
             self._status = "Fetching previous report for change detection…"
             run_date = datetime.strptime(report["report_date"], "%d/%m/%Y").date()
             self._prev_payload = self._fetch_previous_payload(run_date)
             colored = apply_highlights(report, self._prev_payload)
             self._report = report
             self._status = "Done."
+
+            warnings: list[str] = []
+            if routes and not travel_date and not any(rd for _o, _d, rd in routes):
+                warnings.append("Routes are set but no travel date — the live "
+                                "FirstTrip B2C fetch was SKIPPED. Enter a future "
+                                "date (YYYY-MM-DD) and re-run.")
+            elif routes and report.get("channel_status", {}).get(
+                    "Firsttrip-B2C") == "captured_but_empty":
+                warnings.append("The live FirstTrip B2C fetch returned no data — "
+                                "see the run log (network block, Cloudflare "
+                                "challenge, or no fares for that date).")
             return {"ok": True, "report": colored,
-                    "prev_available": self._prev_payload is not None}
+                    "prev_available": self._prev_payload is not None,
+                    "warnings": warnings,
+                    "log": log_buffer.getvalue()[-8000:]}
         except MemoryError:
             self._status = "Out of memory."
-            return {"ok": False,
+            return {"ok": False, "log": log_buffer.getvalue()[-8000:],
                     "error": "Ran out of memory parsing a HAR. Re-scan and skip the "
                              "largest capture, or free RAM and retry."}
         except Exception as exc:    # noqa: BLE001 — surfaced in the UI, never crash
             self._status = "Failed."
-            return {"ok": False, "error": f"Run failed: {exc}"}
+            return {"ok": False, "error": f"Run failed: {exc}",
+                    "log": log_buffer.getvalue()[-8000:]}
         finally:
             self._busy = False
 

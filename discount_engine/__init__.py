@@ -46,6 +46,7 @@ _CHANNEL_KWARGS = {
     "gozayaan": "gozayaan_hars",
     "amy": "amy_hars",
     "firsttrip_b2b": "firsttrip_b2b_hars",
+    "firsttrip_b2c": "firsttrip_b2c_hars",   # failsafe when the live fetch fails
     "sharetrip": "sharetrip_hars",
     "akij": "akij_hars",
     "bdfare": "bdfare_hars",

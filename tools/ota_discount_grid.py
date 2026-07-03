@@ -56,6 +56,8 @@ def main() -> int:
     p.add_argument("--gozayaan-har", default=None)
     p.add_argument("--amy-har", default=None)
     p.add_argument("--firsttrip-b2b-har", default=None, help="Logged-in booking.firsttrip.com HAR (agent commission)")
+    p.add_argument("--firsttrip-b2c-har", default=None,
+                   help="Saved b2c-api.firsttrip.com search HAR — failsafe when the live fetch fails")
     p.add_argument("--sharetrip-har", default=None, help="ShareTrip search HAR (B2C common discount)")
     p.add_argument("--akij-har", default=None, help="AKIJ Air search HAR (agent commission)")
     p.add_argument("--bdfare-har", default=None, help="BDFare searchpad HAR (agent commission)")
@@ -83,11 +85,13 @@ def main() -> int:
     args = p.parse_args()
 
     # Per-channel HAR lists, combined from explicit flags + --combined-har + --auto folder.
-    channels = ["gozayaan", "amy", "firsttrip_b2b", "sharetrip", "akij", "bdfare"]
+    channels = ["gozayaan", "amy", "firsttrip_b2b", "firsttrip_b2c", "sharetrip", "akij", "bdfare"]
     hars: dict[str, list[str]] = {c: [] for c in channels}
 
     flag_map = {"gozayaan": args.gozayaan_har, "amy": args.amy_har,
-                "firsttrip_b2b": args.firsttrip_b2b_har, "sharetrip": args.sharetrip_har,
+                "firsttrip_b2b": args.firsttrip_b2b_har,
+                "firsttrip_b2c": args.firsttrip_b2c_har,
+                "sharetrip": args.sharetrip_har,
                 "akij": args.akij_har, "bdfare": args.bdfare_har}
     for c, v in flag_map.items():
         if v:
@@ -128,6 +132,7 @@ def main() -> int:
                           gozayaan_hars=hars["gozayaan"], amy_hars=hars["amy"],
                           firsttrip_b2b_hars=hars["firsttrip_b2b"], sharetrip_hars=hars["sharetrip"],
                           akij_hars=hars["akij"], bdfare_hars=hars["bdfare"],
+                          firsttrip_b2c_hars=hars["firsttrip_b2c"],
                           manual_overrides=manual_overrides,
                           use_true_base=not args.no_true_base,
                           run_dt=run_dt)
