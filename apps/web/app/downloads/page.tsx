@@ -123,25 +123,25 @@ const PRODUCTS: Product[] = [
     slug: "iata",
     name: "Travel Ops Console",
     tagline:
-      "The combined five-tab desktop console (IATACodeValidator.exe): IATA Code Validator, BD Travel Agency Lookup, Traffic Movement, Zenith (customer / PNR / flight loads / history + Flight Load Inspection), and the built-in Bulk Mailer with Split & Send by email column. One portable .exe — the Bulk Mailer is also available separately on its own tab.",
+      "The combined five-tab desktop console (IATACodeValidator.exe): IATA Code Validator, BD Travel Agency Lookup, Traffic Movement, Zenith (customer / PNR / flight loads / history + Flight Load Inspection), and the built-in Bulk Mailer — now with a free WhatsApp Blast (text + one image, from your own number) alongside Split & Send email. One portable .exe.",
     repo: IATA_REPO,
     assetMatch: (n) => n === "IATACodeValidator.exe" || n.endsWith(".exe"),
     requirements:
-      "Windows 10/11 · Internet connection · Excel inputs per tool",
+      "Windows 10/11 · Internet connection · Excel inputs per tool · WhatsApp Blast: your own WhatsApp account (QR scan)",
     latestDownloadOverride: IATA_DOWNLOAD_URL,
     fallback: [
       {
-        version: "v1.24.0",
-        date: "2026-07-04",
+        version: "v1.25.0",
+        date: "2026-07-05",
         label: "Latest",
         notes: [
-          "UI polish: zebra-striped result grids, consistent button hierarchy, tighter layout, horizontal scrollbars on wide grids",
-          "3x faster startup, crisp text on scaled displays, window remembers size/position (v1.23.1)",
-          "Bulk Mailer: Split & Send by email column — one main sheet, one Excel + email per recipient, CC/BCC applied in-app (v1.23.0)",
-          "Zenith: Flight Load Inspection — per-flight load-factor diagnosis with plain-language flags (v1.22.0)",
-          "Zenith: PNR Bulk Lookup accepts dossier IDs directly; travel-agency customer support with IATA numbers (v1.20–1.21)",
+          "NEW: WhatsApp Blast — send a message + one shared image to a contact list over WhatsApp, free, from your own number (global; any country)",
+          "Speed presets (Safe / Balanced / Fast) with a daily cap and ban-risk warnings at every step",
+          "UI polish: zebra-striped grids, consistent buttons, 3x faster startup, crisp text on scaled displays (v1.23–1.24)",
+          "Bulk Mailer: Split & Send by email column — one main sheet, one Excel + email per recipient (v1.23.0)",
+          "Zenith: Flight Load Inspection + PNR dossier-ID lookup + travel-agency customers (v1.20–1.22)",
         ],
-        exe_url: `https://github.com/${IATA_REPO}/releases/download/v1.24.0/IATACodeValidator.exe`,
+        exe_url: `https://github.com/${IATA_REPO}/releases/download/v1.25.0/IATACodeValidator.exe`,
         guide_url: null,
       },
       {
@@ -160,22 +160,32 @@ const PRODUCTS: Product[] = [
     slug: "mailer",
     name: "Bulk Email Sending",
     tagline:
-      "Standalone Bulk Mailer (separate .exe, ~27 MB — also built into the Travel Ops Console). Send one personalised email per recipient from a single Excel list, each with its own attachment. NEW: Split & Send by email column — keep ONE main sheet, the app splits it per address and emails each recipient only their own rows, with CC/BCC applied in-app. Draft for review, or send. Outlook desktop, Microsoft 365, or any SMTP host.",
+      "Standalone Bulk Mailer (separate .exe — also built into the Travel Ops Console). Personalised email per recipient from one Excel list, Split & Send by email column, AND a free WhatsApp Blast: send a message + one shared image to a phone list over WhatsApp, from your own number. Email via Outlook desktop, Microsoft 365, or any SMTP host.",
     repo: MAILER_REPO,
     assetMatch: (n) => n === "BulkMailer.exe" || n.endsWith(".exe"),
     requirements:
-      "Windows 10/11 · Outlook desktop, a Microsoft 365 mailbox, or any SMTP account · One Excel sheet (mapping optional since v1.1.0)",
+      "Windows 10/11 · Email: Outlook desktop / Microsoft 365 / any SMTP · WhatsApp Blast: Google Chrome or Edge installed + your own WhatsApp (QR scan)",
     fallback: [
+      {
+        version: "v1.2.0",
+        date: "2026-07-05",
+        label: "Latest",
+        notes: [
+          "NEW: WhatsApp Blast — message + one shared image to a phone list over WhatsApp, free, from your own number (any country)",
+          "Speed presets (Safe / Balanced / Fast) + daily cap; scan a QR once, then Preview → Send",
+          "Blank/invalid/duplicate numbers handled; re-runs skip already-sent",
+          "Ban-risk disclaimer shown at every step — WhatsApp automation is against WhatsApp's ToS; use at your own risk",
+        ],
+        exe_url: `https://github.com/${MAILER_REPO}/releases/download/v1.2.0/BulkMailer.exe`,
+        guide_url: null,
+      },
       {
         version: "v1.1.0",
         date: "2026-07-04",
-        label: "Latest",
         notes: [
           "Split & Send by email column — one main sheet, no mapping or separate files needed",
-          "One click writes one Excel per address (only that recipient's rows) into a folder you choose",
-          "CC/BCC fields applied to every message; {email}/{name}/{rows}/{file} placeholders",
-          "Blank/invalid addresses parked in _UNMATCHED_ROWS.xlsx — warned, never sent",
-          "Multi-address cells (a@x.com; b@y.com) send the row to each recipient",
+          "One click writes one Excel per address; CC/BCC applied to every message",
+          "Blank/invalid addresses parked in _UNMATCHED_ROWS.xlsx — never sent",
         ],
         exe_url: `https://github.com/${MAILER_REPO}/releases/download/v1.1.0/BulkMailer.exe`,
         guide_url: null,
