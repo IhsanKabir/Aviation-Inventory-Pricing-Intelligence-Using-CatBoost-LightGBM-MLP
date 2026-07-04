@@ -101,7 +101,16 @@ def load_settings() -> Settings:
                 "http://localhost:3000,http://127.0.0.1:3000,https://aviation-inventory-pricing-intellig.vercel.app",
             )
         ),
-        cors_origin_regex=(os.getenv("API_CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app").strip() or None),
+        # Scope preview-deploy CORS to THIS project's Vercel subdomains, not every
+        # *.vercel.app site. (Auth is header-based so ambient-cookie CSRF isn't a
+        # risk today, but a narrow allowlist is the right posture.)
+        cors_origin_regex=(
+            os.getenv(
+                "API_CORS_ORIGIN_REGEX",
+                r"https://aviation-inventory-pricing-intellig[a-z0-9.-]*\.vercel\.app",
+            ).strip()
+            or None
+        ),
         default_limit=default_limit,
         max_limit=max_limit,
         gzip_enabled=gzip_enabled,

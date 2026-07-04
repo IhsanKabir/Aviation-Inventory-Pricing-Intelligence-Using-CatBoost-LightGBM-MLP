@@ -8,9 +8,37 @@ import {
   verifyAdminCredentials
 } from "@/lib/admin";
 
+// Per-IP throttle on admin-password attempts. In-process (per serverless
+// instance) — not global, but it materially raises the cost of a brute force
+// from one source without any external dependency.
+const ATTEMPTS = new Map<string, number[]>();
+const WINDOW_MS = 60_000;
+const MAX_ATTEMPTS = 8;
+
+function tooManyAttempts(ip: string): boolean {
+  const now = Date.now();
+  const recent = (ATTEMPTS.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
+  if (recent.length >= MAX_ATTEMPTS) {
+    ATTEMPTS.set(ip, recent);
+    return true;
+  }
+  recent.push(now);
+  ATTEMPTS.set(ip, recent);
+  return false;
+}
+
 export async function POST(request: Request) {
   if (!isAdminConfigured()) {
     return NextResponse.json({ detail: "Admin login is not configured." }, { status: 503 });
+  }
+
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",").pop()?.trim() || "unknown";
+  if (tooManyAttempts(ip)) {
+    return NextResponse.json(
+      { detail: "Too many attempts. Please wait a minute and try again." },
+      { status: 429 }
+    );
   }
 
   const payload = (await request.json().catch(() => null)) as
