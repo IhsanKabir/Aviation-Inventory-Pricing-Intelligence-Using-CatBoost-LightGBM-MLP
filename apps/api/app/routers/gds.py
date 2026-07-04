@@ -10,14 +10,23 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from google.cloud import bigquery
 
+from .. import ratelimit
 from ..repositories import gds as gds_repo
 
 log = logging.getLogger(__name__)
 
-router = APIRouter()
+
+def _gds_rate_limit(request: Request) -> None:
+    """GDS is intentionally open (no sign-in), so throttle per-IP to deter bulk
+    scraping of the fare/tax dataset. Generous enough for the monitor UI."""
+    ratelimit.check(f"gds:{ratelimit.client_ip(request)}", limit=120,
+                    window_seconds=60.0, detail="Too many GDS requests — please slow down.")
+
+
+router = APIRouter(dependencies=[Depends(_gds_rate_limit)])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
