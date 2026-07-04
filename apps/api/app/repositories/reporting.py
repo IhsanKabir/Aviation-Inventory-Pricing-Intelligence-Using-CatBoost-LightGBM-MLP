@@ -84,6 +84,13 @@ def _normalize_codes(values: Sequence[str] | None, uppercase: bool = True) -> li
     return out
 
 
+def _safe_airport_codes(values) -> list[str]:
+    """3-letter A-Z airport codes only. Used where a code is interpolated into a
+    BigQuery REGEXP_CONTAINS fragment (via_airports) — anything else would be a
+    regex-injection / cost-DoS vector, so reject non-conforming values outright."""
+    return [c for c in _normalize_codes(values) if re.fullmatch(r"[A-Z]{3}", c)]
+
+
 def _normalize_code_prefix(value: str | None, uppercase: bool = True) -> str | None:
     if value is None:
         return None
@@ -3703,7 +3710,7 @@ def _get_airline_operations_from_bigquery(
         route_filters.append("destination IN UNNEST(@destinations)")
         route_params.append(bigquery.ArrayQueryParameter("destinations", "STRING", _normalize_codes(destinations)))
     if via_airports:
-        via_codes = _normalize_codes(via_airports)
+        via_codes = _safe_airport_codes(via_airports)
         route_filters.append(
             "(" + " OR ".join(
                 [
@@ -3750,7 +3757,7 @@ def _get_airline_operations_from_bigquery(
         current_filters.append("airline IN UNNEST(@airlines)")
         current_params.append(bigquery.ArrayQueryParameter("airlines", "STRING", _normalize_codes(airlines)))
     if via_airports:
-        via_codes = _normalize_codes(via_airports)
+        via_codes = _safe_airport_codes(via_airports)
         current_filters.append(
             "(" + " OR ".join(
                 [
@@ -3830,7 +3837,7 @@ def _get_airline_operations_from_bigquery(
         trend_base_filters.append("airline IN UNNEST(@airlines)")
         trend_base_params.append(bigquery.ArrayQueryParameter("airlines", "STRING", _normalize_codes(airlines)))
     if via_airports:
-        via_codes = _normalize_codes(via_airports)
+        via_codes = _safe_airport_codes(via_airports)
         trend_base_filters.append(
             "(" + " OR ".join(
                 [
@@ -3954,7 +3961,7 @@ def get_airline_operations(
     _apply_in_filter(route_clauses, route_params, "fo.origin", origins, "ops_route_origin")
     _apply_in_filter(route_clauses, route_params, "fo.destination", destinations, "ops_route_destination")
     if via_airports:
-        via_codes = _normalize_codes(via_airports)
+        via_codes = _safe_airport_codes(via_airports)
         route_clauses.append(
             "(" + " OR ".join(
                 [f"('|' || COALESCE(frm.via_airports, '') || '|') LIKE :ops_route_via_{idx}" for idx, _code in enumerate(via_codes)]
@@ -3998,7 +4005,7 @@ def get_airline_operations(
     _apply_in_filter(current_clauses, current_params, "(fo.origin || '-' || fo.destination)", route_keys, "ops_current_route")
     _apply_in_filter(current_clauses, current_params, "fo.airline", airlines, "ops_current_airline")
     if via_airports:
-        via_codes = _normalize_codes(via_airports)
+        via_codes = _safe_airport_codes(via_airports)
         current_clauses.append(
             "(" + " OR ".join(
                 [f"('|' || COALESCE(frm.via_airports, '') || '|') LIKE :ops_current_via_{idx}" for idx, _code in enumerate(via_codes)]
@@ -4086,7 +4093,7 @@ def get_airline_operations(
     _apply_in_filter(trend_clauses, trend_params, "trend_ops.route_key", route_keys, "ops_trend_route")
     _apply_in_filter(trend_clauses, trend_params, "trend_ops.airline", airlines, "ops_trend_airline")
     if via_airports:
-        via_codes = _normalize_codes(via_airports)
+        via_codes = _safe_airport_codes(via_airports)
         trend_clauses.append(
             "(" + " OR ".join(
                 [f"('|' || COALESCE(trend_ops.via_airports, '') || '|') LIKE :ops_trend_via_{idx}" for idx, _code in enumerate(via_codes)]
@@ -4186,7 +4193,7 @@ def get_airline_operations(
 
 
 def get_route_summary(
-    session: Session,
+    session: Session | None,
     start_date: date | None = None,
     end_date: date | None = None,
     airlines: Sequence[str] | None = None,
@@ -4195,6 +4202,8 @@ def get_route_summary(
     cabins: Sequence[str] | None = None,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
+    if session is None:      # DB unconfigured/down: degrade like every sibling reader
+        return []
     clauses = ["1=1"]
     params: dict[str, Any] = {"limit": limit}
     if start_date:

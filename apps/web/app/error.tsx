@@ -11,7 +11,10 @@ export default function Error({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("Page render failed", error);
+    // Avoid leaking internal error detail to end-user devtools in production.
+    if (process.env.NODE_ENV !== "production") {
+      console.error("Page render failed", error);
+    }
   }, [error]);
 
   return (

@@ -8,10 +8,14 @@ Mount in main.py with:
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from google.cloud import bigquery
 
 from ..repositories import gds as gds_repo
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -45,8 +49,9 @@ async def list_runs(
     """Return the N most recent GDS fare extraction runs."""
     try:
         return gds_repo.get_fare_runs(client, limit=limit)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("GDS query failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/runs/latest")
@@ -59,8 +64,9 @@ async def latest_run(client: bigquery.Client = Depends(get_bq_client)):
         return result
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("GDS query failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -98,8 +104,9 @@ async def list_fares(
             cycle_id=cycle_id,
             limit=limit,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("GDS query failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/fares/history")
@@ -121,8 +128,9 @@ async def fare_history(
             journey_type=journey_type,
             days=days,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("GDS query failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,8 +161,9 @@ async def list_changes(
             days=days,
             limit=limit,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("GDS query failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/changes/summary")
@@ -165,8 +174,9 @@ async def change_summary(
     """Return daily change counts grouped by change type."""
     try:
         return gds_repo.get_change_summary(client, days=days)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("GDS query failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -179,8 +189,9 @@ async def list_tax_airports(client: bigquery.Client = Depends(get_bq_client)):
     """Return all airports that have GDS tax data."""
     try:
         return gds_repo.get_tax_airports(client)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("GDS query failed")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/taxes/{airport_code}")
@@ -205,5 +216,6 @@ async def tax_rates(
         return rows
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("GDS query failed")
+        raise HTTPException(status_code=500, detail="Internal server error")

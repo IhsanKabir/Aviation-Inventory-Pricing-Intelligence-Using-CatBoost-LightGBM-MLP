@@ -30,11 +30,16 @@ from .routers import travelport_feedback as travelport_feedback_router
 
 LOG = logging.getLogger("api.http")
 
+# Interactive docs map every route (incl. any unauthenticated ones) for callers —
+# keep them off in production unless explicitly enabled.
+_DOCS_ENABLED = os.environ.get("API_ENABLE_DOCS", "").strip().lower() in ("1", "true", "yes")
+
 app = FastAPI(
     title=settings.api_title,
     version=settings.api_version,
-    docs_url="/docs",
-    openapi_url="/openapi.json",
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
 )
 
 app.add_middleware(
@@ -148,10 +153,16 @@ class UsageSummaryQuery(BaseModel):
 
 @app.on_event("startup")
 def startup() -> None:
-    access_requests.ensure_tables(engine)
-    user_accounts.ensure_tables(engine)
-    usage.ensure_tables(engine)
-    discount_reports.ensure_tables(engine)
+    # DDL on boot must never abort worker startup: on a Cloud Run cold-start the
+    # first DB connect can transiently fail (Cloud SQL proxy warmup), and the
+    # BigQuery/health/reporting layer is designed to run without Postgres. Tables
+    # exist in steady state; a failure here is logged, not fatal.
+    for ensure in (access_requests.ensure_tables, user_accounts.ensure_tables,
+                   usage.ensure_tables, discount_reports.ensure_tables):
+        try:
+            ensure(engine)
+        except Exception:  # noqa: BLE001
+            LOG.exception("startup ensure_tables failed for %s; continuing", ensure.__module__)
 
 
 @app.middleware("http")
@@ -458,9 +469,11 @@ def google_code_exchange(
             token_data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
-        raise HTTPException(status_code=400, detail=f"Google token exchange failed: {raw[:300]}")
+        LOG.warning("Google token exchange HTTPError: %s", raw[:300])
+        raise HTTPException(status_code=400, detail="Google token exchange failed.")
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Google token exchange error: {exc}")
+        LOG.warning("Google token exchange error: %s", exc)
+        raise HTTPException(status_code=502, detail="Google token exchange error.")
 
     access_token = token_data.get("access_token", "")
     if not access_token:
@@ -647,12 +660,22 @@ def create_access_request(
 @app.get("/api/v1/access-requests/{request_id}")
 def get_access_request(
     request_id: str,
+    x_admin_token: str | None = Header(default=None),
     db: Session | None = Depends(get_optional_db),
 ) -> dict:
     required_db = _require_access_request_db(db)
     payload = access_requests.get_request(required_db, request_id)
     if not payload:
         raise HTTPException(status_code=404, detail="Access request not found.")
+    # This is reachable by anyone holding a request_id (the user pages poll it to
+    # render status/scope). Only an admin token unlocks the requester PII; everyone
+    # else gets a redacted view — enough for the access panel, no contact leak.
+    is_admin = bool(settings.report_access_admin_token) and hmac.compare_digest(
+        str(x_admin_token or ""), str(settings.report_access_admin_token))
+    if not is_admin:
+        for pii in ("requester_email", "requester_name", "requester_contact",
+                    "requester_user_id"):
+            payload.pop(pii, None)
     return payload
 
 

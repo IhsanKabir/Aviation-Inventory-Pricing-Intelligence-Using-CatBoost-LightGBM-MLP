@@ -5,6 +5,7 @@
  * URL:  /gds/taxes/SIN  →  shows rates for Singapore Changi
  */
 
+import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getGdsTaxRates, type GdsTaxRate } from "@/lib/gds";
 
@@ -17,6 +18,11 @@ export default async function AirportTaxPage({ params, searchParams }: Props) {
   const { airport } = await params;
   const { status: statusParam } = await searchParams;
   const airportCode = airport.toUpperCase();
+  // Reject junk segments (/gds/taxes/zzzz, /%20) instead of rendering an
+  // indexable empty 200.
+  if (!/^[A-Z]{3}$/.test(airportCode)) {
+    notFound();
+  }
   const status = (statusParam ?? "current") as
     | "current"
     | "future"

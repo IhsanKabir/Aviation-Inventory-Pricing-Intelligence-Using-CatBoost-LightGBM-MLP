@@ -54,8 +54,10 @@ def _send_admin_email(row: dict) -> None:
 from collections import defaultdict, deque
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from google.cloud import bigquery
+
+from ..authz import require_admin_token
 from pydantic import BaseModel, Field
 
 from ..repositories import travelport_feedback as feedback_repo
@@ -158,9 +160,12 @@ async def create_feedback(
 async def list_feedback(
     limit: int = Query(default=100, ge=1, le=500),
     status: str = Query(default="all", description="all | new | reviewed | resolved"),
+    x_admin_token: str | None = Header(default=None),
     client: bigquery.Client = Depends(get_bq_client),
 ):
-    """Return feedback submissions for the admin page."""
+    """Return feedback submissions for the admin page (admin-token gated — this
+    returns other users' emails/device info, so it must not be public)."""
+    require_admin_token(x_admin_token)
     try:
         return feedback_repo.list_feedback(client, limit=limit, status=status)
     except Exception as e:
