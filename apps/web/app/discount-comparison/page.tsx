@@ -106,14 +106,23 @@ export default async function DiscountComparisonPage({ searchParams }: PageProps
   const selectedDate = firstParam(params, "date") ?? undefined;
   const requestId = firstParam(params, "request_id") ?? undefined;
 
-  const { token, user, bridgeFailed } = await getCurrentUserSession();
+  const session = await getCurrentUserSession();
+  const { token, user, bridgeFailed } = session;
+  const sessionInvalid = "sessionInvalid" in session && session.sessionInvalid;
 
   if (!user) {
     return (
       <div className="page dg-page">
         <section className="card dg-notice">
           <h1>OTA Discount Comparison</h1>
-          {bridgeFailed ? (
+          {sessionInvalid ? (
+            <>
+              <p>Your session ended. Sign in again to view the report.</p>
+              <Link className="button-link" href="/login?next=/discount-comparison">
+                Sign in
+              </Link>
+            </>
+          ) : bridgeFailed ? (
             <>
               <p className="dg-error">
                 You&apos;re signed in with Google, but the server couldn&apos;t

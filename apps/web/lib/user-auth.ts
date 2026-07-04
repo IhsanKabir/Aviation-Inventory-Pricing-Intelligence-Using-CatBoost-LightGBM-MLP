@@ -54,10 +54,24 @@ async function fetchCurrentUser(token: string): Promise<AuthenticatedUser | null
 export async function getCurrentUserSession() {
   const oauthSession = await getOAuthSession();
   if (oauthSession?.apiSessionToken && oauthSession.apiUser) {
+    // VALIDATE the bridged token against the backend. Trusting it blindly let a
+    // stale/revoked token (bridge briefly failed, or account disabled) look
+    // "signed in" while every API call 401'd — and /login then bounced the user
+    // to /routes in a loop that never re-minted a token. If the backend rejects
+    // it, report NOT signed in so a fresh Google sign-in can re-bridge.
+    const validated = await fetchCurrentUser(oauthSession.apiSessionToken);
+    if (validated) {
+      return {
+        token: oauthSession.apiSessionToken,
+        user: validated,
+        bridgeFailed: false
+      };
+    }
     return {
-      token: oauthSession.apiSessionToken,
-      user: oauthSession.apiUser,
-      bridgeFailed: false
+      token: "",
+      user: null as AuthenticatedUser | null,
+      bridgeFailed: false,
+      sessionInvalid: true
     };
   }
 
