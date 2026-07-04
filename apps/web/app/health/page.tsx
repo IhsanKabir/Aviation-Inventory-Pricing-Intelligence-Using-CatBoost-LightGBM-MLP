@@ -1,12 +1,16 @@
 import { DataPanel } from "@/components/data-panel";
 import { MetricCard } from "@/components/metric-card";
+import { SystemHealthSection } from "@/components/system-health-section";
 import { requireAdminSession } from "@/lib/admin";
 import { getApiBaseUrl, getCycleHealth } from "@/lib/api";
 import { formatDhakaDateTime, formatNumber, formatPercent } from "@/lib/format";
+import { getSystemHealth } from "@/lib/system-health";
+
+import "./health.css";
 
 export default async function HealthPage() {
   await requireAdminSession("/health");
-  const result = await getCycleHealth();
+  const [result, systemHealth] = await Promise.all([getCycleHealth(), getSystemHealth()]);
   const data = result.data;
   const runStatus = data?.latest_run_status;
   const runMatchesLatestCycle = runStatus?.matches_latest_cycle !== false;
@@ -40,7 +44,12 @@ export default async function HealthPage() {
 
   return (
     <>
-      <h1 className="page-title">Cycle Health</h1>
+      <SystemHealthSection
+        health={systemHealth.ok ? systemHealth.data : null}
+        error={systemHealth.ok ? undefined : systemHealth.error}
+      />
+
+      <h1 className="page-title" style={{ marginTop: "2rem" }}>Cycle Health</h1>
       <p className="page-copy">
         Freshness, coverage, and latest run integrity for the operational cycle.
         This is the primary validity screen for deciding whether the current outputs are usable.

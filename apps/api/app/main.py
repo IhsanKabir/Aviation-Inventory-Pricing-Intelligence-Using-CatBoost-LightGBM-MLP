@@ -21,8 +21,16 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from . import ratelimit
-from .db import engine, get_optional_db
-from .repositories import access_requests, discount_reports, exporting, reporting, usage, user_accounts
+from .db import SessionLocal, engine, get_optional_db
+from .repositories import (
+    access_requests,
+    discount_reports,
+    exporting,
+    monitoring,
+    reporting,
+    usage,
+    user_accounts,
+)
 from .routers import app_release as app_release_router
 from .routers import discount_reports as discount_reports_router
 from .routers import gds as gds_router
@@ -158,7 +166,8 @@ def startup() -> None:
     # BigQuery/health/reporting layer is designed to run without Postgres. Tables
     # exist in steady state; a failure here is logged, not fatal.
     for ensure in (access_requests.ensure_tables, user_accounts.ensure_tables,
-                   usage.ensure_tables, discount_reports.ensure_tables):
+                   usage.ensure_tables, discount_reports.ensure_tables,
+                   monitoring.ensure_tables):
         try:
             ensure(engine)
         except Exception:  # noqa: BLE001
@@ -168,21 +177,53 @@ def startup() -> None:
 @app.middleware("http")
 async def request_timing_middleware(request: Request, call_next):
     started_at = time.perf_counter()
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception as exc:  # unhandled -> record then re-raise for the 500 path
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        monitoring.record_request(500, elapsed_ms)
+        _capture_error(request, 500, type(exc).__name__, str(exc))
+        raise
     elapsed_ms = (time.perf_counter() - started_at) * 1000
     response.headers["X-Process-Time-Ms"] = f"{elapsed_ms:.1f}"
     path_template = request.scope.get("route").path if request.scope.get("route") else request.url.path
     response.headers["X-Route-Template"] = str(path_template)
+    status = getattr(response, "status_code", 0) or 0
+    monitoring.record_request(status, elapsed_ms)
+    if status >= 500:   # server errors surfaced as responses (not exceptions)
+        _capture_error(request, status, "http_%s" % status, str(path_template))
     if settings.request_timing_log_enabled:
         LOG.info(
             "request_timing method=%s path=%s route=%s status=%s total_ms=%.1f",
             request.method,
             request.url.path,
             path_template,
-            getattr(response, "status_code", "-"),
+            status,
             elapsed_ms,
         )
     return response
+
+
+def _capture_error(request: Request, status: int, error_type: str, message: str) -> None:
+    """Persist an error event best-effort (never let observability break a request)."""
+    db = None
+    try:
+        if SessionLocal is not None:
+            db = SessionLocal()
+        monitoring.record_error(
+            db,
+            method=request.method,
+            path=request.url.path,
+            status=status,
+            error_type=error_type,
+            message=message,
+            request_id=request.headers.get("x-request-id"),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        if db is not None:
+            db.close()
 
 
 def _cap_limit(limit: int) -> int:
@@ -304,6 +345,54 @@ def api_root() -> JSONResponse:
 @app.get("/health")
 def health(db: Session | None = Depends(get_optional_db)) -> dict:
     return reporting.get_health(db)
+
+
+@app.get("/api/v1/admin/system-health")
+def admin_system_health(
+    x_admin_token: str | None = Header(default=None),
+    db: Session | None = Depends(get_optional_db),
+) -> dict:
+    """Live system observability for the health dashboard (admin-gated): service
+    up/down, deploy version + uptime, rolling request/latency/error metrics, and
+    recent error events."""
+    _require_admin_token(x_admin_token)
+
+    database_ok = False
+    if db is not None:
+        try:
+            db.execute(text("SELECT 1"))
+            database_ok = True
+        except Exception:  # noqa: BLE001
+            database_ok = False
+
+    bigquery_ok = False
+    try:
+        bigquery_ok = reporting._bigquery_ready()
+    except Exception:  # noqa: BLE001
+        bigquery_ok = False
+
+    latest_discount = None
+    if db is not None:
+        try:
+            row = discount_reports.get_report(db)
+            latest_discount = row["report_date"] if row else None
+        except Exception:  # noqa: BLE001
+            latest_discount = None
+
+    return {
+        "version": settings.api_version,
+        "instance_id": monitoring.instance_id(),
+        "uptime_seconds": round(monitoring.uptime_seconds()),
+        "services": {
+            "api": True,
+            "database": database_ok,
+            "bigquery": bigquery_ok,
+        },
+        "requests_1h": monitoring.request_stats(3600),
+        "errors_24h": monitoring.error_count(db, 24),
+        "recent_errors": monitoring.recent_errors(db, 30),
+        "latest_discount_report_date": latest_discount,
+    }
 
 
 @app.get("/api/v1/user-auth/bridge-check")
