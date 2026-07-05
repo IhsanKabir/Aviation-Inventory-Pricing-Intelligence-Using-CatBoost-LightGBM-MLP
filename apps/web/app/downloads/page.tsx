@@ -131,17 +131,17 @@ const PRODUCTS: Product[] = [
     latestDownloadOverride: IATA_DOWNLOAD_URL,
     fallback: [
       {
-        version: "v1.25.0",
+        version: "v1.26.0",
         date: "2026-07-05",
         label: "Latest",
         notes: [
-          "NEW: WhatsApp Blast — send a message + one shared image to a contact list over WhatsApp, free, from your own number (global; any country)",
+          "NEW: Health tab — one click shows green/amber/red per feature (is each site reachable? is the browser present?) so you catch a broken feature before it surprises you",
+          "WhatsApp Blast — message + one shared image to a contact list over WhatsApp, free, from your own number, any country (v1.25)",
           "Speed presets (Safe / Balanced / Fast) with a daily cap and ban-risk warnings at every step",
           "UI polish: zebra-striped grids, consistent buttons, 3x faster startup, crisp text on scaled displays (v1.23–1.24)",
-          "Bulk Mailer: Split & Send by email column — one main sheet, one Excel + email per recipient (v1.23.0)",
-          "Zenith: Flight Load Inspection + PNR dossier-ID lookup + travel-agency customers (v1.20–1.22)",
+          "Bulk Mailer Split & Send by email column; Zenith Flight Load Inspection + dossier-ID lookup (v1.20–1.23)",
         ],
-        exe_url: `https://github.com/${IATA_REPO}/releases/download/v1.25.0/IATACodeValidator.exe`,
+        exe_url: `https://github.com/${IATA_REPO}/releases/download/v1.26.0/IATACodeValidator.exe`,
         guide_url: null,
       },
       {
@@ -167,16 +167,16 @@ const PRODUCTS: Product[] = [
       "Windows 10/11 · Email: Outlook desktop / Microsoft 365 / any SMTP · WhatsApp Blast: Google Chrome or Edge installed + your own WhatsApp (QR scan)",
     fallback: [
       {
-        version: "v1.2.0",
+        version: "v1.3.0",
         date: "2026-07-05",
         label: "Latest",
         notes: [
-          "NEW: WhatsApp Blast — message + one shared image to a phone list over WhatsApp, free, from your own number (any country)",
+          "NEW: Health / Diagnostics — one click checks each feature (browser present? mail hosts + WhatsApp reachable?) with green/amber/red + a fix hint",
+          "WhatsApp Blast — message + one shared image to a phone list over WhatsApp, free, from your own number, any country (v1.2)",
           "Speed presets (Safe / Balanced / Fast) + daily cap; scan a QR once, then Preview → Send",
-          "Blank/invalid/duplicate numbers handled; re-runs skip already-sent",
           "Ban-risk disclaimer shown at every step — WhatsApp automation is against WhatsApp's ToS; use at your own risk",
         ],
-        exe_url: `https://github.com/${MAILER_REPO}/releases/download/v1.2.0/BulkMailer.exe`,
+        exe_url: `https://github.com/${MAILER_REPO}/releases/download/v1.3.0/BulkMailer.exe`,
         guide_url: null,
       },
       {
