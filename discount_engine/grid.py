@@ -154,22 +154,44 @@ def collect_firsttrip_b2b(har_path: str) -> dict[tuple[str, str], str]:
     return _collect_firsttrip_b2b_rows(firsttrip.parse_b2b_commissions(har_path))
 
 
-def collect_sharetrip_b2c(har_path: str) -> dict[tuple[str, str], str]:
+def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], str]:
+    """Build ShareTrip cells from one or more HARs.
+
+    EFFICIENT CAPTURE (search + one booking -> detailed for all airlines): the card
+    special (e.g. Stellar/EBL 18%) is UNIFORM across airlines, so a single booking
+    capture supplies it for everyone, while the search (available-flights) supplies
+    each airline's common rate. Airlines the booking flow didn't cover get
+    `common, 18% (Stellar)` from the search + the shared special — no per-airline
+    booking needed. Airlines with their own booking capture keep the exact cell.
+    """
+    paths = [har_paths] if isinstance(har_paths, str) else list(har_paths)
     cells: dict[tuple[str, str], str] = {}
-    # Rich cell from the booking-flow details (common + card-specific).
-    details = sharetrip_har.summarize_details(sharetrip_har.parse_details_discounts(har_path))
-    for (airline, flight_type), c in details.items():
-        rt = "DOM" if flight_type == "DOM" else "INTL"
-        # only label "(Bkash)" when a bKash coupon actually applied (domestic)
-        text = _fmt(c["common_pct"]) + ("(Bkash)" if c.get("common_code") else "")
-        if c["special_pct"] is not None:
-            text += f", {_fmt(c['special_pct'])} ({c['special_label']})"
-        cells[(rt, airline)] = text
-    # Fallback: search-page common rate for airlines the booking flow didn't cover.
-    common = sharetrip_har.summarize_discounts(sharetrip_har.parse_discounts(har_path))
-    for (airline, flight_type), cell in common.items():
-        rt = "DOM" if flight_type == "DOM" else "INTL"
-        cells.setdefault((rt, airline), _fmt(cell["discount_pct"]))
+    # The uniform card special harvested from ANY booking, keyed by route type.
+    shared_special: dict[str, tuple[float, str]] = {}
+
+    # 1. Exact per-airline cells from the booking-flow details (best data).
+    for har_path in paths:
+        details = sharetrip_har.summarize_details(sharetrip_har.parse_details_discounts(har_path))
+        for (airline, flight_type), c in details.items():
+            rt = "DOM" if flight_type == "DOM" else "INTL"
+            text = _fmt(c["common_pct"]) + ("(Bkash)" if c.get("common_code") else "")
+            if c["special_pct"] is not None:
+                text += f", {_fmt(c['special_pct'])} ({c['special_label']})"
+                shared_special.setdefault(rt, (c["special_pct"], c["special_label"]))
+            cells[(rt, airline)] = text
+
+    # 2. Search fill: every airline in the search, enriched with the uniform special.
+    for har_path in paths:
+        common = sharetrip_har.summarize_discounts(sharetrip_har.parse_discounts(har_path))
+        for (airline, flight_type), cell in common.items():
+            rt = "DOM" if flight_type == "DOM" else "INTL"
+            if (rt, airline) in cells:
+                continue    # a booking capture already gave the exact cell
+            text = _fmt(cell["discount_pct"]) + ("(Bkash)" if cell.get("coupon_code") else "")
+            special = shared_special.get(rt)
+            if special:
+                text += f", {_fmt(special[0])} ({special[1]})"
+            cells[(rt, airline)] = text
     return cells
 
 
@@ -417,7 +439,13 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
                                    + ", ".join(Path(h).name for h in firsttrip_b2b_hars))
         channel_status["USBA OTA B2B"] = ("ok" if channel_cells["USBA OTA B2B"]
                                           else "captured_but_empty")
-    add("ShareTrip-B2C", sharetrip_hars, collect_sharetrip_b2c, "HAR")
+    if sharetrip_hars:
+        # Whole-list (not per-file) so a booking capture's uniform card special can
+        # enrich a separate search capture's airlines — search + one booking covers all.
+        channel_cells["ShareTrip-B2C"] = collect_sharetrip_b2c(sharetrip_hars)
+        sources["ShareTrip-B2C"] = "HAR: " + ", ".join(Path(h).name for h in sharetrip_hars)
+        channel_status["ShareTrip-B2C"] = ("ok" if channel_cells["ShareTrip-B2C"]
+                                           else "captured_but_empty")
     add("Go Zayaan", gozayaan_hars, collect_gozayaan, "HAR")
     add("Amy", amy_hars, collect_amy, "HAR")
 

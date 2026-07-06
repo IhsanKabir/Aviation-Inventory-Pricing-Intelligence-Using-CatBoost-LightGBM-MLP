@@ -141,10 +141,26 @@ export default function HarGuidePage() {
             coupon list (bKash / EBL / AMEX…), <em>then</em> export.
           </p>
           <div className="dg-exception">
-            <strong>ShareTrip exception:</strong> export one small HAR <em>per
-            airline&apos;s booking page</em> (<code>sharetrip bs.har</code>,{" "}
-            <code>sharetrip 2a.har</code>…) — long sessions lose coupon data. The app
-            merges them automatically.
+            <strong>ShareTrip — the efficient 2-capture method:</strong> you no
+            longer need a booking per airline. The card special (e.g. Stellar/EBL
+            18%) is the same for every airline, so capture just:
+            <ol style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              <li>
+                <strong>The search results</strong> — right after the DAC-CGP results
+                load, export immediately as <code>sharetrip search.har</code> (this
+                one response holds every airline&apos;s common rate).
+              </li>
+              <li>
+                <strong>One booking page</strong> — open any single airline&apos;s
+                flight, wait for the DISCOUNT COUPON list, export as{" "}
+                <code>sharetrip booking.har</code> (this supplies the shared card
+                special for all airlines).
+              </li>
+            </ol>
+            The app combines them: every searched airline gets a full{" "}
+            <code>common, 18% (Stellar)</code> cell from those two files. Capturing a
+            specific airline&apos;s own booking still gives its exact cell and takes
+            precedence.
           </div>
         </div>
 
