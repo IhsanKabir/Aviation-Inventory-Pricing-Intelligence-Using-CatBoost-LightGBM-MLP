@@ -45,12 +45,8 @@ import time
 import urllib.error
 import urllib.request
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-
-from ..db import get_optional_db
-from ..repositories import user_accounts
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -87,16 +83,6 @@ def _app_config(app_key: str | None) -> tuple[str, dict[str, str]]:
     if not cfg:
         raise HTTPException(status_code=404, detail=f"Unknown app '{key}'.")
     return key, cfg
-
-
-def _require_session(db: Session | None, x_user_session: str | None) -> dict:
-    """Mirror main._require_user_session without importing main (circular)."""
-    if db is None:
-        raise HTTPException(status_code=503, detail="Database unavailable.")
-    user = user_accounts.get_session_user(db, x_user_session, touch=True)
-    if not user:
-        raise HTTPException(status_code=401, detail="Sign in is required.")
-    return user
 
 
 def _gh_request(url: str, accept: str) -> urllib.request.Request:
@@ -158,13 +144,14 @@ def _sha256_from_release(cfg: dict[str, str], data: dict) -> str:
 def latest_version(
     request: Request,
     app: str | None = None,
-    x_user_session: str | None = Header(default=None),
-    db: Session | None = Depends(get_optional_db),
 ) -> dict:
-    """Version manifest for the desktop updater. Auth-gated. ?app=<key> selects
-    the product (default 'iata' for backward compatibility)."""
+    """Version manifest for the desktop updater. PUBLIC on purpose: the release
+    metadata is already public on GitHub, the /download mirror below is public,
+    and a signed-out (or expired-session) install must still be able to learn an
+    update exists — otherwise a broken old version could never receive the fix.
+    Auth-gating this broke the auto-update channel + the /downloads page
+    (field report 2026-07-07). ?app=<key> selects the product (default 'iata')."""
     app_key, cfg = _app_config(app)
-    _require_session(db, x_user_session)
     try:
         data = _fetch_latest_release(app_key, cfg)
     except Exception as exc:  # noqa: BLE001
@@ -180,6 +167,7 @@ def latest_version(
     return {
         "version": _version_from_tag(tag),
         "notes": data.get("body") or "",
+        "published_at": data.get("published_at") or "",
         "download_url": f"{base}/api/v1/app/download{suffix}",
         "sha256": _sha256_from_release(cfg, data),
     }

@@ -245,17 +245,14 @@ class DesktopApi:
         return {"ok": True}
 
     def check_update(self) -> dict[str, Any]:
-        """Compare the running version with the release channel (auth-gated
-        /app/latest); silent no-op when signed out or offline."""
-        token = self._token()
-        if not token:
-            return {"update_available": False,
-                    "error": "Sign in to check for updates (the update channel is "
-                             "account-gated)."}
+        """Compare the running version with the release channel. /app/latest is
+        PUBLIC — updates must be discoverable even when signed out (a broken old
+        version could otherwise never learn about its fix)."""
         try:
+            token = self._token()
             response = requests.get(
                 f"{self.api_base}/api/v1/app/latest?app=discount-report",
-                headers={"X-User-Session": token}, timeout=15)
+                headers={"X-User-Session": token} if token else {}, timeout=15)
             if response.status_code != 200:
                 return {"update_available": False,
                         "error": f"Update check failed ({response.status_code})."}

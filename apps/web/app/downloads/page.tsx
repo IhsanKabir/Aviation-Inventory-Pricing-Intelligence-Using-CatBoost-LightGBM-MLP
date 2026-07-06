@@ -46,6 +46,9 @@ interface Product {
   /** When set, the LATEST card's download points here instead of GitHub —
    *  serves firewalled users from a reachable mirror. */
   latestDownloadOverride?: string;
+  /** Public version manifest on our own API (never GitHub-rate-limited) —
+   *  used to synthesize the latest card when the GitHub list is unavailable. */
+  manifestUrl?: string;
 }
 
 const TRAVELPORT_REPO = "IhsanKabir/Process_Optimization_Using_pywinauto";
@@ -129,6 +132,7 @@ const PRODUCTS: Product[] = [
     requirements:
       "Windows 10/11 · Internet connection · Excel inputs per tool · WhatsApp Blast: your own WhatsApp account (QR scan)",
     latestDownloadOverride: IATA_DOWNLOAD_URL,
+    manifestUrl: `${IATA_DOWNLOAD_URL.replace("/download", "/latest")}`,
     fallback: [
       {
         version: "v1.26.0",
@@ -215,6 +219,7 @@ const PRODUCTS: Product[] = [
       "Windows 10/11 · single .exe, no install · 8 GB RAM recommended (HAR parsing) · Sign-in with an approved discount-comparison access request",
     guideUrl: "/discount-comparison/guide",
     latestDownloadOverride: DISCOUNT_DOWNLOAD_URL,
+    manifestUrl: `${IATA_DOWNLOAD_URL.replace("/download", "/latest")}?app=discount-report`,
     fallback: [],
   },
 ];
@@ -237,10 +242,7 @@ function parseGitHubReleases(items: GitHubRelease[], product: Product): Release[
         item.assets.some((a) => a.name.includes("guide")));
     const guide_url = hasGuide ? product.guideUrl ?? null : null;
 
-    const notes = (item.body || "")
-      .split("\n")
-      .map((l) => l.replace(/^[-*•]\s*/, "").trim())
-      .filter((l) => l.length > 0 && !l.startsWith("#") && !l.startsWith("http"));
+    const notes = parseNotes(item.body || "");
 
     releases.push({
       version,
@@ -258,7 +260,52 @@ function parseGitHubReleases(items: GitHubRelease[], product: Product): Release[
   return releases;
 }
 
+function parseNotes(body: string): string[] {
+  return body
+    .split("\n")
+    .map((l) => l.replace(/^[-*•]\s*/, "").trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#") && !l.startsWith("http"));
+}
+
+/**
+ * Latest-release card from our own API's public version manifest — the same
+ * channel the desktop updater uses. Never GitHub-rate-limited (the backend
+ * caches it), so the newest version stays visible even when the anonymous
+ * GitHub list below is throttled.
+ */
+async function fetchLatestFromMirror(product: Product): Promise<Release[]> {
+  if (!product.manifestUrl) return [];
+  try {
+    const res = await fetch(product.manifestUrl, { next: { revalidate: 60 } });
+    if (!res.ok) return [];
+    const manifest: {
+      version?: string;
+      notes?: string;
+      published_at?: string;
+      download_url?: string;
+    } = await res.json();
+    if (!manifest?.version) return [];
+    const notes = parseNotes(manifest.notes || "");
+    return [
+      {
+        version: `v${manifest.version}`,
+        date:
+          (manifest.published_at || "").slice(0, 10) ||
+          new Date().toISOString().slice(0, 10),
+        label: "Latest",
+        notes: notes.length > 0 ? notes : [`Version ${manifest.version}`],
+        exe_url: product.latestDownloadOverride ?? manifest.download_url ?? null,
+        guide_url: product.guideUrl ?? null,
+      },
+    ];
+  } catch {
+    return [];
+  }
+}
+
 async function fetchReleases(product: Product): Promise<Release[]> {
+  // Primary: the GitHub release list (full version history).
+  let parsed: Release[] = [];
   try {
     const res = await fetch(
       `https://api.github.com/repos/${product.repo}/releases?per_page=30`,
@@ -271,18 +318,20 @@ async function fetchReleases(product: Product): Promise<Release[]> {
         headers: { Accept: "application/vnd.github+json" },
       }
     );
-
-    if (!res.ok) return product.fallback;
-
-    const items: GitHubRelease[] = await res.json();
-    const parsed = parseGitHubReleases(
-      items.filter((r) => !r.prerelease),
-      product
-    );
-    return parsed.length > 0 ? parsed : product.fallback;
+    if (res.ok) {
+      const items: GitHubRelease[] = await res.json();
+      parsed = parseGitHubReleases(
+        items.filter((r) => !r.prerelease),
+        product
+      );
+    }
   } catch {
-    return product.fallback;
+    // fall through to the mirror manifest
   }
+  if (parsed.length > 0) return parsed;
+  // Secondary: our own API manifest (latest release only, never rate-limited).
+  const mirror = await fetchLatestFromMirror(product);
+  return mirror.length > 0 ? mirror : product.fallback;
 }
 
 // Force this page to be rendered on every request. The fetch above still
