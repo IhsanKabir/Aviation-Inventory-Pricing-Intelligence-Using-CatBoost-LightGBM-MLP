@@ -77,7 +77,7 @@
       <label>Email <input id="email" type="email" autocomplete="username"></label>
       <label>Password <input id="password" type="password" autocomplete="current-password"></label>
       <button onclick="doLogin()">Sign in</button>
-      <span class="muted">Offline runs work without signing in — login is only needed to sync.</span>
+      <span class="muted">Sign in to use the app — runs, exports and syncs are tracked to your account.</span>
       <button class="secondary" onclick="api().open_account_page()"
               title="Signed up with Google? The desktop app needs a password — create one on the website's Account page.">
         No password yet? Create one on the website</button>
@@ -96,7 +96,7 @@
     </details>
   </section>
 
-  <section class="card">
+  <section class="card" id="main-card">
     <div class="row">
       <label>HAR capture folder
         <input id="har_dir" readonly placeholder="Pick the folder with today's .har files">
@@ -161,6 +161,10 @@ async function refreshState() {
     : `not signed in · v${state.version}`;
   document.getElementById("login-card").style.display = state.logged_in ? "none" : "";
   document.getElementById("account-card").style.display = state.logged_in ? "" : "none";
+  // Sign-in wall: the app's working surface only exists for identified users
+  // (the backend enforces the same gate on run/export/archive/sync).
+  document.getElementById("main-card").style.display = state.logged_in ? "" : "none";
+  if (!state.logged_in) document.getElementById("result-card").style.display = "none";
   document.getElementById("har_dir").value = state.har_dir;
   document.getElementById("routes").value = state.routes;
   document.getElementById("travel_date").value = state.travel_date;
@@ -252,9 +256,18 @@ async function pickFolder() {
   renderScan(scan);
 }
 
+// A gated call answered "sign in": banner + drop back to the sign-in wall.
+async function handleAuthRequired(result) {
+  if (!result || !result.auth_required) return false;
+  addBanner("err", result.error || "Sign in to use the app.");
+  await refreshState();
+  return true;
+}
+
 async function archiveHars() {
   if (!confirm("Move ALL .har files in this folder into archive/" + new Date().toISOString().slice(0,10) + "/ ?")) return;
   const result = await api().archive_hars();
+  if (await handleAuthRequired(result)) return;
   if (!result.ok) { addBanner("err", result.error); return; }
   addBanner("ok", result.moved ? `Archived ${result.moved} file(s) to ${result.dest}` : "Folder is already empty.");
   renderScan(await api().scan());
@@ -308,6 +321,7 @@ async function runReport() {
   try {
     const result = await api().run(skips);
     showRunLog(result.log);
+    if (await handleAuthRequired(result)) { setStatus("Sign in required."); return; }
     if (!result.ok) { addBanner("err", result.error); setStatus("Failed."); return; }
     lastReport = result.report;
     renderReport(result.report, result.prev_available);
@@ -372,6 +386,7 @@ function renderReport(report, prevAvailable) {
 
 async function exportXlsx() {
   const result = await api().export_xlsx();
+  if (await handleAuthRequired(result)) return;
   addBanner(result.ok ? "ok" : "err", result.ok ? `Saved: ${result.path}` : result.error);
 }
 

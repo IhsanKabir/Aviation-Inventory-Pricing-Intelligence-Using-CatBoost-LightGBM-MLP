@@ -1,8 +1,10 @@
 """Tests for the desktop bridge (no pywebview/keyring/network needed).
 
-Locks in local-first semantics: login stores the token + flushes the outbox; sync
-posts the SANITIZED payload; network failures queue to the outbox (auth failures do
-NOT); run() shares the engine and colors against the backend previous report.
+Locks in the sign-in wall (no session -> no run/export/archive; explicit denial
+blocks; short offline stretches honor the grace window) plus: login stores the
+token + flushes the outbox; sync posts the SANITIZED payload; network failures
+queue to the outbox (auth failures do NOT); run() shares the engine and colors
+against the backend previous report.
 """
 import sys
 import tempfile
@@ -114,11 +116,52 @@ def test_sync_network_failure_queues_but_auth_failure_does_not(api, monkeypatch)
     assert api._outbox.count() == 0                            # auth errors never queue
 
 
+def _sign_in(api, monkeypatch, status="approved", allowed=True):
+    api._store_token("tok-1")
+    monkeypatch.setattr(api, "check_access",
+                        lambda: {"status": status, "allowed": allowed, "detail": ""})
+
+
+def test_run_requires_sign_in(api):
+    tmp_path = _mktmp()
+    api._config["har_dir"] = str(tmp_path)
+    result = api.run()
+    assert not result["ok"] and result.get("auth_required")
+
+
+def test_offline_grace_window(api, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    api._store_token("tok-1")
+    monkeypatch.setattr(api, "check_access",
+                        lambda: {"status": "unknown", "allowed": False, "detail": ""})
+    # Verified recently -> offline run allowed.
+    api._config["last_access_ok_utc"] = datetime.now(timezone.utc).isoformat()
+    assert api._require_access() is None
+    # Verified too long ago -> blocked until online again.
+    stale = datetime.now(timezone.utc) - timedelta(hours=api.OFFLINE_GRACE_HOURS + 1)
+    api._config["last_access_ok_utc"] = stale.isoformat()
+    assert api._require_access().get("auth_required")
+
+
+def test_pending_user_runs_locally_but_denial_blocks(api, monkeypatch):
+    _sign_in(api, monkeypatch, status="pending", allowed=False)
+    assert api._require_access() is None                       # identified + tracked
+    _sign_in(api, monkeypatch, status="rejected", allowed=False)
+    assert api._require_access().get("access_blocked")
+
+
+def test_export_requires_sign_in(api):
+    api._report = _report()
+    result = api.export_xlsx()
+    assert not result["ok"] and result.get("auth_required")
+
+
 def test_run_shares_engine_and_colors_against_prev(api, monkeypatch):
     tmp_path = _mktmp()
     (tmp_path / "x.har").write_text("{}", encoding="utf-8")
     api._config["har_dir"] = str(tmp_path)
     api._config["routes"] = "DAC-CGP"
+    _sign_in(api, monkeypatch)
     monkeypatch.setattr(backend_mod, "auto_detect_hars",
                         lambda d: {"firsttrip_b2b": [str(tmp_path / "x.har")]})
     monkeypatch.setattr(backend_mod, "build_report",
@@ -139,6 +182,7 @@ def test_run_skip_paths_filter(api, monkeypatch):
         Path(p).write_text("{}", encoding="utf-8")
     api._config["har_dir"] = str(tmp_path)
     api._config["routes"] = ""
+    _sign_in(api, monkeypatch)
     monkeypatch.setattr(backend_mod, "auto_detect_hars",
                         lambda d: {"bdfare": [keep, skip]})
     seen = {}

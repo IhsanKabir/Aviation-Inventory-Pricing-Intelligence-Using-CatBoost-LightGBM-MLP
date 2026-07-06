@@ -155,20 +155,27 @@ def collect_firsttrip_b2b(har_path: str) -> dict[tuple[str, str], str]:
 
 
 def _sharetrip_cell_text(c: dict[str, Any]) -> str:
-    """`common(wallet), best-judged special (label[, capped])[, best card ...]`.
+    """`common(wallet[, fee]), special (label[, capped][, fee])[, best card ...]`.
 
-    The leading number stays the common rate so highlight ranking is unchanged.
+    Percentages are gross of the gateway convenience fee (comparable with other
+    channels) but each shown option is annotated with its cheapest eligible
+    gateway fee, and the judge already RANKS options net of that fee. The
+    leading number stays the common rate so highlight ranking is unchanged.
     """
+    def _fee(pct: Any) -> str:
+        return f", {_fmt(float(pct))}% fee" if pct else ""
+
     wallet = ""
     if c.get("common_code"):
-        wallet = "(Nagad)" if "nagad" in str(c["common_code"]).lower() else "(Bkash)"
+        name = "Nagad" if "nagad" in str(c["common_code"]).lower() else "Bkash"
+        wallet = f"({name}{_fee(c.get('common_fee_pct'))})"
     text = _fmt(c["common_pct"]) + wallet
     if c.get("special_pct") is not None:
         cap = ", capped" if c.get("special_capped") else ""
-        text += f", {_fmt(c['special_pct'])} ({c['special_label']}{cap})"
+        text += f", {_fmt(c['special_pct'])} ({c['special_label']}{cap}{_fee(c.get('special_fee_pct'))})"
     if c.get("card_pct") is not None:
         cap = ", capped" if c.get("card_capped") else ""
-        text += f", {_fmt(c['card_pct'])} ({c['card_label']}{cap})"
+        text += f", {_fmt(c['card_pct'])} ({c['card_label']}{cap}{_fee(c.get('card_fee_pct'))})"
     return text
 
 
@@ -198,12 +205,16 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
         all_rows += sharetrip_har.parse_details_discounts(har_path)
     details = sharetrip_har.summarize_details(all_rows)
 
-    # Market-level coupon terms (uniform per DOM/INTL) from any booking capture.
+    # Market-level coupon terms (uniform per DOM/INTL) + the gateway fee catalog
+    # from any booking capture.
     shared_terms: dict[str, list[dict[str, Any]]] = {}
     for r in all_rows:
         rt = "DOM" if r["flight_type"] == "DOM" else "INTL"
         if r.get("coupon_terms"):
             shared_terms.setdefault(rt, r["coupon_terms"])
+    shared_gateways: dict[str, dict[str, Any]] = {}
+    for har_path in paths:
+        shared_gateways.update(sharetrip_har.parse_payment_gateways(har_path))
 
     cells: dict[tuple[str, str], str] = {}
     for (airline, flight_type), c in details.items():
@@ -211,7 +222,9 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
         cells[(rt, airline)] = _sharetrip_cell_text(c)
 
     # 2. Search fill: airlines without a booking capture get the shared market
-    #    terms judged at their own observed fare (caps re-evaluated per airline).
+    #    terms judged at their own observed fare (caps re-evaluated per airline;
+    #    fees annotated from the shared catalog — net ranking needs the total
+    #    fare, which search rows don't carry).
     for har_path in paths:
         common = sharetrip_har.summarize_discounts(sharetrip_har.parse_discounts(har_path))
         for (airline, flight_type), cell in common.items():
@@ -220,7 +233,8 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
                 continue    # a booking capture already gave the exact cell
             judged = sharetrip_har.judge_cell(cell["discount_pct"],
                                               float(cell.get("base_fare_bdt") or 0),
-                                              shared_terms.get(rt) or [])
+                                              shared_terms.get(rt) or [],
+                                              gateways=shared_gateways or None)
             cells[(rt, airline)] = _sharetrip_cell_text(judged)
     return cells
 

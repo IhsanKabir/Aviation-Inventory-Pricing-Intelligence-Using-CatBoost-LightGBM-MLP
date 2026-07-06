@@ -151,10 +151,20 @@ export default function HarGuidePage() {
             <strong>The app judges every coupon, not the advertised %:</strong> card
             coupons carry hidden caps (e.g. &quot;18%&quot; Stellar Signature is capped
             at 6,000 BDT — only ~7.4% on a 91k itinerary, where the 1% GPStar stack
-            actually wins). Cells now show the honest effective rates:{" "}
-            <code>7.1, 8.1 (GPStar), 7.4 (Stellar Signature, capped)</code>. A cheap
-            domestic fare still shows the familiar{" "}
-            <code>7.5(Bkash), 18 (Stellar Signature)</code> because its cap never binds.
+            actually wins). All coupon %s apply to the BASE fare. Cells show the honest
+            effective rates with the payment gateway&apos;s convenience fee noted:{" "}
+            <code>7.1, 8.1 (GPStar, 1.5% fee), 7.4 (Stellar Signature, capped, 2% fee)</code>
+            — every ShareTrip rail charges 0.5–5% (bKash 2%, Nagad 1.5%, most cards 2%),
+            and the app ranks options <em>net</em> of that fee even though the shown %
+            stays gross for cross-site comparability. TripCoin earn (≈ base/1000 coins)
+            is tracked as a note only — its cash value isn&apos;t exposed.
+            <br />
+            <strong>Why not one search capture for all airlines?</strong> The browser
+            never keeps ShareTrip&apos;s search response bodies in an exported HAR
+            (verified: 0 bytes in every capture), and the automatic discount differs per
+            airline — so each airline needs its own booking view. The coupon list itself
+            is identical market-wide, so it&apos;s only the per-airline rate you&apos;re
+            collecting each time.
           </div>
         </div>
 

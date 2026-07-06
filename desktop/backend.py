@@ -14,7 +14,7 @@ import json
 import os
 import re
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -76,6 +76,9 @@ class DesktopApi:
         self._prev_payload: Optional[dict[str, Any]] = None  # backend prev (red diff)
         self._busy = False
         self._status = ""
+        # Every launch shows up on the /usage dashboard (no-op when signed out —
+        # and signed-out users can't get past the sign-in wall anyway).
+        self._log_usage("app_launch", target=f"v{__version__}")
 
     # ------------------------------------------------------------------ config
     def _load_config(self) -> dict[str, Any]:
@@ -204,6 +207,7 @@ class DesktopApi:
         self._store_token(token)
         self._config["email"] = email.strip().lower()
         self._save_config()
+        self._log_usage("app_login", target=f"v{__version__}")
         flushed = self.flush_outbox()
         return {"ok": True, "email": self._config["email"],
                 "outbox_flushed": flushed.get("sent", 0)}
@@ -283,23 +287,71 @@ class DesktopApi:
 
     def check_access(self) -> dict[str, Any]:
         """The signed-in user's discount-report access status from the server.
-        Returns {status, allowed, detail} or {status:'unknown'} when signed out /
-        offline (so an approved user can still work offline)."""
+        Returns {status, allowed, detail} or {status:'unknown'} when offline.
+        A successful 'allowed' answer is cached (timestamp) so a signed-in,
+        already-approved user keeps working through a short offline stretch."""
         token = self._token()
         if not token:
             return {"status": "signed_out", "allowed": False,
-                    "detail": "Sign in to sync; local runs work without signing in."}
+                    "detail": "Sign in to use the app."}
         try:
             r = requests.get(f"{self.api_base}/api/v1/discount-reports/access",
                              headers={"X-User-Session": token}, timeout=15)
             if r.status_code == 200:
-                return r.json()
+                result = r.json()
+                if result.get("allowed"):
+                    self._config["last_access_ok_utc"] = datetime.now(timezone.utc).isoformat()
+                    self._save_config()
+                elif result.get("status") in ("rejected", "payment_required",
+                                              "expired", "not_started", "none"):
+                    self._config.pop("last_access_ok_utc", None)   # revoke offline grace
+                    self._save_config()
+                return result
             if r.status_code == 401:
                 return {"status": "signed_out", "allowed": False,
                         "detail": "Session expired — sign in again."}
         except requests.RequestException:
             pass
         return {"status": "unknown", "allowed": False, "detail": ""}
+
+    #: Signed-in users whose access was server-verified within this window keep
+    #: working offline; beyond it the app requires a fresh online check.
+    OFFLINE_GRACE_HOURS = 72
+
+    def _require_access(self) -> Optional[dict[str, Any]]:
+        """The sign-in wall: None when the user may use the app, else the error
+        payload to return. No session -> blocked. Explicit server denial ->
+        blocked (and the offline-grace cache is cleared). Offline -> allowed only
+        within OFFLINE_GRACE_HOURS of the last verified approval."""
+        if not self._token():
+            return {"ok": False, "auth_required": True,
+                    "error": "Sign in to use the app."}
+        access = self.check_access()
+        if access.get("allowed"):
+            return None
+        status = access.get("status", "unknown")
+        if status == "signed_out":
+            return {"ok": False, "auth_required": True,
+                    "error": access.get("detail") or "Session expired — sign in again."}
+        if status == "unknown":     # offline: honor the grace window
+            last = self._config.get("last_access_ok_utc") or ""
+            try:
+                verified = datetime.fromisoformat(last)
+                age_h = (datetime.now(timezone.utc) - verified).total_seconds() / 3600
+                if age_h <= self.OFFLINE_GRACE_HOURS:
+                    return None
+            except ValueError:
+                pass
+            return {"ok": False, "auth_required": True,
+                    "error": "Can't verify your access while offline — connect to "
+                             "the internet once and try again."}
+        if status == "pending":
+            # A logged-in user awaiting approval may run locally (sync stays
+            # gated server-side) — they are identified and tracked.
+            return None
+        return {"ok": False, "access_blocked": True,
+                "error": access.get("detail")
+                or "Your access to the discount report is not active."}
 
     def open_guide(self) -> dict[str, Any]:
         """Open the visual HAR-collection guide (flow diagrams + per-site steps) in
@@ -343,7 +395,7 @@ class DesktopApi:
         # 4. Signed in + session valid + access.
         token = self._token()
         if not token:
-            add("Signed in", False, "not signed in — needed only to sync")
+            add("Signed in", False, "not signed in — sign-in is required to use the app")
         else:
             access = self.check_access()
             status = access.get("status", "unknown")
@@ -389,6 +441,8 @@ class DesktopApi:
             except requests.RequestException:
                 pass
         self._clear_token()
+        self._config.pop("last_access_ok_utc", None)   # signing out ends offline grace
+        self._save_config()
         return self.get_state()
 
     # -------------------------------------------------------------------- scan
@@ -437,6 +491,9 @@ class DesktopApi:
     def archive_hars(self) -> dict[str, Any]:
         """Move every .har in the capture folder into archive/YYYY-MM-DD/ so the
         next day starts clean. Never deletes; same-name collisions get a suffix."""
+        blocked = self._require_access()
+        if blocked:
+            return blocked
         har_dir = self._config.get("har_dir") or ""
         if not har_dir or not Path(har_dir).is_dir():
             return {"ok": False, "error": "Pick the HAR capture folder first."}
@@ -513,14 +570,12 @@ class DesktopApi:
         except SystemExit as exc:
             return {"ok": False, "error": str(exc)}
 
-        # Block up front if the server has explicitly DENIED this user — no point
-        # running the HARs if they can never be used. Denials only (rejected /
-        # payment / expired); pending/none/offline still run locally (sync-gated).
-        access = self.check_access()
-        if access.get("status") in ("rejected", "payment_required", "expired", "not_started"):
-            return {"ok": False, "error": access.get("detail")
-                    or "Your access to the discount report is not active.",
-                    "access_blocked": True}
+        # Sign-in wall: every run requires an identified user (usage-tracked);
+        # explicit denials block, short offline stretches are covered by the
+        # grace window in _require_access().
+        blocked = self._require_access()
+        if blocked:
+            return blocked
 
         self._busy, self._status = True, "Parsing HAR captures…"
         # The engine reports per-channel problems via print(); a windowed exe has no
@@ -580,6 +635,8 @@ class DesktopApi:
 
     # ------------------------------------------------------------------ export
     def export_xlsx(self) -> dict[str, Any]:
+        if not self._token():
+            return {"ok": False, "auth_required": True, "error": "Sign in to use the app."}
         if not self._report:
             return {"ok": False, "error": "Run the report first."}
         import webview

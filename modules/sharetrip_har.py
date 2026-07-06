@@ -276,8 +276,24 @@ def _wallet_coupon(coupons: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
             or next((c for c in coupons if _is(c, "nagad")), None))
 
 
-def judge_coupons(base_fare: float, auto_pct: float,
-                  coupons: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _min_gateway_fee(coupon: Dict[str, Any],
+                     gateways: Optional[Dict[str, Dict[str, Any]]]) -> Optional[float]:
+    """Cheapest convenience charge among the coupon's eligible payment gateways.
+
+    Every ShareTrip rail carries a customer-facing charge (bKash 2%, Nagad 1.5%,
+    most cards 2%, EMI 3%, wallets' LCC variants 5%) — a coupon is only as good
+    as its cheapest eligible gateway. None when the catalog wasn't captured.
+    """
+    if not gateways:
+        return None
+    fees = [float(gateways[str(g)]["charge_pct"])
+            for g in (coupon.get("gateway") or []) if str(g) in gateways]
+    return min(fees) if fees else None
+
+
+def judge_coupons(base_fare: float, auto_pct: float, coupons: List[Dict[str, Any]],
+                  total_fare: float = 0.0,
+                  gateways: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     """Cap-aware effective value of EVERY discount>0 coupon at the observed fare.
 
     effective saving = min(floor(pct% x base), maximumDiscountAmount if set)
@@ -286,6 +302,11 @@ def judge_coupons(base_fare: float, auto_pct: float,
     "18%" coupon whose cap binds ranks below a smaller uncapped stack when that is
     what a customer would actually save. With no observed fare (base<=0) caps cannot
     be evaluated and nominal percentages are used unchanged.
+
+    When the payment-gateway catalog (+ total fare) is available, each coupon also
+    gets net_pct = (saving - cheapest eligible gateway fee on the amount paid) /
+    base, and the ranking uses NET value — a fee-heavy coupon can't win on its
+    sticker rate.
     """
     auto_amt = math.floor(base_fare * auto_pct / 100) if base_fare > 0 else 0
     judged: List[Dict[str, Any]] = []
@@ -304,6 +325,11 @@ def judge_coupons(base_fare: float, auto_pct: float,
         else:
             cap_bound, saving = False, 0
             eff_pct = round((auto_pct + pct) if stacks else pct, 2)
+        fee_pct = _min_gateway_fee(c, gateways)
+        net_pct = None
+        if fee_pct is not None and base_fare > 0 and total_fare > 0:
+            fee_amt = (total_fare - saving) * fee_pct / 100
+            net_pct = round((saving - fee_amt) / base_fare * 100, 2)
         judged.append({
             "code": str(c.get("couponCode") or ""),
             "label": _card_label(c),
@@ -313,28 +339,36 @@ def judge_coupons(base_fare: float, auto_pct: float,
             "stacks_with_auto": stacks,
             "saving_bdt": saving,
             "effective_pct": eff_pct,
+            "fee_pct": fee_pct,
+            "net_pct": net_pct,
         })
-    judged.sort(key=lambda j: -j["effective_pct"])
+    judged.sort(key=lambda j: -(j["net_pct"] if j["net_pct"] is not None else j["effective_pct"]))
     return judged
 
 
-def judge_cell(auto_pct: float, base_fare: float,
-               coupons: List[Dict[str, Any]]) -> Dict[str, Any]:
+def judge_cell(auto_pct: float, base_fare: float, coupons: List[Dict[str, Any]],
+               total_fare: float = 0.0,
+               gateways: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     """One grid cell judged from an airline's automatic rate + the market coupon terms.
 
     common  = auto + stackable wallet coupon (bKash/Nagad), the rate anyone paying
-              online gets; special = the best JUDGED coupon (cap-aware, stack-aware);
+              online gets; special = the best JUDGED coupon (cap-aware, stack-aware,
+              ranked NET of the cheapest eligible gateway fee when known);
               card = the best standalone card coupon when it is not already the winner
               (so a loyalty stack beating a capped card still shows the card rate).
+    Displayed percentages stay gross-of-fee (comparable with other channels); the
+    fee itself is carried in *_fee_pct for annotation.
     """
-    judged = judge_coupons(base_fare, auto_pct, coupons)
+    judged = judge_coupons(base_fare, auto_pct, coupons, total_fare, gateways)
     wallet = _wallet_coupon(coupons)
     cell: Dict[str, Any] = {
         "base_pct": round(auto_pct, 2),
         "common_pct": round(auto_pct + float(wallet["discount"]), 2) if wallet else round(auto_pct, 2),
         "common_code": wallet["couponCode"] if wallet else None,
-        "special_pct": None, "special_label": None, "special_code": None, "special_capped": False,
-        "card_pct": None, "card_label": None, "card_capped": False,
+        "common_fee_pct": _min_gateway_fee(wallet, gateways) if wallet else None,
+        "special_pct": None, "special_label": None, "special_code": None,
+        "special_capped": False, "special_fee_pct": None,
+        "card_pct": None, "card_label": None, "card_capped": False, "card_fee_pct": None,
         "judged": judged,
         "base_fare_bdt": round(base_fare) if base_fare > 0 else None,
     }
@@ -343,15 +377,50 @@ def judge_cell(auto_pct: float, base_fare: float,
         winner = contenders[0]
         cell.update(special_pct=round(winner["effective_pct"], 1),
                     special_label=winner["label"], special_code=winner["code"],
-                    special_capped=winner["cap_bound"])
+                    special_capped=winner["cap_bound"], special_fee_pct=winner["fee_pct"])
         cards = [j for j in contenders if not j["stacks_with_auto"]]
         if cards and cards[0]["code"] != winner["code"]:
             cell.update(card_pct=round(cards[0]["effective_pct"], 1),
-                        card_label=cards[0]["label"], card_capped=cards[0]["cap_bound"])
+                        card_label=cards[0]["label"], card_capped=cards[0]["cap_bound"],
+                        card_fee_pct=cards[0]["fee_pct"])
     return cell
 
 
-def _details_row(resp: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _collect_gateways(node: Any, acc: Dict[str, Dict[str, Any]]) -> None:
+    if isinstance(node, dict):
+        gid = node.get("id") or node.get("gatewayId")
+        name = node.get("name") or node.get("title")
+        if gid and name and node.get("charge") is not None:
+            acc.setdefault(str(gid), {"name": str(name),
+                                      "charge_pct": float(node.get("charge") or 0)})
+        for v in node.values():
+            _collect_gateways(v, acc)
+    elif isinstance(node, list):
+        for v in node:
+            _collect_gateways(v, acc)
+
+
+def parse_payment_gateways(path: str | Path) -> Dict[str, Dict[str, Any]]:
+    """Gateway id -> {name, charge_pct} from GET /api/v1/payment/gateway responses.
+
+    Every rail carries a customer-facing convenience charge (0.5%-5%); the judge
+    nets each coupon against its cheapest eligible gateway.
+    """
+    har = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    gateways: Dict[str, Dict[str, Any]] = {}
+    for e in har.get("log", {}).get("entries", []):
+        if "/api/v1/payment/gateway" not in e.get("request", {}).get("url", ""):
+            continue
+        try:
+            data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
+        except json.JSONDecodeError:
+            continue
+        _collect_gateways(data, gateways)
+    return gateways
+
+
+def _details_row(resp: Dict[str, Any],
+                 gateways: Optional[Dict[str, Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
     airline = ""
     for leg in resp.get("legs") or []:
         a = leg.get("marketingAirline") or (leg.get("airlines") or {}).get("code")
@@ -362,7 +431,9 @@ def _details_row(resp: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     display = resp.get("displayPrice") or {}
     auto = float(display.get("discount") or 0)
-    base_fare = float((display.get("totalFare") or {}).get("base") or 0)
+    tf = display.get("totalFare") or {}
+    base_fare = float(tf.get("base") or 0)
+    total_fare = float(tf.get("total") or 0)
 
     coupons: list = []
     _find_coupons(resp, coupons)
@@ -381,28 +452,44 @@ def _details_row(resp: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "airline": airline,
         "flight_type": "DOM" if resp.get("isDomestic") else "INTL",
         "coupon_terms": coupons,   # market-uniform: reusable for airlines seen only in search
+        # TripCoin earn (~ base/1000 coins) — a small extra, noted but never counted
+        # in the % (redemption value isn't exposed in the captures).
+        "tripcoin_earn": (resp.get("points") or {}).get("earn"),
     }
-    row.update(judge_cell(auto, base_fare, coupons))
+    row.update(judge_cell(auto, base_fare, coupons, total_fare, gateways))
     return row
 
 
 def parse_details_discounts(path: str | Path) -> List[Dict[str, Any]]:
     """
     Full B2C coupon cell from a ShareTrip booking-flow HAR. Each
-    POST /api/v2/flight/search/details response (one per selected flight) yields
-    one airline's cell. Capture one booking view per airline you want covered.
+    GET/POST /api/v2/flight/search/details response (one per selected flight)
+    yields one airline's judged cell. Capture one booking view per airline per
+    market (domestic and international carry separate coupon sets).
     """
     har = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    entries = har.get("log", {}).get("entries", [])
+
+    # First pass: the payment-gateway catalog (fees), wherever it sits in the HAR.
+    gateways: Dict[str, Dict[str, Any]] = {}
+    for e in entries:
+        if "/api/v1/payment/gateway" in e.get("request", {}).get("url", ""):
+            try:
+                data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
+            except json.JSONDecodeError:
+                continue
+            _collect_gateways(data, gateways)
+
     rows: List[Dict[str, Any]] = []
     seen: set = set()
-    for e in har.get("log", {}).get("entries", []):
+    for e in entries:
         if "/api/v2/flight/search/details" not in e.get("request", {}).get("url", ""):
             continue
         try:
             data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
         except json.JSONDecodeError:
             continue
-        row = _details_row(data.get("response") or {})
+        row = _details_row(data.get("response") or {}, gateways or None)
         if not row:
             continue
         sig = (row["airline"], row["flight_type"], row["common_pct"], row["special_pct"])

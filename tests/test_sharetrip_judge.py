@@ -107,6 +107,58 @@ def test_no_observed_fare_falls_back_to_nominal_percentages():
     assert cell["special_capped"] is False
 
 
+# Real gateway ids (subset of the 114-entry catalog) with their convenience charges.
+GATEWAYS = {
+    "ddb4e30d59cd428e8f0c22e10eb40e2d": {"name": "bKash", "charge_pct": 2.0},
+    "3f693d87f77c4676b3b0846d8abf1832": {"name": "Nagad", "charge_pct": 1.5},
+    "9wyawmn8hd4oks4ocww0sww8ck0o448": {"name": "Stellar Signature", "charge_pct": 2.0},
+    "bjl4v8f8h7kkckowwwoc0gwow4c0g4k": {"name": "SkyTrip", "charge_pct": 2.0},
+    "lif63ywzn80csckck4s0wskogk4skcc": {"name": "Stellar Platinum", "charge_pct": 2.0},
+}
+
+INTL_WITH_GATEWAYS = [
+    {**INTL_COUPONS[1], "gateway": ["9wyawmn8hd4oks4ocww0sww8ck0o448"]},         # Stellar Sig 2%
+    {**INTL_COUPONS[3], "gateway": ["ddb4e30d59cd428e8f0c22e10eb40e2d",
+                                    "3f693d87f77c4676b3b0846d8abf1832"]},        # GPStar: min 1.5%
+]
+
+DOM_WITH_GATEWAYS = [
+    {**DOM_COUPONS[0], "gateway": ["ddb4e30d59cd428e8f0c22e10eb40e2d"]},         # bKash 2%
+    {**DOM_COUPONS[3], "gateway": ["9wyawmn8hd4oks4ocww0sww8ck0o448"]},          # Stellar Sig 2%
+]
+
+
+def test_convenience_fee_nets_and_annotates():
+    # BS intl with fees: GPStar net = (6541 - 1.5% x 84,918)/80,765 = 6.52%;
+    # Stellar Sig net = (6000 - 2% x 85,459)/80,765 = 5.31% — GPStar still wins.
+    cell = sharetrip_har.judge_cell(7.1, 80765, INTL_WITH_GATEWAYS, total_fare=91459,
+                                    gateways=GATEWAYS)
+    by_code = {j["code"]: j for j in cell["judged"]}
+    assert by_code["FLYGPSTAR"]["fee_pct"] == 1.5
+    assert by_code["FLYGPSTAR"]["net_pct"] == 6.52
+    assert by_code["STLRSIQ326"]["fee_pct"] == 2.0
+    assert by_code["STLRSIQ326"]["net_pct"] == 5.31
+    assert cell["special_label"] == "GPStar"          # ranked by NET
+    assert cell["special_fee_pct"] == 1.5
+    assert grid._sharetrip_cell_text(cell) == \
+        "7.1, 8.1 (GPStar, 1.5% fee), 7.4 (Stellar Signature, capped, 2% fee)"
+
+
+def test_wallet_fee_annotated_on_common():
+    cell = sharetrip_har.judge_cell(5.5, 4424, DOM_WITH_GATEWAYS, total_fare=5549,
+                                    gateways=GATEWAYS)
+    assert cell["common_fee_pct"] == 2.0
+    assert grid._sharetrip_cell_text(cell) == \
+        "7.5(Bkash, 2% fee), 18 (Stellar Signature, 2% fee)"
+
+
+def test_no_gateway_catalog_keeps_effective_ranking_and_clean_text():
+    # Without the fee catalog the judge behaves exactly as before (no annotations).
+    cell = sharetrip_har.judge_cell(5.5, 4424, DOM_COUPONS)
+    assert all(j["fee_pct"] is None and j["net_pct"] is None for j in cell["judged"])
+    assert grid._sharetrip_cell_text(cell) == "7.5(Bkash), 18 (Stellar Signature)"
+
+
 if __name__ == "__main__":
     import subprocess
     raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"]))

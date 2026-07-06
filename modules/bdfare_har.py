@@ -3,9 +3,13 @@ BDFare B2B (bdfare.com/searchpad) commission — via MANUAL HAR import.
 
 The agent search posts to /bdfare-search/api/v2/Search/AirSearch (and
 RefreshAirSearch). Each offer carries totals only:
-  grossAmount, agentAmount (agent buy), customerNetAmount (customer sell).
-The agent commission BDFare gives = customerNetAmount - agentAmount (this equals
-the `discount` shown in the GetAirSearchItinerary detail).
+  grossAmount (base+tax, NO AIT VAT), agentAmount (agent buy, VAT INCLUDED),
+  customerNetAmount (customer sell, VAT included).
+The agent's real saving = grossAmount - agentAmount. customerNetAmount -
+agentAmount is the UI's "Discount" figure but includes the AIT VAT the agent
+pays regardless of channel, overstating the commission (field-verified on
+BG 247 DAC-DXB: gross 45,834 / agent 43,337 / base 35,138 -> 7.106%, while
+customerNet 45,972 - agent = 2,635 -> a false 7.5%).
 
 The report expresses commission as a percent of BASE fare, but the search list
 has no base. The itinerary detail does (baseFare + tax), so we derive a
@@ -122,7 +126,9 @@ def parse_commissions(path: str | Path) -> List[Dict[str, Any]]:
         customer_net = _money(offer.get("customerNetAmount"))
         if not airline or not gross or not agent or gross <= 0:
             continue
-        commission = (customer_net - agent) if customer_net is not None else (gross - agent)
+        # gross excludes AIT VAT while agentAmount includes it, so gross - agent is
+        # the VAT-neutral saving; customerNet - agent would count the VAT as discount.
+        commission = gross - agent
         base = gross * ratio
         origin, destination = _offer_route(offer)
         sig = (airline, origin, destination, round(gross), round(agent))
