@@ -39,6 +39,10 @@
   .banner.ok { background: var(--green-bg); border: 1px solid #9fd6ab; color: var(--green-tx); }
   .legend span { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 6px; }
   .muted { color: var(--muted); font-size: 12px; }
+  .diag-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .diag-row strong { display: block; font-size: 13px; }
+  .diag-row .muted { display: block; }
+  .pill { padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
   .scan-bad { color: var(--red-tx); font-weight: 600; }
   #status { font-size: 13px; color: var(--muted); }
   .grid-title { display: flex; justify-content: space-between; align-items: baseline; margin: 4px 0 8px; }
@@ -49,11 +53,24 @@
 <body>
 <header class="bar">
   <h1>OTA Discount Comparison</h1>
-  <div style="display:flex;align-items:center;gap:10px">
+  <div style="display:flex;align-items:center;gap:8px">
     <div class="who" id="who">…</div>
+    <button class="secondary" style="padding:4px 10px;font-size:11px" onclick="runDiagnostics()">Test / diagnostics</button>
+    <button class="secondary" style="padding:4px 10px;font-size:11px" onclick="api().open_guide()">Guide</button>
     <button class="secondary" style="padding:4px 10px;font-size:11px" onclick="checkUpdate(true)">Check for updates</button>
   </div>
 </header>
+
+<div id="diag-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto">
+  <div class="card" style="max-width:560px;width:100%">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <strong id="diag-title">Diagnostics</strong>
+      <button class="secondary" style="padding:4px 12px" onclick="document.getElementById('diag-modal').style.display='none'">Close</button>
+    </div>
+    <div id="diag-body"></div>
+  </div>
+</div>
+
 <main>
   <section class="card" id="login-card" style="display:none">
     <div class="row">
@@ -186,6 +203,27 @@ async function changePassword() {
   document.getElementById("new_password").value = "";
   document.getElementById("confirm_password").value = "";
   addBanner("ok", "Password changed.");
+}
+
+async function runDiagnostics() {
+  const modal = document.getElementById("diag-modal");
+  const body = document.getElementById("diag-body");
+  document.getElementById("diag-title").textContent = "Running checks…";
+  body.innerHTML = '<p class="muted">Checking engine, backend, sign-in, access, HAR folder, and version…</p>';
+  modal.style.display = "flex";
+  const r = await api().run_diagnostics();
+  document.getElementById("diag-title").textContent =
+    r.all_ok ? "✅ All checks passed" : `${r.ok_count} / ${r.total} checks passed`;
+  body.innerHTML = r.checks.map(c => `
+    <div class="diag-row">
+      <div style="flex:1">
+        <strong>${esc(c.name)}</strong>
+        <span class="muted">${esc(c.detail)}</span>
+      </div>
+      <div class="pill" style="background:${c.ok ? "var(--green-bg)" : "var(--red-bg)"};color:${c.ok ? "var(--green-tx)" : "var(--red-tx)"}">
+        ${c.ok ? "OK" : "Check"}
+      </div>
+    </div>`).join("");
 }
 
 async function checkUpdate(verbose) {

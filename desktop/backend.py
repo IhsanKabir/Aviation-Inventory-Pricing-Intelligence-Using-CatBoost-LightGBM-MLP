@@ -301,6 +301,85 @@ class DesktopApi:
             pass
         return {"status": "unknown", "allowed": False, "detail": ""}
 
+    def open_guide(self) -> dict[str, Any]:
+        """Open the visual HAR-collection guide (flow diagrams + per-site steps) in
+        the browser — same guide the web app serves."""
+        import webbrowser
+        web_base = str(self._config.get("web_base") or DEFAULT_WEB_BASE).rstrip("/")
+        webbrowser.open(f"{web_base}/discount-comparison/guide")
+        return {"ok": True}
+
+    def run_diagnostics(self) -> dict[str, Any]:
+        """Self-test: is everything the app needs working? Returns an ordered list
+        of checks [{name, ok, detail}] so the user can see at a glance what's set up
+        and what isn't — before a run/sync, or when something misbehaves."""
+        checks: list[dict[str, Any]] = []
+
+        def add(name: str, ok: bool, detail: str = "") -> None:
+            checks.append({"name": name, "ok": ok, "detail": detail})
+
+        # 1. Engine present (bundled) — importable means the exe is intact.
+        try:
+            import discount_engine  # noqa: F401
+            add("Report engine", True, f"v{discount_engine.__version__} bundled")
+        except Exception as exc:  # noqa: BLE001
+            add("Report engine", False, f"engine import failed: {exc}")
+
+        # 2. Secure token store.
+        add("Secure sign-in store", not self._config.get("token_fallback"),
+            "OS keyring" if _HAS_KEYRING and not self._config.get("token_fallback")
+            else "config-file fallback (no keyring)")
+
+        # 3. Backend reachable (public health endpoint — no auth needed).
+        api_ok = False
+        try:
+            r = requests.get(f"{self.api_base}/health", timeout=15)
+            api_ok = r.status_code == 200
+            add("Backend reachable", api_ok,
+                self.api_base if api_ok else f"HTTP {r.status_code} from {self.api_base}")
+        except requests.RequestException as exc:
+            add("Backend reachable", False, f"offline? {exc} — local runs still work")
+
+        # 4. Signed in + session valid + access.
+        token = self._token()
+        if not token:
+            add("Signed in", False, "not signed in — needed only to sync")
+        else:
+            access = self.check_access()
+            status = access.get("status", "unknown")
+            add("Signed in", status not in ("signed_out",),
+                self._config.get("email") or "session present")
+            add("Discount-report access", bool(access.get("allowed")),
+                access.get("detail") or f"status: {status}")
+            plan = access.get("plan") or {}
+            if plan:
+                left = plan.get("uses_remaining")
+                add("Plan status", True,
+                    f"valid to {plan.get('end_date') or 'no expiry'} · "
+                    + (f"{left} syncs left" if left is not None else "unlimited syncs"))
+
+        # 5. HAR folder + captures.
+        har_dir = self._config.get("har_dir") or ""
+        if not har_dir or not Path(har_dir).is_dir():
+            add("HAR folder", False, "pick the folder with today's .har files")
+        else:
+            try:
+                n = len(list(Path(har_dir).glob("*.har")))
+            except OSError:
+                n = 0
+            add("HAR folder", n > 0, f"{n} .har file(s) in {har_dir}")
+
+        # 6. Update check.
+        upd = self.check_update()
+        if upd.get("update_available"):
+            add("App version", False, f"update v{upd.get('version')} available")
+        else:
+            add("App version", True, f"v{__version__} (latest)")
+
+        ok_count = sum(1 for c in checks if c["ok"])
+        return {"checks": checks, "ok_count": ok_count, "total": len(checks),
+                "all_ok": ok_count == len(checks)}
+
     def logout(self) -> dict[str, Any]:
         token = self._token()
         if token:
