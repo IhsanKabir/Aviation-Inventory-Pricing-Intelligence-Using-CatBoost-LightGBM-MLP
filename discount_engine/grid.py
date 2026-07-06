@@ -280,6 +280,14 @@ def collect_bdfare(har_path: str, true_base=None) -> dict[tuple[str, str], str]:
             kept.append(r)
         rows = kept
     summary = bdfare_har.summarize_commissions(rows)
+    for (rt, airline), cell in sorted(summary.items()):
+        if cell.get("n_offers", 1) > 1 and cell.get("pct_max") != cell.get("value"):
+            # Provenance for the run log: which fare the cell reflects, and the
+            # spread across the other (usually premium) offers in the capture.
+            print(f"BDFare {airline} {rt}: {cell['value']}% from the cheapest offer "
+                  f"({cell.get('offer_route')} gross {cell.get('offer_gross_bdt'):,}) — "
+                  f"{cell['n_offers']} offers ranged "
+                  f"{cell.get('pct_min')}–{cell.get('pct_max')}%")
     return {key: _fmt(cell["value"]) for key, cell in summary.items()}
 
 

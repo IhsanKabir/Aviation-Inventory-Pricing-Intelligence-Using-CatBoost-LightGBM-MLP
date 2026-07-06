@@ -56,6 +56,23 @@ def test_fallback_ratio_still_close_when_no_detail_captured():
     assert abs(row["commission_pct"] - 7.10) < 0.02
 
 
+def test_cell_uses_cheapest_offer_not_best_percent():
+    # Field case 2026-07-07: a premium 170k DAC-XNB itinerary paid 8.7% while the
+    # lead 65k DAC-DXB economy fare paid ~7.2 — the cell must reflect the fare
+    # people actually compare (cheapest), with the spread kept for the run log.
+    premium = {"airlineCode": "BG", "grossAmount": 170900, "agentAmount": 159499,
+               "customerNetAmount": 171413,
+               "journeyWises": [{"departure": "DAC", "arrival": "XNB"}]}
+    rows = bdfare_har.parse_commissions(_har([BG247, premium]))
+    summary = bdfare_har.summarize_commissions(rows)
+    cell = summary[("INTL", "BG")]
+    assert cell["offer_gross_bdt"] == 45834          # cheapest wins the cell
+    assert cell["value"] == rows[0]["commission_pct"] if rows[0]["gross_bdt"] == 45834 \
+        else cell["value"] == 7.11
+    assert cell["n_offers"] == 2
+    assert cell["pct_max"] > cell["value"]           # premium spread preserved
+
+
 if __name__ == "__main__":
     import subprocess
     raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"]))

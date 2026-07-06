@@ -153,13 +153,25 @@ def parse_commissions(path: str | Path) -> List[Dict[str, Any]]:
 
 
 def summarize_commissions(rows: List[Dict[str, Any]]) -> Dict[tuple[str, str], Dict[str, Any]]:
-    """One cell per (route_type, airline): best commission %."""
+    """One cell per (route_type, airline): the CHEAPEST offer's commission %.
+
+    Premium fares carry higher commission tiers (field case: a 170k DAC-XNB
+    itinerary paid 8.7% while the lead 65k DAC-DXB economy fare paid 7.2%) —
+    max() reported a rate nobody sees on the fare they actually compare.
+    The cheapest offer is the like-for-like anchor across channels; the full
+    spread is returned so callers can surface it (run log)."""
     by_cell: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
     for r in rows:
         rt = "DOM" if r["domestic"] else "INTL"
         by_cell.setdefault((rt, r["airline"]), []).append(r)
     out: Dict[tuple[str, str], Dict[str, Any]] = {}
     for key, items in by_cell.items():
-        best = max(items, key=lambda r: r["commission_pct"])
-        out[key] = {"value": best["commission_pct"], "commission_bdt": best["commission_bdt"]}
+        cheapest = min(items, key=lambda r: r["gross_bdt"])
+        pcts = [r["commission_pct"] for r in items]
+        out[key] = {"value": cheapest["commission_pct"],
+                    "commission_bdt": cheapest["commission_bdt"],
+                    "offer_route": f"{cheapest['origin']}-{cheapest['destination']}",
+                    "offer_gross_bdt": cheapest["gross_bdt"],
+                    "n_offers": len(items),
+                    "pct_min": min(pcts), "pct_max": max(pcts)}
     return out
