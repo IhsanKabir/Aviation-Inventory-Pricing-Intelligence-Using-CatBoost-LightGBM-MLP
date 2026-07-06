@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -145,12 +146,16 @@ def parse_har(path: str | Path) -> List[Dict[str, Any]]:
 
 
 def _discount_row(fl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Common B2C discount for one ShareTrip matched flight.
+    """Automatic B2C discount for one ShareTrip matched flight.
 
-    The search response carries the default promotional coupon (FLYINSIDE) as
-    displayPrice.discount (a percent off base) plus a `domestic` flag. The
-    payment/card-specific coupons (bKash, EBL/Stellar 18%) live in the booking
-    flow, not the search, so only the common rate is available here.
+    displayPrice.discount is ShareTrip's AUTOMATIC, airline-specific discount
+    (a percent off the BASE fare); promotionalCoupon is the default gateway
+    coupon (FLYINSIDE/FLIGHTINT), which validates to 0% extra. The full coupon
+    list (wallet stacks, capped card coupons) lives in the booking-flow details,
+    so only the automatic rate is available here. NOTE: browser HAR exports
+    usually evict available-flights response bodies (multi-MB), so this path
+    rarely yields rows in practice — booking-details captures are the reliable
+    source.
     """
     legs = fl.get("legs") or []
     if not legs:
@@ -206,23 +211,35 @@ def parse_discounts(path: str | Path) -> List[Dict[str, Any]]:
 
 
 def summarize_discounts(rows: List[Dict[str, Any]]) -> Dict[tuple[str, str], Dict[str, Any]]:
-    """One cell per (airline, flight_type): the best common discount % (+ coupon)."""
+    """One cell per (airline, flight_type): the best automatic discount % (+ coupon).
+
+    Keeps the observed base fare of the winning flight so the market coupon terms
+    (from any booking capture) can be judged cap-aware at THIS airline's fare.
+    """
     by_cell: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
     for r in rows:
         by_cell.setdefault((r["airline"], r["flight_type"]), []).append(r)
     out: Dict[tuple[str, str], Dict[str, Any]] = {}
     for key, items in by_cell.items():
         best = max(items, key=lambda r: r["discount_pct"])
-        out[key] = {"discount_pct": best["discount_pct"], "coupon_code": best["coupon_code"]}
+        out[key] = {"discount_pct": best["discount_pct"], "coupon_code": best["coupon_code"],
+                    "base_fare_bdt": best.get("base_fare_bdt", 0)}
     return out
 
 
 # --- booking-flow coupon list (POST /api/v2/flight/search/details) -----------------------
-# The fare-details response carries the FULL coupon list with discounts. The grid cell is:
-#   common  = displayPrice.discount (the base FLYINSIDE rate) + bKash stackable coupon
-#   special = the highest standalone (withDiscount="No") card coupon (e.g. Stellar/EBL)
-_CARD_KEYWORDS = ["Stellar", "American Express", "AMEX", "SkyTrip", "Bank Asia", "EBL",
-                  "City Bank", "GPStar", "Orange Club", "Robi Elite", "Visa", "Mastercard"]
+# The fare-details response carries the FULL coupon list. Every coupon is JUDGED, not
+# taken at its advertised %: coupons carry maximumDiscountAmount caps (18% "Stellar"
+# capped at 6,000 BDT is only ~7.4% on a 91k intl itinerary), gateway restrictions,
+# and a withDiscount flag (Yes = stacks ON TOP of the automatic displayPrice.discount,
+# No = replaces it). Verified on 2026-07-06 captures: the automatic discount is a
+# percent of the BASE fare (floor(base*d/100) == total - promotionalAmount on all six
+# captures) and is airline-specific; the coupon TERMS are market-uniform (identical
+# coupon objects across airlines within DOM / within INTL).
+# Longest keywords first so "Stellar Signature" doesn't collapse into "Stellar".
+_CARD_KEYWORDS = ["Stellar Signature", "Stellar Platinum", "American Express", "AMEX",
+                  "SkyTrip", "Bank Asia", "EBL", "City Bank", "GPStar", "Orange Club",
+                  "Robi Elite", "bKash", "Nagad", "Visa", "Mastercard", "Stellar"]
 
 
 def _find_coupons(node: Any, acc: list) -> None:
@@ -244,6 +261,96 @@ def _card_label(coupon: Dict[str, Any]) -> str:
     return str(coupon.get("couponCode") or "card")
 
 
+def _wallet_coupon(coupons: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The stackable wallet coupon for the 'common' rate (bKash preferred, then Nagad).
+
+    Only exists on domestic today — international has no wallet coupon, so the
+    common rate there is the automatic discount alone.
+    """
+    def _is(c: Dict[str, Any], word: str) -> bool:
+        blob = (str(c.get("couponCode", "")) + str(c.get("title", ""))).lower()
+        return (word in blob and str(c.get("withDiscount", "")).lower() == "yes"
+                and float(c.get("discount") or 0) > 0)
+
+    return (next((c for c in coupons if _is(c, "bkash")), None)
+            or next((c for c in coupons if _is(c, "nagad")), None))
+
+
+def judge_coupons(base_fare: float, auto_pct: float,
+                  coupons: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Cap-aware effective value of EVERY discount>0 coupon at the observed fare.
+
+    effective saving = min(floor(pct% x base), maximumDiscountAmount if set)
+                       + the automatic discount when the coupon stacks (withDiscount=Yes).
+    Expressed as % of BASE fare (the same basis ShareTrip's own numbers use), so an
+    "18%" coupon whose cap binds ranks below a smaller uncapped stack when that is
+    what a customer would actually save. With no observed fare (base<=0) caps cannot
+    be evaluated and nominal percentages are used unchanged.
+    """
+    auto_amt = math.floor(base_fare * auto_pct / 100) if base_fare > 0 else 0
+    judged: List[Dict[str, Any]] = []
+    for c in coupons:
+        pct = float(c.get("discount") or 0)
+        if pct <= 0:
+            continue    # 0% utility coupons (EMI / BNPL / default gateway markers)
+        cap = float(c.get("maximumDiscountAmount") or 0)
+        stacks = str(c.get("withDiscount", "")).lower() == "yes"
+        if base_fare > 0:
+            amt = math.floor(base_fare * pct / 100)
+            cap_bound = cap > 0 and amt > cap
+            eff = min(amt, cap) if cap > 0 else amt
+            saving = auto_amt + eff if stacks else eff
+            eff_pct = round(saving / base_fare * 100, 2)
+        else:
+            cap_bound, saving = False, 0
+            eff_pct = round((auto_pct + pct) if stacks else pct, 2)
+        judged.append({
+            "code": str(c.get("couponCode") or ""),
+            "label": _card_label(c),
+            "nominal_pct": pct,
+            "cap_bdt": cap or None,
+            "cap_bound": cap_bound,
+            "stacks_with_auto": stacks,
+            "saving_bdt": saving,
+            "effective_pct": eff_pct,
+        })
+    judged.sort(key=lambda j: -j["effective_pct"])
+    return judged
+
+
+def judge_cell(auto_pct: float, base_fare: float,
+               coupons: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """One grid cell judged from an airline's automatic rate + the market coupon terms.
+
+    common  = auto + stackable wallet coupon (bKash/Nagad), the rate anyone paying
+              online gets; special = the best JUDGED coupon (cap-aware, stack-aware);
+              card = the best standalone card coupon when it is not already the winner
+              (so a loyalty stack beating a capped card still shows the card rate).
+    """
+    judged = judge_coupons(base_fare, auto_pct, coupons)
+    wallet = _wallet_coupon(coupons)
+    cell: Dict[str, Any] = {
+        "base_pct": round(auto_pct, 2),
+        "common_pct": round(auto_pct + float(wallet["discount"]), 2) if wallet else round(auto_pct, 2),
+        "common_code": wallet["couponCode"] if wallet else None,
+        "special_pct": None, "special_label": None, "special_code": None, "special_capped": False,
+        "card_pct": None, "card_label": None, "card_capped": False,
+        "judged": judged,
+        "base_fare_bdt": round(base_fare) if base_fare > 0 else None,
+    }
+    contenders = [j for j in judged if not (wallet and j["code"] == wallet["couponCode"])]
+    if contenders:
+        winner = contenders[0]
+        cell.update(special_pct=round(winner["effective_pct"], 1),
+                    special_label=winner["label"], special_code=winner["code"],
+                    special_capped=winner["cap_bound"])
+        cards = [j for j in contenders if not j["stacks_with_auto"]]
+        if cards and cards[0]["code"] != winner["code"]:
+            cell.update(card_pct=round(cards[0]["effective_pct"], 1),
+                        card_label=cards[0]["label"], card_capped=cards[0]["cap_bound"])
+    return cell
+
+
 def _details_row(resp: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     airline = ""
     for leg in resp.get("legs") or []:
@@ -253,35 +360,30 @@ def _details_row(resp: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             break
     if not airline:
         return None
-    base = float((resp.get("displayPrice") or {}).get("discount") or 0)
+    display = resp.get("displayPrice") or {}
+    auto = float(display.get("discount") or 0)
+    base_fare = float((display.get("totalFare") or {}).get("base") or 0)
 
     coupons: list = []
     _find_coupons(resp, coupons)
     uniq: Dict[str, Dict[str, Any]] = {}
     for c in coupons:
-        uniq.setdefault(c["couponCode"], c)
+        prev = uniq.get(c["couponCode"])
+        if prev is None or len(c) > len(prev):   # keep the richest object per code
+            uniq[c["couponCode"]] = c
     coupons = list(uniq.values())
     if not coupons:
         return None
 
-    bkash = next((c for c in coupons
-                  if "bkash" in (str(c.get("couponCode", "")) + str(c.get("title", ""))).lower()), None)
-    standalone = [c for c in coupons
-                  if str(c.get("withDiscount", "")).lower() == "no" and float(c.get("discount") or 0) > 0]
-    best = max(standalone, key=lambda c: float(c["discount"]), default=None)
-
-    return {
+    row = {
         "channel": "sharetrip",
         "persona": "B2C",
         "airline": airline,
         "flight_type": "DOM" if resp.get("isDomestic") else "INTL",
-        "base_pct": base,
-        "common_pct": round(base + float(bkash["discount"]), 2) if bkash else round(base, 2),
-        "common_code": bkash["couponCode"] if bkash else None,
-        "special_pct": float(best["discount"]) if best else None,
-        "special_label": _card_label(best) if best else None,
-        "special_code": best["couponCode"] if best else None,
+        "coupon_terms": coupons,   # market-uniform: reusable for airlines seen only in search
     }
+    row.update(judge_cell(auto, base_fare, coupons))
+    return row
 
 
 def parse_details_discounts(path: str | Path) -> List[Dict[str, Any]]:
@@ -312,19 +414,26 @@ def parse_details_discounts(path: str | Path) -> List[Dict[str, Any]]:
 
 
 def summarize_details(rows: List[Dict[str, Any]]) -> Dict[tuple[str, str], Dict[str, Any]]:
-    """One cell per (airline, flight_type): best common + its standalone special."""
+    """One judged cell per (airline, flight_type).
+
+    Common comes from the best-common booking; the special is the best JUDGED
+    special across all bookings for that cell (a cheaper fare can make a capped
+    coupon look better than it is on the fare that matters, so each row was
+    already judged at its own observed fare).
+    """
     by_cell: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
     for r in rows:
         by_cell.setdefault((r["airline"], r["flight_type"]), []).append(r)
     out: Dict[tuple[str, str], Dict[str, Any]] = {}
     for key, items in by_cell.items():
-        best = max(items, key=lambda r: r["common_pct"])
-        out[key] = {
-            "common_pct": best["common_pct"],
-            "common_code": best["common_code"],   # None when no bKash coupon (e.g. international)
-            "special_pct": best["special_pct"],
-            "special_label": best["special_label"],
-        }
+        best = dict(max(items, key=lambda r: r["common_pct"]))
+        specials = [r for r in items if r.get("special_pct") is not None]
+        if specials:
+            top = max(specials, key=lambda r: r["special_pct"])
+            for k in ("special_pct", "special_label", "special_code", "special_capped",
+                      "card_pct", "card_label", "card_capped"):
+                best[k] = top.get(k)
+        out[key] = best
     return out
 
 

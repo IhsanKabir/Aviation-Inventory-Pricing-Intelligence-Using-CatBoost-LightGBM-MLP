@@ -154,44 +154,74 @@ def collect_firsttrip_b2b(har_path: str) -> dict[tuple[str, str], str]:
     return _collect_firsttrip_b2b_rows(firsttrip.parse_b2b_commissions(har_path))
 
 
-def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], str]:
-    """Build ShareTrip cells from one or more HARs.
+def _sharetrip_cell_text(c: dict[str, Any]) -> str:
+    """`common(wallet), best-judged special (label[, capped])[, best card ...]`.
 
-    EFFICIENT CAPTURE (search + one booking -> detailed for all airlines): the card
-    special (e.g. Stellar/EBL 18%) is UNIFORM across airlines, so a single booking
-    capture supplies it for everyone, while the search (available-flights) supplies
-    each airline's common rate. Airlines the booking flow didn't cover get
-    `common, 18% (Stellar)` from the search + the shared special — no per-airline
-    booking needed. Airlines with their own booking capture keep the exact cell.
+    The leading number stays the common rate so highlight ranking is unchanged.
+    """
+    wallet = ""
+    if c.get("common_code"):
+        wallet = "(Nagad)" if "nagad" in str(c["common_code"]).lower() else "(Bkash)"
+    text = _fmt(c["common_pct"]) + wallet
+    if c.get("special_pct") is not None:
+        cap = ", capped" if c.get("special_capped") else ""
+        text += f", {_fmt(c['special_pct'])} ({c['special_label']}{cap})"
+    if c.get("card_pct") is not None:
+        cap = ", capped" if c.get("card_capped") else ""
+        text += f", {_fmt(c['card_pct'])} ({c['card_label']}{cap})"
+    return text
+
+
+def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], str]:
+    """Build ShareTrip cells from one or more HARs, judging ALL coupons.
+
+    Booking-details captures are the reliable source (browser HAR exports evict
+    the multi-MB search response bodies). Every coupon in a details payload is
+    judged CAP-AWARE at the observed fare — effective saving = min(pct x base,
+    maximumDiscountAmount), plus the automatic discount when the coupon stacks —
+    so an "18%" card capped at 6,000 BDT on a 91k itinerary correctly loses to a
+    1% uncapped loyalty stack. Cells show the common rate (automatic + wallet
+    stack), the best judged special, and the best card special when different.
+
+    Coupon TERMS are market-uniform (verified 2026-07-06: identical coupon
+    objects across airlines within DOM / within INTL), so airlines that only
+    appear in a search capture are judged with the shared terms at their own
+    observed base fare. Only displayPrice.discount is airline-specific.
     """
     paths = [har_paths] if isinstance(har_paths, str) else list(har_paths)
-    cells: dict[tuple[str, str], str] = {}
-    # The uniform card special harvested from ANY booking, keyed by route type.
-    shared_special: dict[str, tuple[float, str]] = {}
 
-    # 1. Exact per-airline cells from the booking-flow details (best data).
+    # 1. Exact per-airline cells: judge every booking-flow details payload.
+    #    All rows are summarized together so a second HAR can't silently
+    #    overwrite a better cell (best common + best judged special win).
+    all_rows: list[dict[str, Any]] = []
     for har_path in paths:
-        details = sharetrip_har.summarize_details(sharetrip_har.parse_details_discounts(har_path))
-        for (airline, flight_type), c in details.items():
-            rt = "DOM" if flight_type == "DOM" else "INTL"
-            text = _fmt(c["common_pct"]) + ("(Bkash)" if c.get("common_code") else "")
-            if c["special_pct"] is not None:
-                text += f", {_fmt(c['special_pct'])} ({c['special_label']})"
-                shared_special.setdefault(rt, (c["special_pct"], c["special_label"]))
-            cells[(rt, airline)] = text
+        all_rows += sharetrip_har.parse_details_discounts(har_path)
+    details = sharetrip_har.summarize_details(all_rows)
 
-    # 2. Search fill: every airline in the search, enriched with the uniform special.
+    # Market-level coupon terms (uniform per DOM/INTL) from any booking capture.
+    shared_terms: dict[str, list[dict[str, Any]]] = {}
+    for r in all_rows:
+        rt = "DOM" if r["flight_type"] == "DOM" else "INTL"
+        if r.get("coupon_terms"):
+            shared_terms.setdefault(rt, r["coupon_terms"])
+
+    cells: dict[tuple[str, str], str] = {}
+    for (airline, flight_type), c in details.items():
+        rt = "DOM" if flight_type == "DOM" else "INTL"
+        cells[(rt, airline)] = _sharetrip_cell_text(c)
+
+    # 2. Search fill: airlines without a booking capture get the shared market
+    #    terms judged at their own observed fare (caps re-evaluated per airline).
     for har_path in paths:
         common = sharetrip_har.summarize_discounts(sharetrip_har.parse_discounts(har_path))
         for (airline, flight_type), cell in common.items():
             rt = "DOM" if flight_type == "DOM" else "INTL"
             if (rt, airline) in cells:
                 continue    # a booking capture already gave the exact cell
-            text = _fmt(cell["discount_pct"]) + ("(Bkash)" if cell.get("coupon_code") else "")
-            special = shared_special.get(rt)
-            if special:
-                text += f", {_fmt(special[0])} ({special[1]})"
-            cells[(rt, airline)] = text
+            judged = sharetrip_har.judge_cell(cell["discount_pct"],
+                                              float(cell.get("base_fare_bdt") or 0),
+                                              shared_terms.get(rt) or [])
+            cells[(rt, airline)] = _sharetrip_cell_text(judged)
     return cells
 
 

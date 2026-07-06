@@ -34,6 +34,7 @@ jobs:
             tests/test_sync_payload_no_secrets.py \
             tests/test_discount_reports_api.py tests/test_desktop_backend.py \
             tests/test_audit_fixes.py tests/test_monitoring.py tests/test_sharetrip_combine.py \
+            tests/test_sharetrip_judge.py \
             -q
 
   web:

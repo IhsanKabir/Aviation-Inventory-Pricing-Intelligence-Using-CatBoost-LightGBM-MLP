@@ -141,26 +141,20 @@ export default function HarGuidePage() {
             coupon list (bKash / EBL / AMEX…), <em>then</em> export.
           </p>
           <div className="dg-exception">
-            <strong>ShareTrip — the efficient 2-capture method:</strong> you no
-            longer need a booking per airline. The card special (e.g. Stellar/EBL
-            18%) is the same for every airline, so capture just:
-            <ol style={{ margin: "6px 0 0", paddingLeft: 18 }}>
-              <li>
-                <strong>The search results</strong> — right after the DAC-CGP results
-                load, export immediately as <code>sharetrip search.har</code> (this
-                one response holds every airline&apos;s common rate).
-              </li>
-              <li>
-                <strong>One booking page</strong> — open any single airline&apos;s
-                flight, wait for the DISCOUNT COUPON list, export as{" "}
-                <code>sharetrip booking.har</code> (this supplies the shared card
-                special for all airlines).
-              </li>
-            </ol>
-            The app combines them: every searched airline gets a full{" "}
-            <code>common, 18% (Stellar)</code> cell from those two files. Capturing a
-            specific airline&apos;s own booking still gives its exact cell and takes
-            precedence.
+            <strong>ShareTrip — one booking capture per airline (per market):</strong>{" "}
+            the browser drops ShareTrip&apos;s big search responses from exported HARs,
+            so the booking page is the only reliable source. For each airline you need,
+            open its flight, wait for the DISCOUNT COUPON list, and export as e.g.{" "}
+            <code>sharetrip bs.har</code>, <code>sharetrip bsint.har</code> (domestic and
+            international are separate coupon sets — capture both if you need both).
+            <br />
+            <strong>The app judges every coupon, not the advertised %:</strong> card
+            coupons carry hidden caps (e.g. &quot;18%&quot; Stellar Signature is capped
+            at 6,000 BDT — only ~7.4% on a 91k itinerary, where the 1% GPStar stack
+            actually wins). Cells now show the honest effective rates:{" "}
+            <code>7.1, 8.1 (GPStar), 7.4 (Stellar Signature, capped)</code>. A cheap
+            domestic fare still shows the familiar{" "}
+            <code>7.5(Bkash), 18 (Stellar Signature)</code> because its cap never binds.
           </div>
         </div>
 
