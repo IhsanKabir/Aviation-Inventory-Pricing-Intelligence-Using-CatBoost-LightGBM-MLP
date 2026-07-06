@@ -119,12 +119,27 @@ def parse_commissions(path: str | Path) -> List[Dict[str, Any]]:
 
     rows: List[Dict[str, Any]] = []
     seen: set = set()
+    skipped_mixed = skipped_nearby = 0
     for offer in offers:
         airline = _alias(offer.get("airlineCode"))
         gross = _money(offer.get("grossAmount"))
         agent = _money(offer.get("agentAmount"))
         customer_net = _money(offer.get("customerNetAmount"))
         if not airline or not gross or not agent or gross <= 0:
+            continue
+        # BDFare injects "nearby airport" results into a search (field case: a
+        # DAC-DXB search returned DAC-XNB — Dubai Chelsea BUS STATION — via
+        # BG+EY with a bus leg). Not the searched route: skip.
+        if offer.get("nearbyAirports"):
+            skipped_nearby += 1
+            continue
+        # Mixed-carrier itineraries are attributed to the first marketing
+        # carrier but their commission isn't that airline's discount: skip.
+        carriers = {_alias(c)
+                    for fs in offer.get("flightSummary") or []
+                    for c in fs.get("airlineCode") or []}
+        if len(carriers) > 1:
+            skipped_mixed += 1
             continue
         # gross excludes AIT VAT while agentAmount includes it, so gross - agent is
         # the VAT-neutral saving; customerNet - agent would count the VAT as discount.
@@ -149,6 +164,10 @@ def parse_commissions(path: str | Path) -> List[Dict[str, Any]]:
             "commission_bdt": round(commission),
             "commission_pct": round(commission / base * 100, 2) if base else 0.0,
         })
+    if skipped_nearby or skipped_mixed:
+        # stdout is captured into the desktop Run log — no silent drops.
+        print(f"BDFare: skipped {skipped_nearby} nearby-airport and {skipped_mixed} "
+              f"mixed-carrier offer(s) — not a single airline's fare on the searched route")
     return rows
 
 

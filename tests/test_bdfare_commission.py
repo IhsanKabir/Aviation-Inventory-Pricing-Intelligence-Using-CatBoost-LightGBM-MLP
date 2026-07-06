@@ -56,6 +56,23 @@ def test_fallback_ratio_still_close_when_no_detail_captured():
     assert abs(row["commission_pct"] - 7.10) < 0.02
 
 
+def test_nearby_airport_and_mixed_carrier_offers_are_skipped():
+    # Field case 2026-07-07: a DAC-DXB search returned a BG+EY itinerary ending at
+    # DAC-XNB (Dubai Chelsea BUS STATION) via BDFare's nearby-airport feature —
+    # neither the searched route nor one airline's fare. Both guards must drop it.
+    bus_leg = {"airlineCode": "BG", "grossAmount": "BDT 170900",
+               "agentAmount": "BDT 159499", "customerNetAmount": "BDT 171413",
+               "nearbyAirports": ["XNB"],
+               "flightSummary": [{"airlineCode": ["BG", "EY"]}],
+               "journeyWises": [{"departure": "DAC", "arrival": "XNB"}]}
+    mixed_only = {"airlineCode": "BG", "grossAmount": 99000, "agentAmount": 92000,
+                  "customerNetAmount": 99300,
+                  "flightSummary": [{"airlineCode": ["BG", "EY"]}],
+                  "journeyWises": [{"departure": "DAC", "arrival": "DXB"}]}
+    rows = bdfare_har.parse_commissions(_har([BG247, bus_leg, mixed_only]))
+    assert [r["gross_bdt"] for r in rows] == [45834]     # only the real BG fare
+
+
 def test_cell_uses_cheapest_offer_not_best_percent():
     # Field case 2026-07-07: a premium 170k DAC-XNB itinerary paid 8.7% while the
     # lead 65k DAC-DXB economy fare paid ~7.2 — the cell must reflect the fare
