@@ -114,3 +114,23 @@ def test_b2c_failsafe_unions_multiple_hars(monkeypatch):
 if __name__ == "__main__":
     import subprocess
     raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"]))
+
+
+def test_app_latest_is_public_and_https(monkeypatch):
+    """/app/latest must serve WITHOUT auth (broken old installs need it to find
+    their fix) and its download_url must be https even behind a proxy that
+    hands the app an http base URL."""
+    from fastapi.testclient import TestClient
+    from apps.api.app import main
+    from apps.api.app.routers import app_release
+
+    monkeypatch.setattr(app_release, "_fetch_latest_release", lambda k, c: {
+        "tag_name": "desktop-v9.9.9", "body": "notes", "published_at": "2026-07-07T00:00:00Z",
+        "assets": [{"name": c["asset"], "browser_download_url": "https://x/y.exe"}]})
+    monkeypatch.setattr(app_release, "_sha256_from_release", lambda c, d: "abc")
+    r = TestClient(main.app).get("/api/v1/app/latest?app=discount-report")  # NO session header
+    assert r.status_code == 200
+    body = r.json()
+    assert body["version"] == "9.9.9"
+    assert body["download_url"].startswith("https://")
+    assert body["published_at"].startswith("2026-07-07")

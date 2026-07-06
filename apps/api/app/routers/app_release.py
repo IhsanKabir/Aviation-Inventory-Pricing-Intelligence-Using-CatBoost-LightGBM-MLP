@@ -163,6 +163,12 @@ def latest_version(
     if not tag:
         raise HTTPException(status_code=404, detail="No published release.")
     base = _PUBLIC_BASE or str(request.base_url).rstrip("/")
+    # Behind the Cloud Run proxy request.base_url is http:// — but the public
+    # service is https-only and the desktop's open_download allowlist matches
+    # the https origin, so an http URL would be refused by the client.
+    if base.startswith("http://") and not any(
+            h in base for h in ("localhost", "127.0.0.1")):
+        base = "https://" + base[len("http://"):]
     suffix = "" if app_key == _DEFAULT_APP else f"?app={app_key}"
     return {
         "version": _version_from_tag(tag),
