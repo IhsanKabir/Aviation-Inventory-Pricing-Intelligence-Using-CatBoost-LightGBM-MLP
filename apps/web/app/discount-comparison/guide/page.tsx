@@ -130,6 +130,16 @@ export default function HarGuidePage() {
             <code> BS, 2A, BG, VQ</code>). Results arrive in ~20 pages and only page 1
             is captured — un-preferred airlines go missing silently.
           </div>
+          <div className="dg-exception">
+            <strong>BDFare — open Fare Summary per airline:</strong> the search list
+            only carries totals, and the base/tax split differs hugely per airline
+            (Air India&apos;s base is ~59% of the fare vs Biman&apos;s ~77%), so
+            percentages computed without it are estimates. On the <em>cheapest fare of
+            each airline you care about</em>, click{" "}
+            <strong>Flight Details → Fare Summary</strong> once (it loads the exact
+            base fare into the capture), then export. The app tells you in the Run log
+            which airlines still used an estimated base.
+          </div>
         </div>
 
         <div className="dg-cat dg-cat--b">

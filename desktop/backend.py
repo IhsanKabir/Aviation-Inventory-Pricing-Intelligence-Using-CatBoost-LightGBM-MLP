@@ -32,6 +32,8 @@ DEFAULT_API_BASE = "https://aero-pulse-api-591603094460.asia-south1.run.app"
 DEFAULT_WEB_BASE = "https://aviation-inventory-pricing-intellig.vercel.app"
 KEYRING_SERVICE = "ota-discount-report"
 KEYRING_ENTRY = "session-token"
+KEYRING_ADMIN_ENTRY = "admin-token"
+PAGE_KEY = "discount-comparison"
 RAM_HEADROOM_FACTOR = 2.5           # need ~2.5x the HAR size free to parse safely
 REQUEST_TIMEOUT = 30
 
@@ -129,6 +131,38 @@ class DesktopApi:
             except Exception:       # noqa: BLE001
                 pass
         self._config.pop("token_fallback", None)
+        self._save_config()
+
+    # -------------------------------------------------------- admin token store
+    def _store_admin_token(self, token: str) -> None:
+        if _HAS_KEYRING:
+            try:
+                keyring.set_password(KEYRING_SERVICE, KEYRING_ADMIN_ENTRY, token)
+                self._config.pop("admin_token_fallback", None)
+                self._save_config()
+                return
+            except Exception:       # noqa: BLE001
+                pass
+        self._config["admin_token_fallback"] = token
+        self._save_config()
+
+    def _admin_token(self) -> str:
+        if _HAS_KEYRING:
+            try:
+                stored = keyring.get_password(KEYRING_SERVICE, KEYRING_ADMIN_ENTRY)
+                if stored:
+                    return stored
+            except Exception:       # noqa: BLE001
+                pass
+        return str(self._config.get("admin_token_fallback") or "")
+
+    def _clear_admin_token(self) -> None:
+        if _HAS_KEYRING:
+            try:
+                keyring.delete_password(KEYRING_SERVICE, KEYRING_ADMIN_ENTRY)
+            except Exception:       # noqa: BLE001
+                pass
+        self._config.pop("admin_token_fallback", None)
         self._save_config()
 
     # ------------------------------------------------------------------- usage
@@ -349,6 +383,95 @@ class DesktopApi:
         return {"ok": False, "access_blocked": True,
                 "error": access.get("detail")
                 or "Your access to the discount report is not active."}
+
+    def request_access(self, notes: str = "") -> dict[str, Any]:
+        """File the discount-comparison access request from inside the app — the
+        full request/approve loop no longer needs the website. The admin sees it
+        on the web admin page or in this app's Admin panel."""
+        token = self._token()
+        if not token:
+            return {"ok": False, "auth_required": True, "error": "Sign in first."}
+        try:
+            r = requests.post(
+                f"{self.api_base}/api/v1/access-requests",
+                json={"page_key": PAGE_KEY, "notes": (notes or "").strip() or None},
+                headers={"X-User-Session": token}, timeout=REQUEST_TIMEOUT)
+        except requests.RequestException as exc:
+            return {"ok": False, "error": f"API unreachable: {exc}"}
+        if r.status_code != 200:
+            detail = r.json().get("detail", r.reason) if r.headers.get(
+                "content-type", "").startswith("application/json") else r.reason
+            return {"ok": False, "error": str(detail)}
+        payload = r.json()
+        self._log_usage("request_access", target=PAGE_KEY)
+        return {"ok": True, "request_id": payload.get("request_id"),
+                "status": payload.get("status", "pending")}
+
+    # ----------------------------------------------------------------- admin
+    def admin_state(self) -> dict[str, Any]:
+        return {"has_token": bool(self._admin_token())}
+
+    def admin_save_token(self, token: str) -> dict[str, Any]:
+        """Validate the admin token against the API, then store it (keyring)."""
+        token = (token or "").strip()
+        if not token:
+            return {"ok": False, "error": "Paste the admin token first."}
+        try:
+            r = requests.get(f"{self.api_base}/api/v1/access-requests",
+                             params={"page_key": PAGE_KEY, "limit": 1},
+                             headers={"X-Admin-Token": token}, timeout=REQUEST_TIMEOUT)
+        except requests.RequestException as exc:
+            return {"ok": False, "error": f"API unreachable: {exc}"}
+        if r.status_code != 200:
+            return {"ok": False, "error": "Token rejected by the server."
+                    if r.status_code in (401, 403) else f"Check failed ({r.status_code})."}
+        self._store_admin_token(token)
+        return {"ok": True}
+
+    def admin_forget_token(self) -> dict[str, Any]:
+        self._clear_admin_token()
+        return {"ok": True}
+
+    def admin_list_requests(self, status: str = "pending") -> dict[str, Any]:
+        """Discount-comparison access requests for the in-app admin panel."""
+        token = self._admin_token()
+        if not token:
+            return {"ok": False, "error": "Save the admin token first."}
+        try:
+            r = requests.get(f"{self.api_base}/api/v1/access-requests",
+                             params={"page_key": PAGE_KEY, "status": status or None,
+                                     "limit": 100},
+                             headers={"X-Admin-Token": token}, timeout=REQUEST_TIMEOUT)
+        except requests.RequestException as exc:
+            return {"ok": False, "error": f"API unreachable: {exc}"}
+        if r.status_code != 200:
+            return {"ok": False, "error": f"List failed ({r.status_code})."}
+        return {"ok": True, "items": r.json().get("items", [])}
+
+    def admin_decide(self, request_id: str, status: str,
+                     decision_note: str = "", use_quota: Any = None) -> dict[str, Any]:
+        """Approve/reject (or set payment_required on) a request from the app."""
+        token = self._admin_token()
+        if not token:
+            return {"ok": False, "error": "Save the admin token first."}
+        body: dict[str, Any] = {"status": status,
+                                "decision_note": (decision_note or "").strip() or None}
+        if use_quota not in (None, ""):
+            try:
+                body["use_quota"] = max(0, int(use_quota))
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "Uses must be a whole number."}
+        try:
+            r = requests.patch(f"{self.api_base}/api/v1/access-requests/{request_id}",
+                               json=body, headers={"X-Admin-Token": token},
+                               timeout=REQUEST_TIMEOUT)
+        except requests.RequestException as exc:
+            return {"ok": False, "error": f"API unreachable: {exc}"}
+        if r.status_code != 200:
+            detail = r.json().get("detail", r.reason) if r.headers.get(
+                "content-type", "").startswith("application/json") else r.reason
+            return {"ok": False, "error": str(detail)}
+        return {"ok": True, "request": r.json()}
 
     def open_guide(self) -> dict[str, Any]:
         """Open the visual HAR-collection guide (flow diagrams + per-site steps) in

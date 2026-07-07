@@ -58,6 +58,7 @@
     <button class="secondary" style="padding:4px 10px;font-size:11px" onclick="runDiagnostics()">Test / diagnostics</button>
     <button class="secondary" style="padding:4px 10px;font-size:11px" onclick="api().open_guide()">Guide</button>
     <button class="secondary" style="padding:4px 10px;font-size:11px" onclick="checkUpdate(true)">Check for updates</button>
+    <button class="secondary" style="padding:4px 10px;font-size:11px" onclick="openAdmin()">Admin</button>
   </div>
 </header>
 
@@ -68,6 +69,30 @@
       <button class="secondary" style="padding:4px 12px" onclick="document.getElementById('diag-modal').style.display='none'">Close</button>
     </div>
     <div id="diag-body"></div>
+  </div>
+</div>
+
+<div id="admin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto">
+  <div class="card" style="max-width:760px;width:100%">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <strong>Admin — access approvals</strong>
+      <button class="secondary" style="padding:4px 12px" onclick="document.getElementById('admin-modal').style.display='none'">Close</button>
+    </div>
+    <div id="admin-token-row" class="row" style="margin-bottom:10px">
+      <label>Admin token <input id="admin-token" type="password" placeholder="paste the admin token"></label>
+      <button class="secondary" onclick="adminSaveToken()">Save token</button>
+      <button class="secondary" onclick="adminForgetToken()">Forget</button>
+      <select id="admin-status" onchange="adminLoad()">
+        <option value="pending" selected>pending</option>
+        <option value="approved">approved</option>
+        <option value="rejected">rejected</option>
+        <option value="payment_required">payment_required</option>
+        <option value="">all</option>
+      </select>
+      <button class="secondary" onclick="adminLoad()">Refresh</button>
+    </div>
+    <div id="admin-error" class="banner err" style="display:none;margin-bottom:8px"></div>
+    <div id="admin-body" class="muted">Save the admin token to load requests.</div>
   </div>
 </div>
 
@@ -107,6 +132,11 @@
       <label>Travel date (YYYY-MM-DD) <input id="travel_date" placeholder="2026-07-30"></label>
       <button class="secondary" onclick="saveConfig()">Save</button>
       <button class="big" id="run-btn" onclick="runReport()">Run report</button>
+    </div>
+    <div id="access-row" style="display:none;margin-top:8px;align-items:center;gap:8px">
+      <span id="access-line" class="muted"></span>
+      <button class="secondary" id="access-request-btn" style="display:none;padding:4px 12px"
+              onclick="requestAccess()">Request access</button>
     </div>
     <div id="status" style="margin-top:8px"></div>
     <div class="table-wrap" id="scan-wrap" style="display:none;margin-top:10px">
@@ -171,6 +201,7 @@ async function refreshState() {
   if (state.insecure_token_store) {
     addBanner("warn", "No OS keyring available — the session token is stored in the config file. Prefer a machine with Windows Credential Manager.");
   }
+  refreshAccess();   // async, non-blocking: fills the access line + request button
 }
 
 function addBanner(kind, text) {
@@ -254,6 +285,103 @@ async function pickFolder() {
   const scan = await api().pick_folder();
   await refreshState();
   renderScan(scan);
+}
+
+// ---- access status + in-app request ---------------------------------------
+async function refreshAccess() {
+  const row = document.getElementById("access-row");
+  if (!state || !state.logged_in) { row.style.display = "none"; return; }
+  const a = await api().check_access();
+  const line = document.getElementById("access-line");
+  const btn = document.getElementById("access-request-btn");
+  const st = a.status || "unknown";
+  row.style.display = "flex";
+  if (a.allowed) {
+    const plan = a.plan || {};
+    const left = (plan.uses_remaining ?? null) !== null ? ` · ${plan.uses_remaining} syncs left` : "";
+    line.textContent = `Access: active${plan.end_date ? ` until ${plan.end_date}` : ""}${left}`;
+    btn.style.display = "none";
+  } else if (st === "pending") {
+    line.textContent = "Access: requested — awaiting admin approval.";
+    btn.style.display = "none";
+  } else if (st === "unknown") {
+    line.textContent = "Access: could not verify (offline?).";
+    btn.style.display = "none";
+  } else {
+    line.textContent = `Access: ${a.detail || "not requested yet."}`;
+    btn.style.display = "";
+  }
+}
+
+async function requestAccess() {
+  const notes = prompt("Optional note for the admin (plan needed, dates…):", "") ?? "";
+  const result = await api().request_access(notes);
+  if (await handleAuthRequired(result)) return;
+  if (!result.ok) { addBanner("err", result.error); return; }
+  addBanner("ok", "Access request sent — the admin will approve it shortly.");
+  refreshAccess();
+}
+
+// ---- admin panel ------------------------------------------------------------
+async function openAdmin() {
+  document.getElementById("admin-modal").style.display = "flex";
+  const s = await api().admin_state();
+  if (s.has_token) adminLoad();
+}
+
+function adminError(text) {
+  const box = document.getElementById("admin-error");
+  box.textContent = text || "";
+  box.style.display = text ? "" : "none";
+}
+
+async function adminSaveToken() {
+  const result = await api().admin_save_token(document.getElementById("admin-token").value);
+  if (!result.ok) { adminError(result.error); return; }
+  document.getElementById("admin-token").value = "";
+  adminError("");
+  addBanner("ok", "Admin token saved.");
+  adminLoad();
+}
+
+async function adminForgetToken() {
+  await api().admin_forget_token();
+  document.getElementById("admin-body").textContent = "Save the admin token to load requests.";
+  addBanner("ok", "Admin token forgotten.");
+}
+
+async function adminLoad() {
+  const status = document.getElementById("admin-status").value;
+  const result = await api().admin_list_requests(status);
+  if (!result.ok) { adminError(result.error); return; }
+  adminError("");
+  const items = result.items || [];
+  const body = document.getElementById("admin-body");
+  if (!items.length) { body.textContent = `No ${status || ""} requests.`; return; }
+  body.innerHTML = `<div class="table-wrap"><table>
+    <thead><tr><th>Requester</th><th>Window</th><th>Note</th><th>Status</th><th style="min-width:230px">Decide</th></tr></thead>
+    <tbody>${items.map(it => `
+      <tr>
+        <td style="text-align:left">${esc(it.requester_email || it.requester_name || it.request_id)}</td>
+        <td>${esc(it.requested_start_date || "—")} → ${esc(it.requested_end_date || "—")}</td>
+        <td style="text-align:left;max-width:180px">${esc(it.notes || "")}</td>
+        <td>${esc(it.status)}</td>
+        <td>
+          <input placeholder="note" id="an-${esc(it.request_id)}" style="width:90px">
+          <input placeholder="uses" id="au-${esc(it.request_id)}" style="width:46px">
+          <button style="padding:3px 8px" onclick="adminDecide('${esc(it.request_id)}','approved')">Approve</button>
+          <button class="secondary" style="padding:3px 8px" onclick="adminDecide('${esc(it.request_id)}','rejected')">Reject</button>
+        </td>
+      </tr>`).join("")}</tbody></table></div>`;
+}
+
+async function adminDecide(id, status) {
+  const note = (document.getElementById("an-" + id) || {}).value || "";
+  const uses = (document.getElementById("au-" + id) || {}).value || "";
+  const result = await api().admin_decide(id, status, note, uses);
+  if (!result.ok) { adminError(result.error); return; }
+  addBanner("ok", `Request ${status}.`);
+  adminLoad();
 }
 
 // A gated call answered "sign in": banner + drop back to the sign-in wall.

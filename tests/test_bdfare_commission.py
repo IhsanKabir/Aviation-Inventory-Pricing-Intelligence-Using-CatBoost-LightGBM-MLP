@@ -15,7 +15,25 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from modules import bdfare_har  # noqa: E402
 
 
-def _har(offers, details=None) -> str:
+def _fare_summary(itinerary_id, airline, base, tax, origin="DAC", dest="DXB"):
+    """A GetAirSearchItinerary entry shaped like the real July-2 capture."""
+    return {
+        "request": {"url": "https://bdfare.com/bdfare-search/api/v2/Search/"
+                           f"GetAirSearchItinerary?requestId=r1&itineraryId={itinerary_id}",
+                    "method": "GET"},
+        "response": {"content": {"text": json.dumps({
+            "requestId": "r1",
+            "flightInfos": [{
+                "itineraries": [{"departure": origin, "arrival": dest,
+                                 "legs": [{"airlineCode": airline}]}],
+                "travelerFareSummaries": [{"travelerType": "Adult",
+                                           "baseFare": base, "tax": tax}],
+            }],
+        })}},
+    }
+
+
+def _har(offers, details=None, extra_entries=()) -> str:
     entries = [{
         "request": {"url": "https://bdfare.com/bdfare-search/api/v2/Search/AirSearch",
                     "method": "POST"},
@@ -27,6 +45,7 @@ def _har(offers, details=None) -> str:
                         "method": "GET"},
             "response": {"content": {"text": json.dumps(details)}},
         })
+    entries.extend(extra_entries)
     p = Path(tempfile.mkdtemp(prefix="bdf_")) / "cap.har"
     p.write_text(json.dumps({"log": {"entries": entries}}), encoding="utf-8")
     return str(p)
@@ -34,17 +53,18 @@ def _har(offers, details=None) -> str:
 
 BG247 = {  # the user's verified flight
     "airlineCode": "BG", "grossAmount": 45834, "agentAmount": 43337,
-    "customerNetAmount": 45972,
+    "customerNetAmount": 45972, "itineraryId": "itin-bg247",
     "journeyWises": [{"departure": "DAC", "arrival": "DXB"}],
 }
 
 
-def test_commission_is_gross_minus_agent_not_customer_net():
-    # Itinerary detail gives the exact base/(base+tax) ratio: 35,138 / 45,834.
-    rows = bdfare_har.parse_commissions(_har([BG247], details={"baseFare": 35138, "tax": 10696}))
-    (row,) = rows
+def test_commission_is_gross_minus_agent_with_exact_base():
+    # The offer's own Fare Summary was captured -> exact base 35,138.
+    har = _har([BG247], extra_entries=[_fare_summary("itin-bg247", "BG", 35138, 10696)])
+    (row,) = bdfare_har.parse_commissions(har)
     assert row["commission_bdt"] == 2497            # 45,834 - 43,337 (VAT excluded)
     assert row["commission_pct"] == 7.11            # 2,497 / 35,138 -> the user's 7.106%
+    assert row["base_source"] == "exact"
     assert row["domestic"] is False
 
 
@@ -54,6 +74,37 @@ def test_fallback_ratio_still_close_when_no_detail_captured():
     # base est = 45,834 x 0.767 = 35,155 -> 2,497 / 35,155 = 7.10%
     assert row["commission_bdt"] == 2497
     assert abs(row["commission_pct"] - 7.10) < 0.02
+    assert row["base_source"] == "default_ratio"
+
+
+AI238 = {  # field case 2026-07-07: huge tax share broke the global-ratio estimate
+    "airlineCode": "AI", "grossAmount": "BDT 40468", "agentAmount": "BDT 38686",
+    "customerNetAmount": "BDT 40590", "itineraryId": "itin-ai238",
+    "journeyWises": [{"departure": "DAC", "arrival": "DXB"}],
+}
+
+
+def test_ai_high_tax_fare_uses_exact_base_not_global_ratio():
+    # Grid showed 5.74% (gross x 0.767 = 31,039 est. base); truth is
+    # (40,468 - 38,686) / 23,803 = 7.49% — AI's base share is 58.8%, not 76.7%.
+    har = _har([AI238], extra_entries=[_fare_summary("itin-ai238", "AI", 23803, 16665)])
+    (row,) = bdfare_har.parse_commissions(har)
+    assert row["commission_bdt"] == 1782
+    assert row["commission_pct"] == 7.49
+    assert row["base_source"] == "exact"
+
+
+def test_same_airline_route_ratio_covers_unopened_offers():
+    # A second AI DAC-DXB offer without its own Fare Summary inherits AI's
+    # measured ratio (23,803/40,468 = 0.5882) instead of the global 0.767.
+    other = {"airlineCode": "AI", "grossAmount": 50000, "agentAmount": 46000,
+             "customerNetAmount": 50150, "itineraryId": "itin-ai-other",
+             "journeyWises": [{"departure": "DAC", "arrival": "DXB"}]}
+    har = _har([AI238, other], extra_entries=[_fare_summary("itin-ai238", "AI", 23803, 16665)])
+    rows = {r["gross_bdt"]: r for r in bdfare_har.parse_commissions(har)}
+    assert rows[50000]["base_source"] == "airline_ratio"
+    assert rows[50000]["base_est_bdt"] == round(50000 * 23803 / 40468)
+    assert rows[40468]["base_source"] == "exact"
 
 
 def test_nearby_airport_and_mixed_carrier_offers_are_skipped():

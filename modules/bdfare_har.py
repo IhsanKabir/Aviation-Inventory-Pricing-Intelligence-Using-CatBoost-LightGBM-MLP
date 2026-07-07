@@ -62,28 +62,58 @@ def _jload(entry: Dict[str, Any]) -> Any:
         return None
 
 
-def _base_gross_ratio(entries: List[Dict[str, Any]]) -> float:
-    """Average base/(base+tax) from itinerary-detail breakdowns; falls back to
-    DEFAULT_BASE_GROSS_RATIO when the HAR has no usable detail (assuming zero tax
-    via 1.0 would understate every commission)."""
-    ratios: List[float] = []
+def _harvest_fare_details(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Exact fare breakdowns from GetAirSearchItinerary (the Fare Summary tab).
 
-    def walk(node: Any) -> None:
-        if isinstance(node, dict):
-            base = _money(node.get("baseFare"))
-            tax = _money(node.get("tax"))
-            if base and tax is not None and (base + tax) > 0:
-                ratios.append(base / (base + tax))
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                walk(value)
+    The base/(base+tax) split varies WILDLY per airline (field case, DAC-DXB:
+    BG base share 76.7% vs AI 58.8% — AI's taxes are huge), so one global ratio
+    misstates most airlines. The Fare Summary response carries the offer's
+    itineraryId + baseFare + tax, giving:
+      by_itinerary: itineraryId -> exact base (authoritative for that offer)
+      by_airline:   (airline, origin, destination) -> measured base ratio
+      all_ratios:   every measured ratio (average = last-resort estimate)
+    """
+    by_itinerary: Dict[str, float] = {}
+    by_airline: Dict[tuple, float] = {}
+    all_ratios: List[float] = []
 
     for entry in entries:
-        if "GetAirSearchItinerary" in entry.get("request", {}).get("url", ""):
-            walk(_jload(entry))
-    return sum(ratios) / len(ratios) if ratios else DEFAULT_BASE_GROSS_RATIO
+        url = entry.get("request", {}).get("url", "")
+        if "GetAirSearchItinerary" not in url:
+            continue
+        data = _jload(entry)
+        if not isinstance(data, dict):
+            continue
+        itin_match = re.search(r"itineraryId=([^&\s]+)", url)
+        itin_id = itin_match.group(1) if itin_match else ""
+        for info in data.get("flightInfos") or []:
+            base = tax = None
+            for tf in info.get("travelerFareSummaries") or []:
+                if str(tf.get("travelerType", "")).lower() == "adult":
+                    base, tax = _money(tf.get("baseFare")), _money(tf.get("tax"))
+                    break
+            if not base or tax is None or (base + tax) <= 0:
+                continue
+            ratio = base / (base + tax)
+            all_ratios.append(ratio)
+            itins = info.get("itineraries") or []
+            airline = ""
+            origin = dest = ""
+            if itins:
+                origin = str(itins[0].get("departure") or "").upper()
+                dest = str(itins[0].get("arrival") or "").upper()
+                legs = itins[0].get("legs") or []
+                if legs:
+                    airline = _alias(legs[0].get("airlineCode"))
+            resp_itin = itin_id or str(data.get("itineraryId") or "")
+            if resp_itin:
+                by_itinerary[resp_itin] = base
+            if airline:
+                by_airline[(airline, origin, dest)] = ratio
+    return {"by_itinerary": by_itinerary, "by_airline": by_airline,
+            "avg_ratio": (sum(all_ratios) / len(all_ratios)) if all_ratios
+            else DEFAULT_BASE_GROSS_RATIO,
+            "measured": bool(all_ratios)}
 
 
 def _offer_route(offer: Dict[str, Any]) -> tuple[str, str]:
@@ -95,10 +125,16 @@ def _offer_route(offer: Dict[str, Any]) -> tuple[str, str]:
 
 
 def parse_commissions(path: str | Path) -> List[Dict[str, Any]]:
-    """Per-offer BDFare agent commission rows from a searchpad HAR."""
+    """Per-offer BDFare agent commission rows from a searchpad HAR.
+
+    Base-fare resolution, best first: exact (the offer's own Fare Summary was
+    captured — open Flight Details -> Fare Summary before exporting), measured
+    ratio for the same airline+route, HAR-average measured ratio, and finally
+    DEFAULT_BASE_GROSS_RATIO. Each row carries base_source so estimates are
+    visible downstream."""
     har = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     entries = har.get("log", {}).get("entries", [])
-    ratio = _base_gross_ratio(entries)
+    fares = _harvest_fare_details(entries)
 
     offers: List[Dict[str, Any]] = []
 
@@ -144,8 +180,17 @@ def parse_commissions(path: str | Path) -> List[Dict[str, Any]]:
         # gross excludes AIT VAT while agentAmount includes it, so gross - agent is
         # the VAT-neutral saving; customerNet - agent would count the VAT as discount.
         commission = gross - agent
-        base = gross * ratio
         origin, destination = _offer_route(offer)
+        itin_id = str(offer.get("itineraryId") or "")
+        if itin_id and itin_id in fares["by_itinerary"]:
+            base, base_source = fares["by_itinerary"][itin_id], "exact"
+        elif (airline, origin, destination) in fares["by_airline"]:
+            base = gross * fares["by_airline"][(airline, origin, destination)]
+            base_source = "airline_ratio"
+        elif fares["measured"]:
+            base, base_source = gross * fares["avg_ratio"], "har_avg_ratio"
+        else:
+            base, base_source = gross * DEFAULT_BASE_GROSS_RATIO, "default_ratio"
         sig = (airline, origin, destination, round(gross), round(agent))
         if sig in seen:
             continue
@@ -161,6 +206,7 @@ def parse_commissions(path: str | Path) -> List[Dict[str, Any]]:
             "agent_bdt": round(agent),
             "customer_net_bdt": round(customer_net) if customer_net is not None else None,
             "base_est_bdt": round(base),
+            "base_source": base_source,
             "commission_bdt": round(commission),
             "commission_pct": round(commission / base * 100, 2) if base else 0.0,
         })
@@ -191,6 +237,7 @@ def summarize_commissions(rows: List[Dict[str, Any]]) -> Dict[tuple[str, str], D
                     "commission_bdt": cheapest["commission_bdt"],
                     "offer_route": f"{cheapest['origin']}-{cheapest['destination']}",
                     "offer_gross_bdt": cheapest["gross_bdt"],
+                    "base_source": cheapest.get("base_source", "default_ratio"),
                     "n_offers": len(items),
                     "pct_min": min(pcts), "pct_max": max(pcts)}
     return out

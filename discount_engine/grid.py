@@ -288,6 +288,12 @@ def collect_bdfare(har_path: str, true_base=None) -> dict[tuple[str, str], str]:
                   f"({cell.get('offer_route')} gross {cell.get('offer_gross_bdt'):,}) — "
                   f"{cell['n_offers']} offers ranged "
                   f"{cell.get('pct_min')}–{cell.get('pct_max')}%")
+        if cell.get("base_source") not in ("exact", "airline_ratio"):
+            # An estimated base misstates airlines whose tax share differs from
+            # the assumed ratio (AI showed 5.74% when the true figure was 7.49%).
+            print(f"BDFare {airline} {rt}: {cell['value']}% uses an ESTIMATED base "
+                  f"({cell.get('base_source')}) — open Flight Details → Fare Summary "
+                  f"on {airline}'s cheapest fare before exporting the HAR for the exact %")
     return {key: _fmt(cell["value"]) for key, cell in summary.items()}
 
 
