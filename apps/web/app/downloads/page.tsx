@@ -216,7 +216,7 @@ const PRODUCTS: Product[] = [
     repo: DISCOUNT_REPO,
     assetMatch: (n) => n === "OTADiscountReport.exe" || n.endsWith(".exe"),
     requirements:
-      "Windows 10/11 · single .exe, no install · 8 GB RAM recommended (HAR parsing) · Sign-in with an approved discount-comparison access request",
+      "Windows 10/11 · single .exe, no install · 8 GB RAM recommended (HAR parsing). Free to download — no approval needed. You only need to sign in and be admin-approved to RUN reports and sync inside the app (request access from the app once it's open).",
     guideUrl: "/discount-comparison/guide",
     latestDownloadOverride: DISCOUNT_DOWNLOAD_URL,
     manifestUrl: `${IATA_DOWNLOAD_URL.replace("/download", "/latest")}?app=discount-report`,

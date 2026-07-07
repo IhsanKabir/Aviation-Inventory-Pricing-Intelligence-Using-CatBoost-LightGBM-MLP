@@ -303,6 +303,17 @@ The repository currently supports:
 
 Use [PROJECT_DECISIONS.md](PROJECT_DECISIONS.md) for strategic scope and [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md) for command-level operations.
 
+## License
+
+Copyright &copy; 2026 Ihsan Kabir. All Rights Reserved.
+
+This is **proprietary software**. This repository is public for transparency and
+distribution convenience only — public visibility does **not** grant any right to
+use, copy, modify, or redistribute the code. See [LICENSE](LICENSE) for the full
+terms. Third-party open-source dependencies remain under their own licenses.
+
+For licensing or permission requests, contact ihsankabir999@gmail.com.
+
 ---
 
 > **Codex will review your output once you are done.**

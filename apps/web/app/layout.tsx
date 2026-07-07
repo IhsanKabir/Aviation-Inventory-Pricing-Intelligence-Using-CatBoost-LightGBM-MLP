@@ -39,6 +39,26 @@ export default async function RootLayout({
         <main id="main-content" tabIndex={-1} className="page shell">
           {children}
         </main>
+        <footer
+          style={{
+            padding: "20px 24px",
+            marginTop: "24px",
+            borderTop: "1px solid rgba(0,0,0,0.08)",
+            fontSize: "0.75rem",
+            color: "var(--muted)",
+            textAlign: "center",
+          }}
+        >
+          &copy; 2026 Ihsan Kabir. All Rights Reserved. Proprietary software —
+          see the{" "}
+          <a
+            href="https://github.com/IhsanKabir/Aviation-Inventory-Pricing-Intelligence-Using-CatBoost-LightGBM-MLP/blob/master/LICENSE"
+            style={{ color: "inherit", textDecoration: "underline" }}
+          >
+            license
+          </a>
+          . Not for copying or redistribution.
+        </footer>
         {vercelTelemetryEnabled ? <Analytics /> : null}
         {vercelTelemetryEnabled ? <SpeedInsights /> : null}
       </body>

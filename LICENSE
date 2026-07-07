@@ -1,0 +1,134 @@
+PROPRIETARY SOFTWARE LICENSE
+Copyright (c) 2026 Ihsan Kabir. All Rights Reserved.
+
+================================================================================
+1. DEFINITIONS
+================================================================================
+
+"Software" means the source code, object code, executables (including the
+OTA Discount Comparison desktop application "OTADiscountReport.exe"), the
+Aero Pulse Intelligence web application and API, scripts, configuration,
+documentation, and all other materials contained in this repository, together
+with any updates, modifications, or derivative works thereof.
+
+"Author" means Ihsan Kabir, the sole copyright holder.
+
+"You" means any individual or entity that accesses, views, downloads, or
+otherwise obtains a copy of the Software.
+
+================================================================================
+2. OWNERSHIP
+================================================================================
+
+The Software is the exclusive property of the Author and is protected by
+copyright law and international treaty provisions. This repository is publicly
+visible for transparency and distribution convenience only. Public visibility
+does NOT place the Software in the public domain and does NOT grant any license
+to use, copy, or reuse the Software or any portion of it. All rights not
+expressly granted herein are reserved by the Author.
+
+================================================================================
+3. GRANT OF RIGHTS
+================================================================================
+
+No rights are granted to You except as expressly authorized in writing by the
+Author. Authorized users who have received explicit written permission (for
+example, an approved access grant to operate the OTA Discount Comparison tool)
+are permitted solely to run the Software as an end user, for the internal
+business purpose for which access was granted, and only for the duration and
+within the limits of that authorization.
+
+================================================================================
+4. RESTRICTIONS
+================================================================================
+
+Except with the prior written permission of the Author, You may NOT:
+
+  (a) use the Software for any commercial or non-commercial purpose;
+  (b) copy, reproduce, download, or store the Software or its source code,
+      except a single copy made by an authorized end user solely to run the
+      application as permitted in Section 3;
+  (c) modify, adapt, translate, or create derivative works of the Software;
+  (d) distribute, publish, sublicense, sell, rent, lease, lend, or otherwise
+      make the Software available to any third party;
+  (e) reverse engineer, decompile, or disassemble the Software, except to the
+      limited extent such restriction is prohibited by applicable law;
+  (f) remove, alter, or obscure any copyright, trademark, or other proprietary
+      notice contained in the Software;
+  (g) use the Software to build or train a competing product or service.
+
+================================================================================
+5. THIRD-PARTY COMPONENTS
+================================================================================
+
+The Software incorporates third-party open-source components (including, without
+limitation, Python, FastAPI, Next.js, React, pywebview, and other dependencies
+declared in the project's manifests). Those components remain the property of
+their respective owners and are licensed under their own terms. This License
+applies only to the Author's original work and does not modify, supersede, or
+restrict the licenses governing any third-party component. Nothing in this
+License grants You any rights in third-party components beyond those granted by
+their respective licenses.
+
+================================================================================
+6. DATA AND OPERATIONAL RESPONSIBILITY
+================================================================================
+
+The Software processes user-supplied data (including HAR capture files) locally
+on the operator's machine. You are solely responsible for ensuring that Your use
+of the Software, and the data You provide to it, complies with all applicable
+laws, contractual obligations, and the terms of service of any third-party
+website or service from which data is obtained. The Author assumes no
+responsibility for how the Software is used or for any data processed with it.
+
+================================================================================
+7. NO WARRANTY
+================================================================================
+
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NONINFRINGEMENT.
+THE AUTHOR DOES NOT WARRANT THAT THE SOFTWARE WILL BE ERROR-FREE, ACCURATE,
+UNINTERRUPTED, OR SECURE. ALL DISCOUNT FIGURES, COMMISSIONS, AND OTHER OUTPUTS
+ARE PROVIDED FOR INFORMATIONAL PURPOSES ONLY AND MUST BE INDEPENDENTLY VERIFIED
+BEFORE ANY RELIANCE.
+
+================================================================================
+8. LIMITATION OF LIABILITY
+================================================================================
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE AUTHOR
+BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, WITHOUT LIMITATION, LOSS OF PROFITS, DATA, OR
+BUSINESS) ARISING IN ANY WAY OUT OF THE USE OF OR INABILITY TO USE THE SOFTWARE,
+WHETHER IN CONTRACT, TORT, OR OTHERWISE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGES.
+
+================================================================================
+9. TERMINATION
+================================================================================
+
+Any authorization granted under this License terminates automatically, without
+notice, if You breach any term of this License. Upon termination You must cease
+all use of the Software and destroy all copies in Your possession or control.
+
+================================================================================
+10. GOVERNING LAW
+================================================================================
+
+This License shall be governed by and construed in accordance with the laws of
+the People's Republic of Bangladesh, without regard to its conflict-of-law
+provisions, unless otherwise agreed in writing by the Author.
+
+================================================================================
+11. CONTACT
+================================================================================
+
+For licensing inquiries or permission requests, contact the Author:
+Ihsan Kabir — ihsankabir999@gmail.com
+
+================================================================================
+
+This is a proprietary license, not legal advice. For a binding commercial
+arrangement or before relying on the enforceability of these terms in a specific
+jurisdiction, consult a qualified attorney.

@@ -2,6 +2,8 @@
   "name": "aero-pulse-web",
   "private": true,
   "version": "0.1.0",
+  "license": "UNLICENSED",
+  "author": "Ihsan Kabir <ihsankabir999@gmail.com>",
   "engines": {
     "node": "22.x"
   },
