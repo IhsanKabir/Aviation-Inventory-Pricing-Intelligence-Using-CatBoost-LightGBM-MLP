@@ -124,17 +124,47 @@ def _offer_route(offer: Dict[str, Any]) -> tuple[str, str]:
             str(journeys[-1].get("arrival") or "").upper())
 
 
-def parse_commissions(path: str | Path) -> List[Dict[str, Any]]:
+def fare_match_key(airline: str, origin: str, destination: str,
+                   day: int, month: str, dep_time: str,
+                   gross: float) -> tuple:
+    """Cross-source flight identity: same airline + route + departure day/month
+    + departure time + gross fare = the same published fare, so the base fare
+    from a solid source (Amy / USBA-FT B2B) is authoritative for it."""
+    return (str(airline).upper(), str(origin).upper(), str(destination).upper(),
+            int(day), str(month)[:3].lower(), str(dep_time)[:5], round(float(gross)))
+
+
+def _offer_match_key(offer: Dict[str, Any], airline: str, origin: str,
+                     destination: str, gross: float) -> Optional[tuple]:
+    """Match key from a search offer's flightSummary (departureDate '30 Jul, Thu'
+    + departureTime '15:10')."""
+    for fs in offer.get("flightSummary") or []:
+        m = re.match(r"\s*(\d{1,2})\s+([A-Za-z]{3})", str(fs.get("departureDate") or ""))
+        dep_time = str(fs.get("departureTime") or "")[:5]
+        if m and dep_time:
+            return fare_match_key(airline, origin, destination,
+                                  int(m.group(1)), m.group(2), dep_time, gross)
+    return None
+
+
+def parse_commissions(path: str | Path,
+                      base_index: Optional[Dict[tuple, tuple]] = None) -> List[Dict[str, Any]]:
     """Per-offer BDFare agent commission rows from a searchpad HAR.
 
-    Base-fare resolution, best first: exact (the offer's own Fare Summary was
-    captured — open Flight Details -> Fare Summary before exporting), measured
-    ratio for the same airline+route, HAR-average measured ratio, and finally
-    DEFAULT_BASE_GROSS_RATIO. Each row carries base_source so estimates are
-    visible downstream."""
+    Base-fare resolution, best first (never silently guess):
+      market  — the SAME flight (airline+route+date+time+gross) found on a solid
+                source (Amy / USBA-FT B2B) supplies its base; if BDFare's own
+                Fare Summary disagrees, the market base wins and the alteration
+                is logged;
+      exact   — the offer's own Fare Summary was captured (open Flight Details
+                -> Fare Summary before exporting);
+      airline_ratio / har_avg_ratio / default_ratio — ESTIMATES, marked so the
+                grid can render them as '~x.x'.
+    base_index maps fare_match_key(...) -> (base_fare, source_label)."""
     har = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     entries = har.get("log", {}).get("entries", [])
     fares = _harvest_fare_details(entries)
+    base_index = base_index or {}
 
     offers: List[Dict[str, Any]] = []
 
@@ -182,8 +212,17 @@ def parse_commissions(path: str | Path) -> List[Dict[str, Any]]:
         commission = gross - agent
         origin, destination = _offer_route(offer)
         itin_id = str(offer.get("itineraryId") or "")
-        if itin_id and itin_id in fares["by_itinerary"]:
-            base, base_source = fares["by_itinerary"][itin_id], "exact"
+        own_base = fares["by_itinerary"].get(itin_id) if itin_id else None
+        mkey = _offer_match_key(offer, airline, origin, destination, gross)
+        market = base_index.get(mkey) if mkey else None
+        if market is not None:
+            base, base_source = float(market[0]), "market"
+            if own_base is not None and abs(own_base - base) > 1:
+                print(f"BDFare {airline} {origin}-{destination}: own Fare Summary "
+                      f"base {own_base:,.0f} differs from {market[1]} base "
+                      f"{base:,.0f} for the same flight - using the market base")
+        elif own_base is not None:
+            base, base_source = own_base, "exact"
         elif (airline, origin, destination) in fares["by_airline"]:
             base = gross * fares["by_airline"][(airline, origin, destination)]
             base_source = "airline_ratio"
@@ -213,7 +252,7 @@ def parse_commissions(path: str | Path) -> List[Dict[str, Any]]:
     if skipped_nearby or skipped_mixed:
         # stdout is captured into the desktop Run log — no silent drops.
         print(f"BDFare: skipped {skipped_nearby} nearby-airport and {skipped_mixed} "
-              f"mixed-carrier offer(s) — not a single airline's fare on the searched route")
+              f"mixed-carrier offer(s) - not a single airline's fare on the searched route")
     return rows
 
 

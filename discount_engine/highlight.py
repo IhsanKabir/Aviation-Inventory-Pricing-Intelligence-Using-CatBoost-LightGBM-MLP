@@ -25,7 +25,7 @@ BEST_SHORT = {"USBA OTA B2B": "USBA", "SHARETRIP-B2B": "ST-B2B", "BDFare": "BDFa
               "TLN": "TLN", "AKIJ AIR-B2B": "AKIJ", "Firsttrip-B2C": "FT-B2C",
               "ShareTrip-B2C": "ST-B2C", "Go Zayaan": "GoZ", "Amy": "Amy"}
 
-_NUM = re.compile(r"\s*(-?\d+(?:\.\d+)?)")
+_NUM = re.compile(r"\s*~?\s*(-?\d+(?:\.\d+)?)")   # "~7.5" = estimated base, ranks as 7.5
 
 
 def leading_number(text: Any) -> Optional[float]:

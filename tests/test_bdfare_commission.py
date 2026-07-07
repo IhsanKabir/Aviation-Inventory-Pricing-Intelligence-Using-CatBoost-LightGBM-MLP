@@ -94,6 +94,56 @@ def test_ai_high_tax_fare_uses_exact_base_not_global_ratio():
     assert row["base_source"] == "exact"
 
 
+def _ai_key(gross):
+    return bdfare_har.fare_match_key("AI", "DAC", "DXB", 30, "Jul", "15:10", gross)
+
+
+def _with_summary(offer, date="30 Jul, Thu", time="15:10"):
+    return {**offer, "flightSummary": [{"departureDate": date, "departureTime": time,
+                                        "airlineCode": ["AI"]}]}
+
+
+def test_market_base_from_amy_wins_over_estimates():
+    # The same flight (AI, DAC-DXB, 30 Jul 15:10, gross 40,468) exists on Amy
+    # with base 23,803 — its base is used, marked solid ("market").
+    index = {_ai_key(40468): (23803.0, "Amy")}
+    (row,) = bdfare_har.parse_commissions(_har([_with_summary(AI238)]), base_index=index)
+    assert row["base_source"] == "market"
+    assert row["base_est_bdt"] == 23803
+    assert row["commission_pct"] == 7.49
+
+
+def test_market_base_beats_bdfares_own_altered_fare_summary():
+    # BDFare's own Fare Summary claims base 30,000 for the same flight Amy
+    # shows at 23,803 — the market base wins (alteration logged).
+    index = {_ai_key(40468): (23803.0, "Amy")}
+    har = _har([_with_summary(AI238)],
+               extra_entries=[_fare_summary("itin-ai238", "AI", 30000, 10468)])
+    (row,) = bdfare_har.parse_commissions(har, base_index=index)
+    assert row["base_source"] == "market"
+    assert row["base_est_bdt"] == 23803
+
+
+def test_unmatched_gross_falls_back_to_bdfares_own_base():
+    # Same flight but a different gross on Amy -> no match; BDFare's own
+    # captured Fare Summary is used ("take whatever base bdfare is offering").
+    index = {_ai_key(99999): (23803.0, "Amy")}
+    har = _har([_with_summary(AI238)],
+               extra_entries=[_fare_summary("itin-ai238", "AI", 23803, 16665)])
+    (row,) = bdfare_har.parse_commissions(har, base_index=index)
+    assert row["base_source"] == "exact"
+    assert row["commission_pct"] == 7.49
+
+
+def test_estimated_cells_are_tilde_marked_in_the_grid():
+    from discount_engine import grid
+    cells = grid.collect_bdfare(_har([AI238]))          # no summary, no index
+    assert cells[("INTL", "AI")].startswith("~")        # estimate, never solid
+    index = {_ai_key(40468): (23803.0, "Amy")}
+    cells = grid.collect_bdfare(_har([_with_summary(AI238)]), base_index=index)
+    assert cells[("INTL", "AI")] == "7.49"              # solid market base
+
+
 def test_same_airline_route_ratio_covers_unopened_offers():
     # A second AI DAC-DXB offer without its own Fare Summary inherits AI's
     # measured ratio (23,803/40,468 = 0.5882) instead of the global 0.767.

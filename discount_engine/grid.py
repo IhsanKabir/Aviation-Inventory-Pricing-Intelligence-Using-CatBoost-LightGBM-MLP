@@ -261,8 +261,39 @@ def collect_akij(har_path: str, field: str, true_base=None) -> dict[tuple[str, s
     return {key: _fmt(cell["value"]) for key, cell in summary.items()}
 
 
-def collect_bdfare(har_path: str, true_base=None) -> dict[tuple[str, str], str]:
-    rows = [dict(r) for r in bdfare_har.parse_commissions(har_path)]  # copy: we may rewrite %
+# Base sources honest enough to show without the '~' estimate marker: a solid
+# cross-source match ("market"), BDFare's own captured Fare Summary ("exact"),
+# and the domestic true-base oracle rewrite ("true_base").
+_BDFARE_SOLID_BASES = {"market", "exact", "true_base"}
+
+
+def _market_base_index(row_lists: list[tuple[str, list[dict[str, Any]]]]) -> dict[tuple, tuple]:
+    """fare_match_key -> (base_fare, source) from solid B2B sources (Amy, USBA
+    FT-B2B). The same flight at the same gross fare is the same published fare,
+    so its base is authoritative — BDFare's search list carries no base at all
+    and its own Fare Summary is cross-checked against this."""
+    index: dict[tuple, tuple] = {}
+    for source, rows in row_lists:
+        for r in rows:
+            base = r.get("base_fare") or r.get("base_fare_bdt")
+            gross = r.get("tot_fare") or r.get("gross_total_bdt")
+            dep = str(r.get("departure") or "")
+            if not base or not gross or len(dep) < 16:
+                continue
+            try:
+                dt = datetime.fromisoformat(dep.replace(" ", "T"))
+            except ValueError:
+                continue
+            key = bdfare_har.fare_match_key(
+                r.get("airline", ""), r.get("origin", ""), r.get("destination", ""),
+                dt.day, dt.strftime("%b"), dt.strftime("%H:%M"), gross)
+            index.setdefault(key, (float(base), source))
+    return index
+
+
+def collect_bdfare(har_path: str, true_base=None,
+                   base_index: Optional[dict[tuple, tuple]] = None) -> dict[tuple[str, str], str]:
+    rows = [dict(r) for r in bdfare_har.parse_commissions(har_path, base_index=base_index)]
     if true_base is not None:
         # Unified model: agent discount = (actual market gross - agentAmount) / actual base
         # (the agent's discount off the public price, consistent with every other channel).
@@ -277,6 +308,7 @@ def collect_bdfare(har_path: str, true_base=None) -> dict[tuple[str, str], str]:
             if pct is None:
                 continue
             r["commission_pct"] = pct
+            r["base_source"] = "true_base"   # oracle-normalized = solid, no '~'
             kept.append(r)
         rows = kept
     summary = bdfare_har.summarize_commissions(rows)
@@ -285,20 +317,23 @@ def collect_bdfare(har_path: str, true_base=None) -> dict[tuple[str, str], str]:
             # Provenance for the run log: which fare the cell reflects, and the
             # spread across the other (usually premium) offers in the capture.
             print(f"BDFare {airline} {rt}: {cell['value']}% from the cheapest offer "
-                  f"({cell.get('offer_route')} gross {cell.get('offer_gross_bdt'):,}) — "
+                  f"({cell.get('offer_route')} gross {cell.get('offer_gross_bdt'):,}) - "
                   f"{cell['n_offers']} offers ranged "
-                  f"{cell.get('pct_min')}–{cell.get('pct_max')}%")
-        if cell.get("base_source") not in ("exact", "airline_ratio"):
+                  f"{cell.get('pct_min')}-{cell.get('pct_max')}%")
+        if cell.get("base_source") not in _BDFARE_SOLID_BASES:
             # An estimated base misstates airlines whose tax share differs from
             # the assumed ratio (AI showed 5.74% when the true figure was 7.49%).
-            print(f"BDFare {airline} {rt}: {cell['value']}% uses an ESTIMATED base "
-                  f"({cell.get('base_source')}) — open Flight Details → Fare Summary "
-                  f"on {airline}'s cheapest fare before exporting the HAR for the exact %")
-    return {key: _fmt(cell["value"]) for key, cell in summary.items()}
+            print(f"BDFare {airline} {rt}: ~{cell['value']}% uses an ESTIMATED base "
+                  f"({cell.get('base_source')}) — capture the same flight on Amy/USBA, "
+                  f"or open Flight Details -> Fare Summary on {airline}'s cheapest fare, "
+                  f"for the exact %")
+    # Estimated bases render as '~x.x' — never presented as solid numbers.
+    return {key: (("" if cell.get("base_source") in _BDFARE_SOLID_BASES else "~")
+                  + _fmt(cell["value"]))
+            for key, cell in summary.items()}
 
 
-def collect_amy(har_path: str) -> dict[tuple[str, str], str]:
-    rows = amyweb.parse_agent_har(har_path)
+def _collect_amy_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
     # representative per (airline, route_type) = cheapest fare (min net_pay)
     best: dict[tuple[str, str], dict[str, Any]] = {}
     for r in rows:
@@ -307,6 +342,10 @@ def collect_amy(har_path: str) -> dict[tuple[str, str], str]:
         if key not in best or r["net_pay"] < best[key]["net_pay"]:
             best[key] = r
     return {key: _fmt(r["commission_pct"]) for key, r in best.items()}
+
+
+def collect_amy(har_path: str) -> dict[tuple[str, str], str]:
+    return _collect_amy_rows(amyweb.parse_agent_har(har_path))
 
 
 # --- grid assembly + rendering ----------------------------------------------------------
@@ -412,6 +451,18 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
                            for h in (firsttrip_b2b_hars or [])]
     b2c_rows_by_route = _fetch_firsttrip_b2c(routes, date) if routes else {}
 
+    # Amy rows parsed once too: they feed the Amy cells AND the market base index
+    # BDFare borrows exact base fares from (same flight+date+time+gross).
+    amy_rows_by_path: dict[str, list[dict[str, Any]]] = {}
+    for h in (amy_hars or []):
+        try:
+            amy_rows_by_path[h] = amyweb.parse_agent_har(h)
+        except Exception:   # noqa: BLE001 — add() replays per-file errors below
+            pass
+    base_index = _market_base_index(
+        [("Amy", rows) for rows in amy_rows_by_path.values()]
+        + [("USBA FT-B2B", rows) for rows in ft_b2b_rows_per_har])
+
     # FT B2C HAR FAILSAFE: when the live fetch is blocked (offline/CF-challenged)
     # or wasn't configured, a saved b2c-api.firsttrip.com search HAR supplies the
     # same rows. Live wins per route; the HAR only fills routes live didn't cover.
@@ -485,7 +536,7 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
 
     add("AKIJ AIR-B2B", akij_hars,
         lambda h: collect_akij(h, "realized_discount_pct", true_base), "HAR")
-    add("BDFare", bdfare_hars, lambda h: collect_bdfare(h, true_base), "HAR")
+    add("BDFare", bdfare_hars, lambda h: collect_bdfare(h, true_base, base_index), "HAR")
     if true_base is not None:
         for lbl in ("AKIJ AIR-B2B", "BDFare"):
             if lbl in sources:
@@ -505,7 +556,9 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
         channel_status["ShareTrip-B2C"] = ("ok" if channel_cells["ShareTrip-B2C"]
                                            else "captured_but_empty")
     add("Go Zayaan", gozayaan_hars, collect_gozayaan, "HAR")
-    add("Amy", amy_hars, collect_amy, "HAR")
+    add("Amy", amy_hars,
+        lambda h: _collect_amy_rows(amy_rows_by_path[h])
+        if h in amy_rows_by_path else collect_amy(h), "HAR")
 
     if routes or b2c_rows_by_route:
         channel_cells["Firsttrip-B2C"] = _collect_firsttrip_b2c_rows(b2c_rows_by_route)

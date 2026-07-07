@@ -38,14 +38,15 @@ def test_corrupt_har_does_not_kill_the_run(monkeypatch, tmp_path=None):
             raise ValueError("truncated HAR")
         return {("DOM", "BS"): "8"}
 
-    monkeypatch.setattr(grid, "collect_bdfare", lambda h, tb=None: flaky_collector(h))
+    monkeypatch.setattr(grid, "collect_bdfare",
+                        lambda h, tb=None, bi=None: flaky_collector(h))
     report = grid.build_report(None, [], bdfare_hars=[good, bad], use_true_base=False)
     dom = {r["label"]: r["cells"] for r in report["grids"]["DOM"]["rows"]}
     assert dom["BDFare"]["BS"] == "8"                       # good HAR survived
     assert report["channel_status"]["BDFare"] == "ok"      # partial success -> ok
 
     # both bad -> parse_failed, run still completes
-    def all_bad(h, tb=None):
+    def all_bad(h, tb=None, bi=None):
         raise ValueError("truncated")
     monkeypatch.setattr(grid, "collect_bdfare", all_bad)
     report = grid.build_report(None, [], bdfare_hars=[good, bad], use_true_base=False)

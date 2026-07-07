@@ -131,14 +131,17 @@ export default function HarGuidePage() {
             is captured — un-preferred airlines go missing silently.
           </div>
           <div className="dg-exception">
-            <strong>BDFare — open Fare Summary per airline:</strong> the search list
-            only carries totals, and the base/tax split differs hugely per airline
-            (Air India&apos;s base is ~59% of the fare vs Biman&apos;s ~77%), so
-            percentages computed without it are estimates. On the <em>cheapest fare of
-            each airline you care about</em>, click{" "}
-            <strong>Flight Details → Fare Summary</strong> once (it loads the exact
-            base fare into the capture), then export. The app tells you in the Run log
-            which airlines still used an estimated base.
+            <strong>BDFare — base fares are cross-checked, never guessed:</strong>{" "}
+            BDFare&apos;s search list carries no base fare, and the base/tax split
+            differs hugely per airline (Air India&apos;s base is ~59% of the fare vs
+            Biman&apos;s ~77%). The app takes the base from a solid source
+            automatically: the <em>same flight</em> (airline + date + time + gross)
+            found in your <strong>Amy or USBA/FirstTrip-B2B capture</strong> supplies
+            its exact base — so capture those sites for the same route and the BDFare
+            %s become exact on their own. For airlines those sites don&apos;t cover,
+            click <strong>Flight Details → Fare Summary</strong> once on the airline&apos;s
+            cheapest BDFare fare before exporting. Anything still estimated shows as{" "}
+            <code>~x.x</code> in the grid and is named in the Run log.
           </div>
         </div>
 
