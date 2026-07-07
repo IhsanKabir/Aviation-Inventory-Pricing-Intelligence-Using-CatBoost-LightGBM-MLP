@@ -224,13 +224,39 @@ const PRODUCTS: Product[] = [
   },
 ];
 
+/** "v1.2.3" and "desktop-v0.1.9" both display as their dotted version. */
+function versionLabel(tag: string): string {
+  const m = tag.match(/v?(\d+(?:\.\d+)*)\s*$/);
+  return m ? `v${m[1]}` : tag;
+}
+
+/** Numeric tuple for version comparison ("v0.1.14" > "v0.1.9"). */
+function versionNums(v: string): number[] {
+  return (v.match(/\d+/g) || []).map(Number);
+}
+
+function isNewerVersion(a: string, b: string): boolean {
+  const [x, y] = [versionNums(a), versionNums(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return false;
+}
+
 function parseGitHubReleases(items: GitHubRelease[], product: Product): Release[] {
   const releases: Release[] = [];
 
-  for (const item of items) {
+  // GitHub's /releases list is NOT reliably ordered — a field capture showed
+  // desktop-v0.1.9 listed before v0.1.14. Sort by published date ourselves.
+  const ordered = [...items].sort((a, b) =>
+    (b.published_at || "").localeCompare(a.published_at || "")
+  );
+
+  for (const item of ordered) {
     if (item.draft) continue;
 
-    const version = item.tag_name.startsWith("v") ? item.tag_name : `v${item.tag_name}`;
+    const version = versionLabel(item.tag_name);
     const date = item.published_at.slice(0, 10);
 
     const exeAsset = item.assets.find((a) => product.assetMatch(a.name));
@@ -328,10 +354,19 @@ async function fetchReleases(product: Product): Promise<Release[]> {
   } catch {
     // fall through to the mirror manifest
   }
-  if (parsed.length > 0) return parsed;
-  // Secondary: our own API manifest (latest release only, never rate-limited).
+  // Our own API manifest (latest release only, never rate-limited) is the
+  // freshness authority: when GitHub's list is unavailable it replaces it, and
+  // when a stale cached list lags behind (rate-limited revalidation keeps
+  // serving old data) the newer manifest version is prepended as Latest.
   const mirror = await fetchLatestFromMirror(product);
-  return mirror.length > 0 ? mirror : product.fallback;
+  if (parsed.length === 0) return mirror.length > 0 ? mirror : product.fallback;
+  if (mirror.length > 0 && isNewerVersion(mirror[0].version, parsed[0].version)) {
+    return [
+      mirror[0],
+      ...parsed.map((r) => ({ ...r, label: undefined })),
+    ];
+  }
+  return parsed;
 }
 
 // Force this page to be rendered on every request. The fetch above still
