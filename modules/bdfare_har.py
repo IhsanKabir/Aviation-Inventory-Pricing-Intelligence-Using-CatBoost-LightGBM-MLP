@@ -257,25 +257,30 @@ def parse_commissions(path: str | Path,
 
 
 def summarize_commissions(rows: List[Dict[str, Any]]) -> Dict[tuple[str, str], Dict[str, Any]]:
-    """One cell per (route_type, airline): the CHEAPEST offer's commission %.
+    """One cell per (route_type, airline): the CHEAPEST-TO-BOOK offer's commission %.
 
-    Premium fares carry higher commission tiers (field case: a 170k DAC-XNB
-    itinerary paid 8.7% while the lead 65k DAC-DXB economy fare paid 7.2%) —
-    max() reported a rate nobody sees on the fare they actually compare.
-    The cheapest offer is the like-for-like anchor across channels; the full
-    spread is returned so callers can surface it (run log)."""
+    "Cheapest" = the lowest amount actually PAYABLE (agentAmount / Total Payable),
+    which is the fare a buyer books and what BDFare's own "Cheapest" sort shows —
+    NOT the lowest advertised gross. Two fares can share a gross while differing in
+    payable: BS DAC-CGP gross 4049 appears as agent 3857 (6.57%) AND agent 3768
+    (9.61%); the 3768 one is the cheaper fare and the bigger discount, so it is the
+    right representative. (Premium fares carry higher commission tiers, so max()
+    would report a rate nobody sees on the fare they compare; anchoring to the
+    cheapest bookable fare avoids that. Full spread is returned for the run log.)"""
     by_cell: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
     for r in rows:
         rt = "DOM" if r["domestic"] else "INTL"
         by_cell.setdefault((rt, r["airline"]), []).append(r)
     out: Dict[tuple[str, str], Dict[str, Any]] = {}
     for key, items in by_cell.items():
-        cheapest = min(items, key=lambda r: r["gross_bdt"])
+        # Cheapest to book = lowest payable; tie-break to the lower gross.
+        cheapest = min(items, key=lambda r: (r["agent_bdt"], r["gross_bdt"]))
         pcts = [r["commission_pct"] for r in items]
         out[key] = {"value": cheapest["commission_pct"],
                     "commission_bdt": cheapest["commission_bdt"],
                     "offer_route": f"{cheapest['origin']}-{cheapest['destination']}",
                     "offer_gross_bdt": cheapest["gross_bdt"],
+                    "offer_payable_bdt": cheapest["agent_bdt"],
                     "base_source": cheapest.get("base_source", "default_ratio"),
                     "n_offers": len(items),
                     "pct_min": min(pcts), "pct_max": max(pcts)}

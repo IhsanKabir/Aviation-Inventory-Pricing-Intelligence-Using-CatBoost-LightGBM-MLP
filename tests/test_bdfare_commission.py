@@ -144,6 +144,28 @@ def test_estimated_cells_are_tilde_marked_in_the_grid():
     assert cells[("INTL", "AI")] == "7.49"              # solid market base
 
 
+def test_cheapest_representative_is_lowest_payable_not_lowest_gross():
+    # Field case 2026-07-15: BS DAC-CGP had two offers at the SAME gross 4049 —
+    # agent 3857 (smaller discount) and agent 3768 (the cheaper, bigger discount).
+    # Picking by gross tie-broke to the wrong one (6.57%); the cell must reflect
+    # the fare a buyer actually books = lowest payable = agent 3768 (9.61%).
+    def _bs(agent):
+        return {"airlineCode": "BS", "grossAmount": 4049, "agentAmount": agent,
+                "customerNetAmount": 4062,
+                "journeyWises": [{"departure": "DAC", "arrival": "CGP"}],
+                "flightSummary": [{"departureDate": "30 Jul, Thu",
+                                   "departureTime": "15:10", "airlineCode": ["BS"]}]}
+    # base 2924 supplied as market so the % is deterministic (281/2924 = 9.61).
+    index = {bdfare_har.fare_match_key("BS", "DAC", "CGP", 30, "Jul", "15:10", 4049):
+             (2924.0, "USBA")}
+    rows = bdfare_har.parse_commissions(_har([_bs(3857), _bs(3768)]), base_index=index)
+    summary = bdfare_har.summarize_commissions(rows)
+    cell = summary[("DOM", "BS")]
+    assert cell["offer_payable_bdt"] == 3768        # cheapest to book wins the tie
+    assert cell["value"] == 9.61                    # (4049 - 3768) / 2924
+    assert cell["pct_max"] == 9.61 and cell["pct_min"] < 9.61
+
+
 def test_same_airline_route_ratio_covers_unopened_offers():
     # A second AI DAC-DXB offer without its own Fare Summary inherits AI's
     # measured ratio (23,803/40,468 = 0.5882) instead of the global 0.767.
