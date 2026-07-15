@@ -263,8 +263,10 @@ def collect_akij(har_path: str, field: str, true_base=None) -> dict[tuple[str, s
 
 # Base sources honest enough to show without the '~' estimate marker: a solid
 # cross-source match ("market"), BDFare's own captured Fare Summary ("exact"),
-# and the domestic true-base oracle rewrite ("true_base").
-_BDFARE_SOLID_BASES = {"market", "exact", "true_base"}
+# the SAME airline's own tax on this route ("airline_route_tax" — tax is fixed
+# per airline+route), and the domestic true-base oracle rewrite ("true_base").
+# "route_tax" (another airline's same-route tax) stays an estimate ('~').
+_BDFARE_SOLID_BASES = {"market", "exact", "airline_route_tax", "true_base"}
 
 
 def _market_base_index(row_lists: list[tuple[str, list[dict[str, Any]]]]) -> dict[tuple, tuple]:

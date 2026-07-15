@@ -166,17 +166,37 @@ def test_cheapest_representative_is_lowest_payable_not_lowest_gross():
     assert cell["pct_max"] == 9.61 and cell["pct_min"] < 9.61
 
 
-def test_same_airline_route_ratio_covers_unopened_offers():
-    # A second AI DAC-DXB offer without its own Fare Summary inherits AI's
-    # measured ratio (23,803/40,468 = 0.5882) instead of the global 0.767.
+def test_same_airline_route_tax_covers_unopened_offers():
+    # A second AI DAC-DXB offer without its own Fare Summary gets base =
+    # gross - AI's own tax (16,665), NOT a ratio: tax is fixed per airline+route,
+    # so 50,000 - 16,665 = 33,335. This is solid (no '~').
     other = {"airlineCode": "AI", "grossAmount": 50000, "agentAmount": 46000,
              "customerNetAmount": 50150, "itineraryId": "itin-ai-other",
              "journeyWises": [{"departure": "DAC", "arrival": "DXB"}]}
     har = _har([AI238, other], extra_entries=[_fare_summary("itin-ai238", "AI", 23803, 16665)])
     rows = {r["gross_bdt"]: r for r in bdfare_har.parse_commissions(har)}
-    assert rows[50000]["base_source"] == "airline_ratio"
-    assert rows[50000]["base_est_bdt"] == round(50000 * 23803 / 40468)
+    assert rows[50000]["base_source"] == "airline_route_tax"
+    assert rows[50000]["base_est_bdt"] == 50000 - 16665
     assert rows[40468]["base_source"] == "exact"
+
+
+def test_route_tax_from_another_airline_estimates_intl_base():
+    # Field case 2026-07-15: BS intl DAC-DXB (gross 57,561 / agent 53,514) had NO
+    # BS Fare Summary — only BG's (base 85,715, tax 10,699) was captured. Instead
+    # of BG's RATIO (which gave a wrong 7.91%), use the same-route tax: base =
+    # 57,561 - 10,699 = 46,862 -> 8.64%, essentially the exact 46,867 base.
+    bs = {"airlineCode": "BS", "grossAmount": 57561, "agentAmount": 53514,
+          "customerNetAmount": 57734, "itineraryId": "itin-bs-intl",
+          "journeyWises": [{"departure": "DAC", "arrival": "DXB"}]}
+    har = _har([bs], extra_entries=[_fare_summary("itin-bg", "BG", 85715, 10699)])
+    (row,) = bdfare_har.parse_commissions(har)
+    assert row["base_source"] == "route_tax"          # another airline's route tax
+    assert row["base_est_bdt"] == 57561 - 10699        # 46,862
+    assert row["commission_pct"] == 8.64               # (57561-53514)/46862
+    # ratio would have given ~7.9% — confirm we beat it
+    from discount_engine import grid
+    cells = grid.collect_bdfare(har)
+    assert cells[("INTL", "BS")] == "~8.64"            # estimate marker kept
 
 
 def test_nearby_airport_and_mixed_carrier_offers_are_skipped():

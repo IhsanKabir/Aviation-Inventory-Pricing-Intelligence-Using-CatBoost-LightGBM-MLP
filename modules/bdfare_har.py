@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
 from pathlib import Path
+from statistics import median
 from typing import Any, Dict, List, Optional
 
 DOMESTIC_AIRPORTS = {"DAC", "CGP", "CXB", "ZYL", "SPD", "BZL", "RJH", "JSR", "SAH", "TKR", "IRD", "KMI"}
@@ -67,14 +69,18 @@ def _harvest_fare_details(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     The base/(base+tax) split varies WILDLY per airline (field case, DAC-DXB:
     BG base share 76.7% vs AI 58.8% — AI's taxes are huge), so one global ratio
-    misstates most airlines. The Fare Summary response carries the offer's
-    itineraryId + baseFare + tax, giving:
-      by_itinerary: itineraryId -> exact base (authoritative for that offer)
-      by_airline:   (airline, origin, destination) -> measured base ratio
-      all_ratios:   every measured ratio (average = last-resort estimate)
+    misstates most airlines. But TAX itself is stable per airline+route (govt +
+    airport charges), so `base = gross - tax` recovers the base far more reliably
+    than any ratio for a fare of a different price. The Fare Summary carries the
+    offer's itineraryId + baseFare + tax, giving:
+      by_itinerary:         itineraryId -> exact base (authoritative for that offer)
+      by_airline_route_tax: (airline, o, d) -> median tax (SAME airline's own tax)
+      by_route_tax:         (o, d) -> median tax (any airline on that route)
+      avg_ratio:            last-resort estimate when no tax on the route is known
     """
     by_itinerary: Dict[str, float] = {}
-    by_airline: Dict[tuple, float] = {}
+    airline_route_taxes: Dict[tuple, List[float]] = defaultdict(list)
+    route_taxes: Dict[tuple, List[float]] = defaultdict(list)
     all_ratios: List[float] = []
 
     for entry in entries:
@@ -94,8 +100,7 @@ def _harvest_fare_details(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
                     break
             if not base or tax is None or (base + tax) <= 0:
                 continue
-            ratio = base / (base + tax)
-            all_ratios.append(ratio)
+            all_ratios.append(base / (base + tax))
             itins = info.get("itineraries") or []
             airline = ""
             origin = dest = ""
@@ -108,12 +113,18 @@ def _harvest_fare_details(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
             resp_itin = itin_id or str(data.get("itineraryId") or "")
             if resp_itin:
                 by_itinerary[resp_itin] = base
-            if airline:
-                by_airline[(airline, origin, dest)] = ratio
-    return {"by_itinerary": by_itinerary, "by_airline": by_airline,
-            "avg_ratio": (sum(all_ratios) / len(all_ratios)) if all_ratios
-            else DEFAULT_BASE_GROSS_RATIO,
-            "measured": bool(all_ratios)}
+            if tax > 0 and origin and dest:
+                route_taxes[(origin, dest)].append(tax)
+                if airline:
+                    airline_route_taxes[(airline, origin, dest)].append(tax)
+    return {
+        "by_itinerary": by_itinerary,
+        "by_airline_route_tax": {k: median(v) for k, v in airline_route_taxes.items()},
+        "by_route_tax": {k: median(v) for k, v in route_taxes.items()},
+        "avg_ratio": (sum(all_ratios) / len(all_ratios)) if all_ratios
+        else DEFAULT_BASE_GROSS_RATIO,
+        "measured": bool(all_ratios),
+    }
 
 
 def _offer_route(offer: Dict[str, Any]) -> tuple[str, str]:
@@ -132,6 +143,14 @@ def fare_match_key(airline: str, origin: str, destination: str,
     from a solid source (Amy / USBA-FT B2B) is authoritative for it."""
     return (str(airline).upper(), str(origin).upper(), str(destination).upper(),
             int(day), str(month)[:3].lower(), str(dep_time)[:5], round(float(gross)))
+
+
+def _tax_base(tax: Optional[float], gross: float) -> Optional[float]:
+    """base = gross - tax, when a route/airline tax is known and leaves a
+    positive base below gross; else None (so the caller falls through)."""
+    if tax is None or tax <= 0 or tax >= gross:
+        return None
+    return gross - float(tax)
 
 
 def _offer_match_key(offer: Dict[str, Any], airline: str, origin: str,
@@ -223,9 +242,17 @@ def parse_commissions(path: str | Path,
                       f"{base:,.0f} for the same flight - using the market base")
         elif own_base is not None:
             base, base_source = own_base, "exact"
-        elif (airline, origin, destination) in fares["by_airline"]:
-            base = gross * fares["by_airline"][(airline, origin, destination)]
-            base_source = "airline_ratio"
+        elif _tax_base(fares["by_airline_route_tax"].get((airline, origin, destination)), gross):
+            # SAME airline's own tax on this route -> base = gross - tax. Tax is
+            # fixed per airline+route, so this is exact for any fare of that
+            # airline+route (solid, no estimate marker).
+            base, base_source = _tax_base(
+                fares["by_airline_route_tax"][(airline, origin, destination)], gross), "airline_route_tax"
+        elif _tax_base(fares["by_route_tax"].get((origin, destination)), gross):
+            # Same-route tax from ANOTHER airline (intl tax is route-dominated;
+            # DAC-DXB: BG 10,699 vs BS 10,694). Close, but not this airline's own
+            # Fare Summary -> flagged as an estimate.
+            base, base_source = _tax_base(fares["by_route_tax"][(origin, destination)], gross), "route_tax"
         elif fares["measured"]:
             base, base_source = gross * fares["avg_ratio"], "har_avg_ratio"
         else:
