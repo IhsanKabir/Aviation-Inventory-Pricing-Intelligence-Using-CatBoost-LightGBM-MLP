@@ -126,7 +126,7 @@ const PRODUCTS: Product[] = [
     slug: "iata",
     name: "Travel Ops Console",
     tagline:
-      "The combined five-tab desktop console (IATACodeValidator.exe): IATA Code Validator, BD Travel Agency Lookup, Traffic Movement, Zenith (customer / PNR / flight loads / history + Flight Load Inspection), and the built-in Bulk Mailer — now with a free WhatsApp Blast (text + one image, from your own number) alongside Split & Send email. One portable .exe.",
+      "The combined desktop console (IATACodeValidator.exe): IATA Code Validator, BD Travel Agency Lookup, Traffic Movement, Zenith (customer / PNR / flight loads / history + Flight Load Inspection + per-passenger passport & contact details to Excel), built-in Bulk Mailer with Split & Send, free WhatsApp Blast (text + one image, from your own number), Health checks and an in-app visual Guide. One portable .exe.",
     repo: IATA_REPO,
     assetMatch: (n) => n === "IATACodeValidator.exe" || n.endsWith(".exe"),
     requirements:
@@ -135,27 +135,28 @@ const PRODUCTS: Product[] = [
     manifestUrl: `${IATA_DOWNLOAD_URL.replace("/download", "/latest")}`,
     fallback: [
       {
-        version: "v1.26.0",
-        date: "2026-07-05",
+        version: "v1.29.7",
+        date: "2026-07-15",
         label: "Latest",
         notes: [
-          "NEW: Health tab — one click shows green/amber/red per feature (is each site reachable? is the browser present?) so you catch a broken feature before it surprises you",
+          "NEW: Passenger details → Excel — PNR Bulk Lookup can now pull every passenger's passport no., document type & expiry, issuing country, nationality, DOB, title, gender, email and phones into one workbook (validated on a 985-PNR file: 1,379 passengers, ~99.8% passport-field fill)",
+          "In-app visual Guide tab + Agency Visit Tracking in Instant Reports (v1.27–1.28)",
+          "Health tab launches a real browser check — a browser that can't start shows red with a fix hint, not a false green (v1.28.1)",
           "WhatsApp Blast — message + one shared image to a contact list over WhatsApp, free, from your own number, any country (v1.25)",
-          "Speed presets (Safe / Balanced / Fast) with a daily cap and ban-risk warnings at every step",
-          "UI polish: zebra-striped grids, consistent buttons, 3x faster startup, crisp text on scaled displays (v1.23–1.24)",
           "Bulk Mailer Split & Send by email column; Zenith Flight Load Inspection + dossier-ID lookup (v1.20–1.23)",
         ],
-        exe_url: `https://github.com/${IATA_REPO}/releases/download/v1.26.0/IATACodeValidator.exe`,
+        exe_url: `https://github.com/${IATA_REPO}/releases/download/v1.29.7/IATACodeValidator.exe`,
         guide_url: null,
       },
       {
-        version: "v1.1.0",
-        date: "2026-05-06",
+        version: "v1.26.0",
+        date: "2026-07-05",
         notes: [
-          "BD Travel Agency Lookup tab (regtravelagency.gov.bd) with Excel export + fuzzy matching",
-          "Local SQLite cache so re-running the app doesn't re-download",
+          "Health tab — one click shows green/amber/red per feature (is each site reachable? is the browser present?)",
+          "Speed presets (Safe / Balanced / Fast) with a daily cap and ban-risk warnings at every step",
+          "UI polish: zebra-striped grids, consistent buttons, 3x faster startup, crisp text on scaled displays (v1.23–1.24)",
         ],
-        exe_url: `https://github.com/${IATA_REPO}/releases/download/v1.1.0/IATACodeValidator.exe`,
+        exe_url: `https://github.com/${IATA_REPO}/releases/download/v1.26.0/IATACodeValidator.exe`,
         guide_url: null,
       },
     ],
