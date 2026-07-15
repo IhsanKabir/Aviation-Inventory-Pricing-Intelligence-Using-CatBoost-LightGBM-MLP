@@ -290,7 +290,9 @@ function parseGitHubReleases(items: GitHubRelease[], product: Product): Release[
 function parseNotes(body: string): string[] {
   return body
     .split("\n")
-    .map((l) => l.replace(/^[-*•]\s*/, "").trim())
+    // strip list markers, then markdown bold — release bodies use **…** which
+    // would otherwise render as literal asterisks on the card
+    .map((l) => l.replace(/^[-*•]\s*/, "").replace(/\*\*/g, "").trim())
     .filter((l) => l.length > 0 && !l.startsWith("#") && !l.startsWith("http"));
 }
 
