@@ -197,12 +197,21 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
     """
     paths = [har_paths] if isinstance(har_paths, str) else list(har_paths)
 
+    def _safe(fn, har_path, default):
+        """Isolate a per-file parse: a truncated/corrupt HAR is skipped with a
+        warning instead of aborting the whole run (matches the other channels)."""
+        try:
+            return fn(har_path)
+        except Exception as exc:  # noqa: BLE001 — surfaced in the run log
+            print(f"  ! ShareTrip HAR {Path(har_path).name} skipped: {exc}")
+            return default
+
     # 1. Exact per-airline cells: judge every booking-flow details payload.
     #    All rows are summarized together so a second HAR can't silently
     #    overwrite a better cell (best common + best judged special win).
     all_rows: list[dict[str, Any]] = []
     for har_path in paths:
-        all_rows += sharetrip_har.parse_details_discounts(har_path)
+        all_rows += _safe(sharetrip_har.parse_details_discounts, har_path, [])
     details = sharetrip_har.summarize_details(all_rows)
 
     # Market-level coupon terms (uniform per DOM/INTL) + the gateway fee catalog
@@ -214,7 +223,7 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
             shared_terms.setdefault(rt, r["coupon_terms"])
     shared_gateways: dict[str, dict[str, Any]] = {}
     for har_path in paths:
-        shared_gateways.update(sharetrip_har.parse_payment_gateways(har_path))
+        shared_gateways.update(_safe(sharetrip_har.parse_payment_gateways, har_path, {}))
 
     cells: dict[tuple[str, str], str] = {}
     for (airline, flight_type), c in details.items():
@@ -226,7 +235,7 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
     #    fees annotated from the shared catalog — net ranking needs the total
     #    fare, which search rows don't carry).
     for har_path in paths:
-        common = sharetrip_har.summarize_discounts(sharetrip_har.parse_discounts(har_path))
+        common = sharetrip_har.summarize_discounts(_safe(sharetrip_har.parse_discounts, har_path, []))
         for (airline, flight_type), cell in common.items():
             rt = "DOM" if flight_type == "DOM" else "INTL"
             if (rt, airline) in cells:
@@ -449,8 +458,13 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
     # Parse each FT B2B HAR ONCE and live-fetch each FT B2C route ONCE; the rows feed
     # BOTH the true-base oracle and the channel collectors (no double parse/fetch —
     # a full HAR parse and a live fetch each used to run twice per report).
-    ft_b2b_rows_per_har = [firsttrip.parse_b2b_commissions(h)
-                           for h in (firsttrip_b2b_hars or [])]
+    # A truncated/corrupt FT B2B HAR is skipped with a warning, never fatal.
+    ft_b2b_rows_per_har = []
+    for h in (firsttrip_b2b_hars or []):
+        try:
+            ft_b2b_rows_per_har.append(firsttrip.parse_b2b_commissions(h))
+        except Exception as exc:  # noqa: BLE001 — surfaced in the run log
+            print(f"  ! FT B2B HAR {Path(h).name} skipped: {exc}")
     b2c_rows_by_route = _fetch_firsttrip_b2c(routes, date) if routes else {}
 
     # Amy rows parsed once too: they feed the Amy cells AND the market base index

@@ -22,6 +22,22 @@ def _har(entries) -> str:
     return str(p)
 
 
+def _corrupt_har() -> str:
+    """A truncated HAR — valid JSON start, unterminated string (real field case:
+    an interrupted browser export)."""
+    p = Path(tempfile.mkdtemp(prefix="st_bad_")) / "cap.har"
+    p.write_text('{"log": {"entries": [{"response": {"content": {"text": "abc', encoding="utf-8")
+    return str(p)
+
+
+def test_corrupt_sharetrip_har_is_skipped_not_fatal():
+    # One truncated HAR among valid ones must NOT abort the run — it is skipped
+    # with a warning and the valid files still produce cells.
+    booking = _booking_har("BS", 7, 5000)
+    cells = grid.collect_sharetrip_b2c([_corrupt_har(), booking])
+    assert cells[("DOM", "BS")] == "9(Bkash), 18 (Stellar Signature)"
+
+
 def _search_har(airlines_disc):
     mf = [{"legs": [{"marketingAirline": a}], "domestic": True,
            "displayPrice": {"discount": d, "totalFare": {"base": base}},
