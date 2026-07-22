@@ -230,39 +230,47 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
     all_rows: list[dict[str, Any]] = []
     for har_path, har in loaded:
         all_rows += _safe(sharetrip_har.parse_details_discounts, har_path, har, [])
-    details = sharetrip_har.summarize_details(all_rows)
 
-    # Market-level coupon terms (uniform per DOM/INTL) + the gateway fee catalog
-    # from any booking capture.
+    # gateway fee catalog + automatic-discount (search) rows from every HAR
+    shared_gateways: dict[str, dict[str, Any]] = {}
+    search_rows: list[dict[str, Any]] = []
+    for har_path, har in loaded:
+        shared_gateways.update(_safe(sharetrip_har.parse_payment_gateways, har_path, har, {}))
+        search_rows += _safe(sharetrip_har.parse_discounts, har_path, har, [])
+
+    return _assemble_sharetrip_cells(all_rows, search_rows, shared_gateways)
+
+
+def _assemble_sharetrip_cells(details_rows: list[dict[str, Any]], search_rows: list[dict[str, Any]],
+                              gateways: dict[str, dict[str, Any]]) -> dict[tuple[str, str], str]:
+    """Judge ShareTrip cells from parsed inputs — shared by the HAR and LIVE collectors so
+    both render identically. details_rows = booking-flow judged rows (exact per airline +
+    market-uniform coupon_terms); search_rows = automatic-discount rows (fill airlines with
+    no booking capture at their own base); gateways = convenience-fee catalog."""
+    details = sharetrip_har.summarize_details(details_rows)
     shared_terms: dict[str, list[dict[str, Any]]] = {}
-    for r in all_rows:
+    for r in details_rows:
         rt = "DOM" if r["flight_type"] == "DOM" else "INTL"
         if r.get("coupon_terms"):
             shared_terms.setdefault(rt, r["coupon_terms"])
-    shared_gateways: dict[str, dict[str, Any]] = {}
-    for har_path, har in loaded:
-        shared_gateways.update(_safe(sharetrip_har.parse_payment_gateways, har_path, har, {}))
 
     cells: dict[tuple[str, str], str] = {}
     for (airline, flight_type), c in details.items():
         rt = "DOM" if flight_type == "DOM" else "INTL"
         cells[(rt, airline)] = _sharetrip_cell_text(c)
 
-    # 2. Search fill: airlines without a booking capture get the shared market
-    #    terms judged at their own observed fare (caps re-evaluated per airline;
-    #    fees annotated from the shared catalog — net ranking needs the total
-    #    fare, which search rows don't carry).
-    for har_path, har in loaded:
-        common = sharetrip_har.summarize_discounts(_safe(sharetrip_har.parse_discounts, har_path, har, []))
-        for (airline, flight_type), cell in common.items():
-            rt = "DOM" if flight_type == "DOM" else "INTL"
-            if (rt, airline) in cells:
-                continue    # a booking capture already gave the exact cell
-            judged = sharetrip_har.judge_cell(cell["discount_pct"],
-                                              float(cell.get("base_fare_bdt") or 0),
-                                              shared_terms.get(rt) or [],
-                                              gateways=shared_gateways or None)
-            cells[(rt, airline)] = _sharetrip_cell_text(judged)
+    # Search fill: airlines without a booking capture get the shared market terms
+    # judged at their own observed fare (caps re-evaluated per airline).
+    common = sharetrip_har.summarize_discounts(search_rows)
+    for (airline, flight_type), cell in common.items():
+        rt = "DOM" if flight_type == "DOM" else "INTL"
+        if (rt, airline) in cells:
+            continue    # a booking capture already gave the exact cell
+        judged = sharetrip_har.judge_cell(cell["discount_pct"],
+                                          float(cell.get("base_fare_bdt") or 0),
+                                          shared_terms.get(rt) or [],
+                                          gateways=gateways or None)
+        cells[(rt, airline)] = _sharetrip_cell_text(judged)
     return cells
 
 

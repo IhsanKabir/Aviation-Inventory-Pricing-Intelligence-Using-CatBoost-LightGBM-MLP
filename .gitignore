@@ -86,6 +86,17 @@ apps/web/node_modules/
 apps/web/.next/
 apps/web/out/
 apps/web/.turbo/
+
+# --- Private ShareTrip live enhancement (admin-only; deliberately NOT published) ---
+# The public repo keeps ONLY the HAR-based ShareTrip path (like Amy/FirstTrip/BDFare).
+# The live capability + its fee catalog and its tests/tools stay local to the admin
+# machine and are never committed. Rename the module freely; the privacy is the gitignore.
+modules/sharetrip_live.py
+tools/harvest_sharetrip_live.py
+tools/test_sharetrip_live.py
+tools/refresh_sharetrip_live.py
+tests/test_sharetrip_live.py
+config/sharetrip_gateways.json
 apps/web/.vercel/
 
 # Build artifacts (added 2026-07-03)
