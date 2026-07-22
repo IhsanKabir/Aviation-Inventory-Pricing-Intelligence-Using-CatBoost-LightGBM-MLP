@@ -186,7 +186,9 @@ function fmtCell(raw) {
   const t = String(raw ?? "").trim();
   if (!t) return "—";
   if (/^-?\d+(\.\d+)?$/.test(t)) return t + "%";
-  return t.replace(/(\d+(?:\.\d+)?)/g, "$1%");
+  // append % to each standalone number, but NOT one already followed by % (fees
+  // like "2% fee") nor a digit inside a word/code (e.g. the "2" in "FT-B2C").
+  return t.replace(/(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(?![\d.%A-Za-z])/g, "$1%");
 }
 
 async function refreshState() {

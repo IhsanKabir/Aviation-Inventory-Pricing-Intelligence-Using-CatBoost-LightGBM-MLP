@@ -125,12 +125,16 @@ def collect_gozayaan(har_path: str) -> dict[tuple[str, str], str]:
     cells: dict[tuple[str, str], str] = {}
     rows = gozayaan_har.parse_discounts(har_path)
     summary = gozayaan_har.summarize_discounts(rows)  # keyed (airline, flight_type)
+    # GoZayaan adds a flat convenience surcharge at payment — annotate it like the
+    # ShareTrip gateway fee so channels are compared on the same footing.
+    surcharge = gozayaan_har.parse_surcharge(har_path)
     for (airline, flight_type), cell in summary.items():
         rt = "DOM" if flight_type == "DOM" else "INTL"
         common = cell.get("common_pct")
         if common is None:
             continue
-        text = _fmt(common)
+        fee = surcharge.get(rt)
+        text = _fmt(common) + (f"({_fmt(fee)}% fee)" if fee else "")
         special = cell.get("special")
         if special:
             text += f", {_fmt(special['pct'])} ({special['eligibility']})"

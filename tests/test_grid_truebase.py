@@ -66,6 +66,47 @@ def test_bdfare_intl_passthrough_in_truebase_mode(monkeypatch):
     assert cells[("INTL", "EK")] == "6.5"
 
 
+# --- GoZayaan convenience-surcharge annotation (fee parity with ShareTrip) ---
+
+def _gz_summary():
+    return {("BS", "DOM"): {"common_pct": 7.0,
+                            "special": {"pct": 10.0, "eligibility": "Dhaka Bank Master"}},
+            ("VQ", "DOM"): {"common_pct": 7.0, "special": None}}
+
+
+def test_gozayaan_appends_surcharge_fee(monkeypatch):
+    monkeypatch.setattr(g.gozayaan_har, "parse_discounts", lambda p: [])
+    monkeypatch.setattr(g.gozayaan_har, "summarize_discounts", lambda rows: _gz_summary())
+    monkeypatch.setattr(g.gozayaan_har, "parse_surcharge", lambda p: {"DOM": 2.1, "INTL": 2.1})
+    cells = g.collect_gozayaan("x.har")
+    assert cells[("DOM", "BS")] == "7(2.1% fee), 10 (Dhaka Bank Master)"
+    assert cells[("DOM", "VQ")] == "7(2.1% fee)"
+
+
+def test_gozayaan_no_surcharge_is_bare(monkeypatch):
+    # No product_surcharge endpoint captured -> cells stay fee-free (no crash).
+    monkeypatch.setattr(g.gozayaan_har, "parse_discounts", lambda p: [])
+    monkeypatch.setattr(g.gozayaan_har, "summarize_discounts", lambda rows: _gz_summary())
+    monkeypatch.setattr(g.gozayaan_har, "parse_surcharge", lambda p: {})
+    cells = g.collect_gozayaan("x.har")
+    assert cells[("DOM", "VQ")] == "7"
+
+
+def test_parse_surcharge_normalizes_int_to_intl(tmp_path):
+    # product_type "INT" in the API must key as "INTL" (grid's route-type key).
+    import json
+    from modules import gozayaan_har as gz
+    def _entry(pt, sur):
+        return {"request": {"url": "https://x/api/business_rules/product_surcharge/"},
+                "response": {"content": {"text": json.dumps(
+                    {"result": {"surcharge": sur, "product_type": pt}})}}}
+    har = tmp_path / "gz.har"
+    har.write_text(json.dumps({"log": {"entries": [_entry("DOM", 2.1), _entry("INT", 2.1)]}}),
+                   encoding="utf-8")
+    assert gz.parse_surcharge(har) == {"DOM": 2.1, "INTL": 2.1}
+    assert gz.parse_surcharge(tmp_path / "missing.har") == {}   # unreadable -> empty, no raise
+
+
 if __name__ == "__main__":
     import subprocess
     raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"]))

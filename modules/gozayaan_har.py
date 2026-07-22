@@ -167,6 +167,31 @@ def parse_har(path: str | Path) -> List[Dict[str, Any]]:
     return rows
 
 
+def parse_surcharge(path: str | Path) -> Dict[str, float]:
+    """GoZayaan's flat convenience surcharge (a fee ADDED at payment) per route
+    type, from GET /api/business_rules/product_surcharge/ -> result.surcharge.
+    Returns {"DOM": pct, "INTL": pct}; unlike ShareTrip's per-gateway fees this
+    is one channel-wide charge (field-observed 2.1% for both DOM and INT)."""
+    try:
+        har = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    out: Dict[str, float] = {}
+    for e in har.get("log", {}).get("entries", []):
+        if "product_surcharge" not in e.get("request", {}).get("url", ""):
+            continue
+        try:
+            r = (json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
+                 .get("result") or {})
+        except json.JSONDecodeError:
+            continue
+        pt = str(r.get("product_type") or "").upper()
+        sur = r.get("surcharge")
+        if pt and sur is not None:
+            out["INTL" if pt.startswith("INT") else "DOM"] = round(float(sur), 2)
+    return out
+
+
 def parse_discounts(path: str | Path) -> List[Dict[str, Any]]:
     """
     Extract published coupon/campaign discounts from a GoZayaan HAR.

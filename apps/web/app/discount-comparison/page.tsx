@@ -33,7 +33,9 @@ function formatCellDisplay(raw: string | undefined): string {
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
     return `${trimmed}%`;
   }
-  return trimmed.replace(/(\d+(?:\.\d+)?)/g, "$1%");
+  // append % to each standalone number, but NOT one already followed by % (fees
+  // like "2% fee") nor a digit inside a word/code (e.g. the "2" in "FT-B2C").
+  return trimmed.replace(/(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(?![\d.%A-Za-z])/g, "$1%");
 }
 
 function GridBlock({
