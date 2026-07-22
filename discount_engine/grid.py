@@ -123,11 +123,14 @@ def _existing_rate(text: str) -> float:
 
 def collect_gozayaan(har_path: str) -> dict[tuple[str, str], str]:
     cells: dict[tuple[str, str], str] = {}
-    rows = gozayaan_har.parse_discounts(har_path)
+    # Load the (large) GoZayaan HAR once; both the discount list and the surcharge
+    # endpoint live in the same file, so don't read it twice.
+    har = gozayaan_har._load_har(har_path)
+    rows = gozayaan_har.parse_discounts(har_path, har=har)
     summary = gozayaan_har.summarize_discounts(rows)  # keyed (airline, flight_type)
     # GoZayaan adds a flat convenience surcharge at payment — annotate it like the
     # ShareTrip gateway fee so channels are compared on the same footing.
-    surcharge = gozayaan_har.parse_surcharge(har_path)
+    surcharge = gozayaan_har.parse_surcharge(har_path, har=har)
     for (airline, flight_type), cell in summary.items():
         rt = "DOM" if flight_type == "DOM" else "INTL"
         common = cell.get("common_pct")
@@ -201,21 +204,32 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
     """
     paths = [har_paths] if isinstance(har_paths, str) else list(har_paths)
 
-    def _safe(fn, har_path, default):
-        """Isolate a per-file parse: a truncated/corrupt HAR is skipped with a
-        warning instead of aborting the whole run (matches the other channels)."""
+    # Load each ShareTrip HAR ONCE — they are the biggest captures and three
+    # parsers mine the same file (details, gateways, search). A truncated/corrupt
+    # HAR is skipped here with a single warning instead of aborting the run or
+    # tripping each parser separately.
+    loaded: list[tuple[str, dict[str, Any]]] = []
+    for har_path in paths:
         try:
-            return fn(har_path)
+            loaded.append((har_path, sharetrip_har._load_har(har_path)))
         except Exception as exc:  # noqa: BLE001 — surfaced in the run log
             print(f"  ! ShareTrip HAR {Path(har_path).name} skipped: {exc}")
+
+    def _safe(fn, har_path, har, default):
+        """Isolate a per-file parse: a structurally-odd payload is skipped with a
+        warning instead of aborting the whole run (matches the other channels)."""
+        try:
+            return fn(har_path, har=har)
+        except Exception as exc:  # noqa: BLE001 — surfaced in the run log
+            print(f"  ! ShareTrip HAR {Path(har_path).name} {fn.__name__} skipped: {exc}")
             return default
 
     # 1. Exact per-airline cells: judge every booking-flow details payload.
     #    All rows are summarized together so a second HAR can't silently
     #    overwrite a better cell (best common + best judged special win).
     all_rows: list[dict[str, Any]] = []
-    for har_path in paths:
-        all_rows += _safe(sharetrip_har.parse_details_discounts, har_path, [])
+    for har_path, har in loaded:
+        all_rows += _safe(sharetrip_har.parse_details_discounts, har_path, har, [])
     details = sharetrip_har.summarize_details(all_rows)
 
     # Market-level coupon terms (uniform per DOM/INTL) + the gateway fee catalog
@@ -226,8 +240,8 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
         if r.get("coupon_terms"):
             shared_terms.setdefault(rt, r["coupon_terms"])
     shared_gateways: dict[str, dict[str, Any]] = {}
-    for har_path in paths:
-        shared_gateways.update(_safe(sharetrip_har.parse_payment_gateways, har_path, {}))
+    for har_path, har in loaded:
+        shared_gateways.update(_safe(sharetrip_har.parse_payment_gateways, har_path, har, {}))
 
     cells: dict[tuple[str, str], str] = {}
     for (airline, flight_type), c in details.items():
@@ -238,8 +252,8 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
     #    terms judged at their own observed fare (caps re-evaluated per airline;
     #    fees annotated from the shared catalog — net ranking needs the total
     #    fare, which search rows don't carry).
-    for har_path in paths:
-        common = sharetrip_har.summarize_discounts(_safe(sharetrip_har.parse_discounts, har_path, []))
+    for har_path, har in loaded:
+        common = sharetrip_har.summarize_discounts(_safe(sharetrip_har.parse_discounts, har_path, har, []))
         for (airline, flight_type), cell in common.items():
             rt = "DOM" if flight_type == "DOM" else "INTL"
             if (rt, airline) in cells:

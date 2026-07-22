@@ -167,15 +167,23 @@ def parse_har(path: str | Path) -> List[Dict[str, Any]]:
     return rows
 
 
-def parse_surcharge(path: str | Path) -> Dict[str, float]:
+def _load_har(path: str | Path) -> Dict[str, Any]:
+    """Read + parse a HAR once. GoZayaan HARs are among the biggest captures, so
+    callers that need several endpoints out of one file should load here once and
+    pass the result to parse_*(har=...) rather than re-reading the whole file."""
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+
+
+def parse_surcharge(path: str | Path, *, har: Dict[str, Any] | None = None) -> Dict[str, float]:
     """GoZayaan's flat convenience surcharge (a fee ADDED at payment) per route
     type, from GET /api/business_rules/product_surcharge/ -> result.surcharge.
     Returns {"DOM": pct, "INTL": pct}; unlike ShareTrip's per-gateway fees this
     is one channel-wide charge (field-observed 2.1% for both DOM and INT)."""
-    try:
-        har = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
-        return {}
+    if har is None:
+        har = _load_har(path)
     out: Dict[str, float] = {}
     for e in har.get("log", {}).get("entries", []):
         if "product_surcharge" not in e.get("request", {}).get("url", ""):
@@ -192,7 +200,7 @@ def parse_surcharge(path: str | Path) -> Dict[str, float]:
     return out
 
 
-def parse_discounts(path: str | Path) -> List[Dict[str, Any]]:
+def parse_discounts(path: str | Path, *, har: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
     """
     Extract published coupon/campaign discounts from a GoZayaan HAR.
 
@@ -207,7 +215,8 @@ def parse_discounts(path: str | Path) -> List[Dict[str, Any]]:
     amount back as a percent of product_price. Each campaign is returned as its
     own row (no summation), keyed by (airline, flight_type, coupon_code).
     """
-    har = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    if har is None:
+        har = _load_har(path)
     entries = har.get("log", {}).get("entries", [])
     out: List[Dict[str, Any]] = []
     seen: set = set()

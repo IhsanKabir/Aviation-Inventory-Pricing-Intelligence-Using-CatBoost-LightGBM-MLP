@@ -75,9 +75,9 @@ def _gz_summary():
 
 
 def test_gozayaan_appends_surcharge_fee(monkeypatch):
-    monkeypatch.setattr(g.gozayaan_har, "parse_discounts", lambda p: [])
+    monkeypatch.setattr(g.gozayaan_har, "parse_discounts", lambda p, har=None: [])
     monkeypatch.setattr(g.gozayaan_har, "summarize_discounts", lambda rows: _gz_summary())
-    monkeypatch.setattr(g.gozayaan_har, "parse_surcharge", lambda p: {"DOM": 2.1, "INTL": 2.1})
+    monkeypatch.setattr(g.gozayaan_har, "parse_surcharge", lambda p, har=None: {"DOM": 2.1, "INTL": 2.1})
     cells = g.collect_gozayaan("x.har")
     assert cells[("DOM", "BS")] == "7(2.1% fee), 10 (Dhaka Bank Master)"
     assert cells[("DOM", "VQ")] == "7(2.1% fee)"
@@ -85,11 +85,27 @@ def test_gozayaan_appends_surcharge_fee(monkeypatch):
 
 def test_gozayaan_no_surcharge_is_bare(monkeypatch):
     # No product_surcharge endpoint captured -> cells stay fee-free (no crash).
-    monkeypatch.setattr(g.gozayaan_har, "parse_discounts", lambda p: [])
+    monkeypatch.setattr(g.gozayaan_har, "parse_discounts", lambda p, har=None: [])
     monkeypatch.setattr(g.gozayaan_har, "summarize_discounts", lambda rows: _gz_summary())
-    monkeypatch.setattr(g.gozayaan_har, "parse_surcharge", lambda p: {})
+    monkeypatch.setattr(g.gozayaan_har, "parse_surcharge", lambda p, har=None: {})
     cells = g.collect_gozayaan("x.har")
     assert cells[("DOM", "VQ")] == "7"
+
+
+def test_sharetrip_parsers_accept_shared_har(monkeypatch):
+    # The collector loads each big ShareTrip HAR once and passes har= to all three
+    # parsers; a HAR must be read from disk at most once per file, not three times.
+    from modules import sharetrip_har as st
+    reads = {"n": 0}
+    real_load = st._load_har
+    def counting_load(p):
+        reads["n"] += 1
+        return {"log": {"entries": []}}
+    monkeypatch.setattr(st, "_load_har", counting_load)
+    monkeypatch.setattr(st, "summarize_details", lambda rows: {})
+    monkeypatch.setattr(st, "summarize_discounts", lambda rows: {})
+    g.collect_sharetrip_b2c(["a.har", "b.har"])
+    assert reads["n"] == 2   # one load per file, NOT 3x (details+gateways+search)
 
 
 def test_parse_surcharge_normalizes_int_to_intl(tmp_path):

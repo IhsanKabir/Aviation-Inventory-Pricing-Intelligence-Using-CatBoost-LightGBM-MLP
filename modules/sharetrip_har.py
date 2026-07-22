@@ -121,6 +121,14 @@ def _normalize(fl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
+def _load_har(path: str | Path) -> Dict[str, Any]:
+    """Read + parse a HAR once. ShareTrip HARs are the biggest captures and a
+    booking export is mined by three parsers (search discounts, gateways, details);
+    callers should load here once and pass the result to parse_*(har=...) rather
+    than re-reading the multi-MB file three times."""
+    return json.loads(Path(path).read_text(encoding="utf-8-sig"))
+
+
 def parse_har(path: str | Path) -> List[Dict[str, Any]]:
     har = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     entries = har.get("log", {}).get("entries", [])
@@ -180,14 +188,15 @@ def _discount_row(fl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
-def parse_discounts(path: str | Path) -> List[Dict[str, Any]]:
+def parse_discounts(path: str | Path, *, har: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
     """
     Extract the common B2C discount per flight from a ShareTrip search HAR
     (POST /api/v2/flight/search/available-flights -> response.matchedFlights).
     Returns one row per (airline, flight_type, coupon). Card/payment-specific
     coupons require a booking-flow capture and are not present here.
     """
-    har = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    if har is None:
+        har = _load_har(path)
     entries = har.get("log", {}).get("entries", [])
     rows: List[Dict[str, Any]] = []
     seen: set = set()
@@ -400,13 +409,14 @@ def _collect_gateways(node: Any, acc: Dict[str, Dict[str, Any]]) -> None:
             _collect_gateways(v, acc)
 
 
-def parse_payment_gateways(path: str | Path) -> Dict[str, Dict[str, Any]]:
+def parse_payment_gateways(path: str | Path, *, har: Dict[str, Any] | None = None) -> Dict[str, Dict[str, Any]]:
     """Gateway id -> {name, charge_pct} from GET /api/v1/payment/gateway responses.
 
     Every rail carries a customer-facing convenience charge (0.5%-5%); the judge
     nets each coupon against its cheapest eligible gateway.
     """
-    har = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    if har is None:
+        har = _load_har(path)
     gateways: Dict[str, Dict[str, Any]] = {}
     for e in har.get("log", {}).get("entries", []):
         if "/api/v1/payment/gateway" not in e.get("request", {}).get("url", ""):
@@ -460,14 +470,15 @@ def _details_row(resp: Dict[str, Any],
     return row
 
 
-def parse_details_discounts(path: str | Path) -> List[Dict[str, Any]]:
+def parse_details_discounts(path: str | Path, *, har: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
     """
     Full B2C coupon cell from a ShareTrip booking-flow HAR. Each
     GET/POST /api/v2/flight/search/details response (one per selected flight)
     yields one airline's judged cell. Capture one booking view per airline per
     market (domestic and international carry separate coupon sets).
     """
-    har = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    if har is None:
+        har = _load_har(path)
     entries = har.get("log", {}).get("entries", [])
 
     # First pass: the payment-gateway catalog (fees), wherever it sits in the HAR.
