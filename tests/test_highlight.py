@@ -1,8 +1,8 @@
 """Tests for discount_engine.highlight — the single source of truth for grid coloring.
 
-Semantics locked in: rank per airline WITHIN each B2B/B2C group by the leading COMMON
-rate (text coupon cells included); changed-vs-previous wins over highest/second; the
-Best row is the max common rate across ALL channels.
+Semantics: rank per airline WITHIN each B2B/B2C group by the NET common rate (pct minus
+convenience fee; text coupon cells included); changed-vs-previous (gross) wins over
+highest/second; the "Best (net)" row is the best NET universal rate plus a gated card tier.
 """
 import sys
 from pathlib import Path
@@ -90,6 +90,18 @@ def test_best_ranks_by_net_of_fee():
     assert hl["best"]["BS"]["universal"]["net"] == 7.5
     assert hl["flags"][("ShareTrip-B2C", "BS")] == "highest"        # green by NET
     assert hl["flags"][("Firsttrip-B2C", "BS")] == "second"
+
+
+def test_fee_only_change_flags_changed_by_net():
+    """A change that only moves the convenience fee (gross flat, NET moved) must flag
+    'changed' — change detection ranks by NET, consistent with highlight/Best."""
+    st_prev = {"BS": "9(Bkash, 1% fee)", "2A": "8.5(Bkash), 18 (Stellar)"}
+    st_cur = {"BS": "9(Bkash, 3% fee)", "2A": "8.5(Bkash), 18 (Stellar)"}
+    prev = _report({**BASE, "ShareTrip-B2C": st_prev})
+    cur = _report({**BASE, "ShareTrip-B2C": st_cur})
+    hl = compute_highlights(cur, prev_lookup_from_report(prev))["DOM"]
+    assert hl["flags"][("ShareTrip-B2C", "BS")] == "changed"    # net 8 -> 6 though gross stays 9
+    assert hl["flags"][("ShareTrip-B2C", "2A")] != "changed"    # identical both days
 
 
 def test_apply_highlights_embeds_flags_best_and_prev_date():

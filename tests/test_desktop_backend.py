@@ -193,7 +193,6 @@ def test_run_skip_paths_filter(api, monkeypatch):
         return _report()
 
     monkeypatch.setattr(backend_mod, "build_report", fake_build)
-    monkeypatch.setattr(api, "_fetch_previous_payload", lambda before: None)
     result = api.run(skip_paths=[skip])
     assert result["ok"]
     assert seen["bdfare_hars"] == [keep]                       # skipped file excluded

@@ -4,7 +4,7 @@ OTA Discount GRID engine (the "25 June" format).
 Builds the channel x airline discount grid, split DOMESTIC / INTERNATIONAL,
 from the per-channel discount extractors:
 
-  * FirstTrip B2C   -> live  (modules.firsttrip.fetch_b2c_discounts)        single %
+  * FirstTrip B2C   -> live  (fetch_b2c_discounts) + HAR failsafe (parse_b2c_har)  two-tier: common(fee), card coupon(fee)
   * FirstTrip B2B   -> HAR   (modules.firsttrip.parse_b2b_commissions)      agent commission
   * GoZayaan B2C    -> HAR   (modules.gozayaan_har.parse_discounts)         common(payment), special(card)
   * ShareTrip B2C   -> HAR   (modules.sharetrip_har)                        common(bKash), special(card)
@@ -112,16 +112,20 @@ def _collect_firsttrip_b2c_rows(
         common_fee: Optional[float] = None, card_fee: Optional[float] = None,
         ) -> dict[tuple[str, str], str]:
     cells: dict[tuple[str, str], str] = {}
+    best_rank: dict[tuple[str, str], float] = {}
     for (origin, destination, _date), rows in rows_by_route.items():
         rt = _route_type(origin, destination)
         summary = firsttrip.summarize_b2c_discounts(rows)
         for airline, cell in summary.items():
             key = (rt, airline)
             text = _firsttrip_b2c_cell(cell, common_fee, card_fee)
-            # keep the highest common rate seen for this airline/route_type
-            rank = cell.get("common_rate", cell.get("rate", 0))
-            if key not in cells or rank > _existing_rate(cells[key]):
+            # keep the highest common rate seen for this airline/route_type. Rank on the
+            # NUMERIC rate, never by re-parsing the rendered text — a fee-annotated cell
+            # like "12(2% fee)" is not a bare number and would fail to parse back.
+            rank = float(cell.get("common_rate", cell.get("rate", 0)) or 0.0)
+            if key not in cells or rank > best_rank.get(key, -1.0):
                 cells[key] = text
+                best_rank[key] = rank
     return cells
 
 
@@ -129,13 +133,6 @@ def collect_firsttrip_b2c(routes: list[tuple[str, str, Optional[str]]],
                           default_date: Optional[str]) -> dict[tuple[str, str], str]:
     """Fetch + summarize in one call (kept for direct use; build_report shares rows)."""
     return _collect_firsttrip_b2c_rows(_fetch_firsttrip_b2c(routes, default_date))
-
-
-def _existing_rate(text: str) -> float:
-    try:
-        return float(text.split(",")[0].split()[0])
-    except (ValueError, IndexError):
-        return -1.0
 
 
 def collect_gozayaan(har_path: str) -> dict[tuple[str, str], str]:
@@ -627,8 +624,9 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
         if h in amy_rows_by_path else collect_amy(h), "HAR")
 
     if routes or b2c_rows_by_route:
-        # FT B2C convenience fee (payment-step, gateway-dependent) from GetActivePaymentGateway
-        # in the captured FT booking HAR: common = cheapest gateway, card = a card gateway.
+        # FT B2C convenience fee (payment-step, gateway-dependent) from the captured FT
+        # booking HAR — search page's GetActivePaymentGateway OR booking page's
+        # GetPaymentMethodList: common = cheapest gateway, card = cheapest card gateway.
         gws: list[dict[str, Any]] = []
         for h in (firsttrip_b2b_hars or []) + (firsttrip_b2c_hars or []):
             gws += firsttrip.parse_b2c_gateways(h)
@@ -874,7 +872,7 @@ def _render_report_sheet(ws, report: dict[str, Any],
     Layout matches the manual Commission.xlsx colored sheets: OTA names as ROWS,
     airlines as COLUMNS, INTERNATIONAL and DOMESTIC as stacked blocks, each with a
     merged title (date/time + legend), a navy header row, per-airline green/blue/red
-    highlighting within each B2B / B2C group, and the slate "Best (OTA)" summary row.
+    highlighting within each B2B / B2C group, and the slate "Best (net)" summary row.
     Coupon cells show BOTH the common and best-card rates in the cell itself.
     """
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -959,7 +957,7 @@ def _render_report_sheet(ws, report: dict[str, Any],
                 ws.row_dimensions[r].height = 30
             r += 1
 
-        # "Best (OTA)" summary row (slate band): NET, tier-aware — the best rate anyone
+        # "Best (net)" summary row (slate band): NET, tier-aware — the best rate anyone
         # gets, then the best card/loyalty rate on a second line when higher.
         blabel = ws.cell(r, 1, "Best (net)")
         blabel.font, blabel.fill, blabel.alignment, blabel.border = best_font, best_fill, left, border
@@ -1101,20 +1099,26 @@ def _render_detailed_sheet(ws, report: dict[str, Any]) -> None:
         for airline in grid["columns"]:
             first = True
             for ch in channels:
-                tiers = parse_cell_tiers(rows_by_label[ch].get(airline))
+                raw_cell = str(rows_by_label[ch].get(airline) or "").strip()
+                tiers = parse_cell_tiers(raw_cell)
                 if not tiers:
                     continue
                 common = tiers[0]
                 special = max(tiers[1:], key=lambda x: x["net"]) if len(tiers) > 1 else None
                 best_net = max(t["net"] for t in tiers)
+                # base-derived discount %s inherit the main grid's '~' estimate marker
+                # (BDFare/AKIJ estimated base) — never present an estimate as a solid number.
+                is_est = raw_cell.startswith("~")
+                def _pctv(p: float) -> Any:
+                    return f"~{p:g}%" if is_est else p / 100.0
                 vals = [airline if first else "", ch,
-                        common["pct"] / 100.0, common["label"] or "auto",
+                        _pctv(common["pct"]), common["label"] or "auto",
                         (common["fee_pct"] / 100.0) if common["fee_pct"] else "",
-                        (special["pct"] / 100.0) if special else "",
+                        _pctv(special["pct"]) if special else "",
                         special["label"] if special else "",
                         (special["fee_pct"] / 100.0) if special and special["fee_pct"] else "",
                         "capped" if (special and special["capped"]) else "",
-                        best_net / 100.0]
+                        _pctv(best_net)]
                 for ci, v in enumerate(vals, start=1):
                     cell = ws.cell(r, ci, v if v != "" else None)
                     cell.font = label_font if ci == 1 else data_font

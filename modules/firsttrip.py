@@ -446,17 +446,33 @@ def parse_b2c_har(har_path: str) -> List[Dict[str, Any]]:
     return _b2c_rows_from_offers(offers)
 
 
+# FirstTrip coupon-code cores that denote a CARD / loyalty special (not a universal promo).
+_FT_CARD_LABELS = {"EBL": "EBL", "CITY": "City Bank", "DBBL": "DBBL", "BRAC": "BRAC",
+                   "GPSTAR": "GPStar", "GP": "GPStar", "SCB": "SCB", "MTB": "MTB"}
+
+
+def _ft_coupon_core(code: Optional[str]) -> str:
+    """Bare brand core of a FirstTrip coupon code (FTEBLDOM07 -> 'EBL', FTCITYDOM -> 'CITY')."""
+    if not code:
+        return ""
+    core = re.sub(r"^FT", "", str(code).upper())
+    core = re.sub(r"(DOM|INT|INTL|OW|RT).*$", "", core)
+    return re.sub(r"\d+$", "", core).strip()
+
+
 def _ft_coupon_label(code: Optional[str]) -> str:
     """Readable card/offer label from a FirstTrip coupon code, e.g.
     FTEBLDOM07 -> 'EBL', FTCITYDOM -> 'City'. Falls back to the raw code."""
     if not code:
         return ""
-    core = re.sub(r"^FT", "", str(code).upper())
-    core = re.sub(r"(DOM|INT|INTL|OW|RT).*$", "", core)
-    core = re.sub(r"\d+$", "", core).strip()
-    known = {"EBL": "EBL", "CITY": "City Bank", "DBBL": "DBBL", "BRAC": "BRAC",
-             "GPSTAR": "GPStar", "GP": "GPStar", "SCB": "SCB", "MTB": "MTB"}
-    return known.get(core, core or str(code))
+    core = _ft_coupon_core(code)
+    return _FT_CARD_LABELS.get(core, core or str(code))
+
+
+def _is_ft_card_coupon(code: Optional[str]) -> bool:
+    """True when the coupon is a recognized card/loyalty special (EBL, City, GPStar, ...),
+    i.e. NOT a discount everyone gets."""
+    return _ft_coupon_core(code) in _FT_CARD_LABELS
 
 
 def summarize_b2c_discounts(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -473,7 +489,8 @@ def summarize_b2c_discounts(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
         by_air.setdefault(r["airline"], []).append(r)
 
     def best_rate(r: Dict[str, Any]) -> float:
-        return max(r["headline_rate"], r.get("dynamic_rate") or 0.0)
+        return max(r["headline_rate"], r.get("dynamic_rate") or 0.0,
+                   r.get("special_rate") or 0.0)
 
     out: Dict[str, Dict[str, Any]] = {}
     for airline, items in by_air.items():
@@ -482,17 +499,29 @@ def summarize_b2c_discounts(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
         coupon_code = best["coupon_code"]
         dynamic_rate = best.get("dynamic_rate") or 0.0
         dynamic_code = best.get("dynamic_code")
+        # the offer's dedicated card-special slot (specialCoupon*), carried separately
+        slot_rate = best.get("special_rate") or 0.0
+        slot_code = best.get("special_code")
 
-        # common = the general (dynamic) discount; if there's no dynamic slot the
-        # coupon itself is the common one.
+        # common = the general discount ANYONE gets; special = a card/loyalty coupon.
         if dynamic_rate > 0:
             common_rate, common_code = dynamic_rate, dynamic_code
-            # the coupon is a card/loyalty special only when it beats the common rate
+            # the coupon is a special only when it beats the common (dynamic) rate
             special_rate = coupon_rate if coupon_rate > dynamic_rate else 0.0
             special_code = coupon_code if special_rate else None
+        elif _is_ft_card_coupon(coupon_code):
+            # a card coupon with NO general discount that day: anyone WITHOUT the card
+            # gets nothing, so the coupon is the SPECIAL tier — never the universal rate.
+            common_rate, common_code = 0.0, None
+            special_rate, special_code = coupon_rate, coupon_code
         else:
+            # a general (non-card) promo coupon is the common rate everyone gets
             common_rate, common_code = coupon_rate, coupon_code
             special_rate, special_code = 0.0, None
+
+        # fold in the offer's explicit special-coupon slot when it beats what we derived
+        if slot_rate > max(common_rate, special_rate):
+            special_rate, special_code = slot_rate, slot_code
 
         out[airline] = {
             "rate": max(common_rate, special_rate),   # backward-compat ranking
@@ -513,11 +542,15 @@ def summarize_b2c_discounts(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
 # FirstTrip adds a convenience fee at checkout that is NOT in the search response — it comes
 # from GetActivePaymentGateway (per-gateway chargePercentage, e.g. Nagad 1.0 / Bkash 1.5 /
 # cards ~2). Like the ShareTrip gateway fee, we annotate the cheapest eligible charge.
+# Two shapes carry the FT convenience fee: the search page's GetActivePaymentGateway
+# ({name, chargePercentage}) and the booking/payment page's GetPaymentMethodList
+# ({name, convenienceChargeRate}). We read whichever the captured HAR contains.
 _GATEWAY_ENDPOINT = "GetActivePaymentGateway"
+_PAYMENT_METHODS_ENDPOINT = "GetPaymentMethodList"
 
 
 _CARD_HINTS = ("visa", "master", "amex", "card", "ebl", "city", "brac", "dbbl",
-               "scb", "standard chartered", "mtb", "bank", "credit", "debit")
+               "scb", "standard chartered", "mtb", "ucb", "bank", "credit", "debit")
 
 
 def _gateways(node: Any, acc: List[Dict[str, Any]]) -> None:
@@ -536,6 +569,23 @@ def _gateways(node: Any, acc: List[Dict[str, Any]]) -> None:
             _gateways(v, acc)
 
 
+def _payment_methods(data: Any, acc: List[Dict[str, Any]]) -> None:
+    """{name, convenienceChargeRate} from a GetPaymentMethodList payload — the
+    customer-facing convenience fee % (e.g. Nagad 1.2, bKash 1.65, Visa/EBL 1.96,
+    AMEX 2.91). Falls back to gatewayChargeRate if the convenience rate is absent."""
+    items = data.get("data") if isinstance(data, dict) else data
+    for m in items or []:
+        if not isinstance(m, dict) or "convenienceChargeRate" not in m and "gatewayChargeRate" not in m:
+            continue
+        rate = m.get("convenienceChargeRate")
+        if rate is None:
+            rate = m.get("gatewayChargeRate")
+        try:
+            acc.append({"name": str(m.get("name") or ""), "charge": float(rate or 0)})
+        except (TypeError, ValueError):
+            pass
+
+
 def parse_b2c_gateways(har_path: str) -> List[Dict[str, Any]]:
     """All payment gateways ({name, charge}) from a FirstTrip booking HAR."""
     try:
@@ -544,13 +594,17 @@ def parse_b2c_gateways(har_path: str) -> List[Dict[str, Any]]:
         return []
     gws: List[Dict[str, Any]] = []
     for e in har.get("log", {}).get("entries", []):
-        if _GATEWAY_ENDPOINT not in e.get("request", {}).get("url", ""):
+        url = e.get("request", {}).get("url", "")
+        if _GATEWAY_ENDPOINT not in url and _PAYMENT_METHODS_ENDPOINT not in url:
             continue
         try:
             data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
         except json.JSONDecodeError:
             continue
-        _gateways(data, gws)
+        if _GATEWAY_ENDPOINT in url:
+            _gateways(data, gws)
+        else:
+            _payment_methods(data, gws)
     return gws
 
 

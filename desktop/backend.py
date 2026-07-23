@@ -82,7 +82,7 @@ class DesktopApi:
         self._outbox = Outbox(config_dir() / "outbox")
         self._window = None          # attached by app.py
         self._report: Optional[dict[str, Any]] = None       # raw (for sync/export)
-        self._prev_payload: Optional[dict[str, Any]] = None  # backend prev (red diff)
+        self._prev_payload: Optional[dict[str, Any]] = None  # this machine's last run (red-diff baseline)
         self._busy = False
         self._status = ""
         # Optional local live-search extensions (absent on standard installs -> HAR-only).
@@ -676,33 +676,6 @@ class DesktopApi:
             p.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
         except OSError:
             pass
-
-    def _fetch_previous_payload(self, before: date) -> Optional[dict[str, Any]]:
-        """Backend-stored report strictly before `before` (kept for reference; the run
-        diff now uses the LOCAL previous report). Offline/unauthed returns None."""
-        token = self._token()
-        if not token:
-            return None
-        try:
-            history = requests.get(
-                f"{self.api_base}/api/v1/discount-reports/history?limit=30",
-                headers={"X-User-Session": token}, timeout=REQUEST_TIMEOUT)
-            if history.status_code != 200:
-                return None
-            prev_date = next(
-                (i["report_date"] for i in history.json().get("items", [])
-                 if i.get("report_date") and date.fromisoformat(i["report_date"]) < before),
-                None)
-            if not prev_date:
-                return None
-            stored = requests.get(
-                f"{self.api_base}/api/v1/discount-reports/by-date?date={prev_date}",
-                headers={"X-User-Session": token}, timeout=REQUEST_TIMEOUT)
-            if stored.status_code != 200:
-                return None
-            return stored.json().get("report")
-        except (requests.RequestException, ValueError):
-            return None
 
     def run(self, skip_paths: Optional[list[str]] = None) -> dict[str, Any]:
         if self._busy:

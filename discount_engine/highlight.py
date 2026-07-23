@@ -1,17 +1,18 @@
 """Highlight computation for the discount grid — the single source of truth.
 
 Both renderers (the xlsx writer and the web viewer) color cells from THESE flags,
-so they can never drift apart. Semantics (locked in 2026-07-02):
+so they can never drift apart. Semantics (net-of-fee refactor, 2026-07):
 
-- Cells rank per airline WITHIN each B2B / B2C group by the leading COMMON rate —
-  a plain cell ("12") by its number, a coupon TEXT cell ("9(Bkash), 18 (EBL)") by
-  its leading common number (9), so text cells participate fully.
-- "changed" (differs from the previous report's common rate) takes precedence,
-  then "highest" (green), then "second" (blue).
-- The "Best (OTA)" summary row shows, per airline, the top COMMON rate across ALL
-  channels (B2B + B2C) and the winning channel.
+- Cells rank per airline WITHIN each B2B / B2C group by the NET common rate —
+  the common tier's pct minus its convenience fee (parse_cell_tiers()[0]["net"]).
+  A plain cell ("12") nets 12; a coupon TEXT cell ("9(Bkash, 2% fee), 18 (EBL)")
+  nets 7 on its common tier, so text cells participate fully.
+- "changed" (differs from the previous report's NET common rate) takes precedence,
+  then "highest" (green), then "second" (blue) — all by NET, so a fee-only move flags too.
+- The "Best (net)" summary row shows, per airline: `universal` = the best NET rate
+  anyone gets (common tiers), plus a `gated` tier = the best NET card/loyalty special.
 
-All rates here are in PERCENT units (12 == 12%).
+All rates here are in PERCENT units (12 == 12%); net = pct - convenience-fee %.
 """
 
 from __future__ import annotations
@@ -88,16 +89,19 @@ def parse_cell_tiers(raw: Any) -> list[dict[str, Any]]:
 
 def prev_lookup_from_report(prev_report: Optional[dict[str, Any]],
                             ) -> dict[tuple[str, str, str], float]:
-    """{(route_type, ota_label, airline): common rate %} from a stored report dict."""
+    """{(route_type, ota_label, airline): NET common rate %} from a stored report dict.
+    NET (common pct - fee) so change detection matches how ranking/Best rank cells — a
+    fee-only move (gross flat, net changed) still counts as a change. The stored cell text
+    keeps the fee annotation, so prev net reconstructs with no schema change."""
     out: dict[tuple[str, str, str], float] = {}
     for rt, grid in (prev_report or {}).get("grids", {}).items():
         for row in grid.get("rows", []):
             if row.get("kind") == "sep":
                 continue
             for airline, raw in (row.get("cells") or {}).items():
-                n = leading_number(raw)
-                if n is not None:
-                    out[(rt, row["label"], airline)] = n
+                tiers = parse_cell_tiers(raw)
+                if tiers:
+                    out[(rt, row["label"], airline)] = tiers[0]["net"]
     return out
 
 
@@ -105,16 +109,17 @@ def compute_highlights(report: dict[str, Any],
                        prev_lookup: Optional[dict[tuple[str, str, str], float]] = None,
                        ) -> dict[str, dict[str, Any]]:
     """Per route_type: {"flags": {(label, airline): changed|highest|second},
-    "best": {airline: {pct, channel, short, display}}}."""
+    "best": {airline: {pct, channel, short, display, universal, gated}}}. `universal` is
+    the anyone-gets tier dict and `gated` is the best card/loyalty tier dict (or None);
+    pct/channel/short/display mirror `universal` for backward compatibility."""
     prev_lookup = prev_lookup or {}
     out: dict[str, dict[str, Any]] = {}
     for rt, grid in report.get("grids", {}).items():
         cols = grid.get("columns", [])
         rows = [r for r in grid.get("rows", []) if r.get("kind") != "sep"]
 
-        # Per (label, airline): gross common (for change detection vs prev), NET common
-        # (pct - fee, the real value used for ranking), and the parsed tiers.
-        gross: dict[tuple[str, str], float] = {}
+        # Per (label, airline): NET common (pct - fee, the real value used for ranking AND
+        # change detection) and the parsed tiers.
         net_common: dict[tuple[str, str], float] = {}
         tiers_by: dict[tuple[str, str], list] = {}
         group_labels: dict[str, list[str]] = {}
@@ -125,11 +130,10 @@ def compute_highlights(report: dict[str, Any],
                 if not tiers:
                     continue
                 key = (row["label"], airline)
-                gross[key] = tiers[0]["pct"]
                 net_common[key] = tiers[0]["net"]
                 tiers_by[key] = tiers
 
-        # highest/second rank by NET common; "changed" (vs prev gross) still wins.
+        # highest/second rank by NET common; "changed" (net vs prev net) still wins.
         flags: dict[tuple[str, str], str] = {}
         for labels in group_labels.values():
             for airline in cols:
@@ -142,8 +146,8 @@ def compute_highlights(report: dict[str, Any],
                 second = ranked[1] if len(ranked) > 1 else None
                 for lab, v in present:
                     prev = prev_lookup.get((rt, lab, airline))
-                    if prev is not None and abs(prev - gross[(lab, airline)]) > 1e-6:
-                        flags[(lab, airline)] = "changed"       # change wins
+                    if prev is not None and abs(prev - net_common[(lab, airline)]) > 1e-6:
+                        flags[(lab, airline)] = "changed"       # change wins (net vs net)
                     elif v == hi:
                         flags[(lab, airline)] = "highest"
                     elif second is not None and v == second:
@@ -171,6 +175,12 @@ def compute_highlights(report: dict[str, Any],
                          "display": f"{un[0]:g}% net · {un[2]}"}
             gated_best = None
             if gated:
+                # KNOWN LIMITATION (deferred): a CAPPED tier ranks by its nominal net here,
+                # so a high-% capped coupon can outrank a lower-% uncapped one whose effective
+                # saving on a real fare is larger. The cap AMOUNT isn't carried into the cell,
+                # so we can't compute the true effective net at this layer — the display flags
+                # ", capped" so the operator can judge. Proper fix = plumb an eff_net (cap-aware,
+                # from grid's min(pct*base, maxDiscount)) through parse_cell_tiers, then rank on it.
                 gb = max(gated, key=lambda x: x[0])
                 lbl = f", {gb[4]}" if gb[4] else ""
                 cap = ", capped" if gb[5] else ""

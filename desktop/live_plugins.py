@@ -20,10 +20,36 @@ A plugin is a ``.py`` that defines::
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List
+
+
+def _accepts_on_route(fn: Callable) -> bool:
+    """True if ``fn`` takes an ``on_route`` parameter or ``**kwargs`` — so progress
+    callbacks can be passed. Detected from the signature, NOT by catching TypeError
+    (which would also swallow real TypeErrors raised inside the fetch)."""
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.name == "on_route" or p.kind == inspect.Parameter.VAR_KEYWORD
+               for p in params)
+
+
+def _prune_stale_live_hars(har_dir: Path, channel: str, keep: Path) -> None:
+    """Remove this channel's OTHER (older-dated) live HARs so auto_detect won't merge a
+    stale capture with the fresh one just written (which would take the best discount
+    across expired promotions). Only pruned AFTER a successful write, so a failed live
+    run still falls back to the last good capture."""
+    for stale in har_dir.glob(f"{channel}_live_*.har"):
+        try:
+            if stale.resolve() != keep.resolve():
+                stale.unlink()
+        except OSError:
+            pass
 
 
 def _plugin_dirs(config_dir: Path) -> List[Path]:
@@ -86,20 +112,16 @@ def write_live_hars(plugins: Dict[str, Dict[str, Any]], live_routes: Dict[str, s
         try:
             def _on_route(route, n, reason, _c=channel):
                 log(f"  {_c} live {route}: {n}" + (f" ({reason})" if reason else ""))
-            n = write_har(routes, date, str(out), on_route=_on_route)
+            if _accepts_on_route(write_har):
+                n = write_har(routes, date, str(out), on_route=_on_route)
+            else:
+                n = write_har(routes, date, str(out))
             if n:
                 written.append(str(out))
+                _prune_stale_live_hars(har_dir, channel, keep=out)
                 log(f"  {channel} live: wrote {out.name} ({n} entries)")
             else:
                 log(f"  {channel} live: no data (key rotated? see the plugin's --recover-key)")
-        except TypeError:
-            # plugin write_har without on_route kwarg
-            try:
-                n = write_har(routes, date, str(out))
-                if n:
-                    written.append(str(out))
-            except Exception as exc:  # noqa: BLE001
-                log(f"  {channel} live FAILED: {exc}")
         except Exception as exc:  # noqa: BLE001
             log(f"  {channel} live FAILED: {exc}")
     return written

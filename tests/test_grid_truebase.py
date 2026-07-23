@@ -102,6 +102,54 @@ def test_firsttrip_b2c_two_tier_with_fees():
     assert _collect_firsttrip_b2c_rows(solo, 1.0, 2.0) == {("DOM", "VQ"): "5(1% fee)"}
 
 
+def test_firsttrip_b2c_keeps_highest_rate_across_routes_with_fee():
+    """Regression: with a convenience fee present, the per-airline dedup must still keep
+    the HIGHEST common rate across multiple DOM routes — not whichever route is last.
+    (Before the fix, the fee-annotated cell couldn't be re-parsed and the last route won.)"""
+    from discount_engine.grid import _collect_firsttrip_b2c_rows
+    # BS is 12% on DAC-CGP but only 8% on DAC-CXB (processed LAST). 12% must survive.
+    rows = {
+        ("DAC", "CGP", "d"): [{"airline": "BS", "headline_rate": 12.0, "coupon_code": "FTBSDOM",
+                               "dynamic_rate": 12.0, "dynamic_code": "FTBSDOM",
+                               "realized_pct": 11.0, "coupon_cap_bdt": None}],
+        ("DAC", "CXB", "d"): [{"airline": "BS", "headline_rate": 8.0, "coupon_code": "FTBSDOM",
+                               "dynamic_rate": 8.0, "dynamic_code": "FTBSDOM",
+                               "realized_pct": 7.0, "coupon_cap_bdt": None}],
+    }
+    assert _collect_firsttrip_b2c_rows(rows, 1.0, 2.0) == {("DOM", "BS"): "12(1% fee)"}
+    # and with NO fee (the path that always worked) it also keeps 12
+    assert _collect_firsttrip_b2c_rows(rows) == {("DOM", "BS"): "12"}
+
+
+def test_firsttrip_b2c_card_coupon_without_dynamic_is_special_not_universal():
+    """A card coupon (EBL) with NO general/dynamic discount must render as the card SPECIAL
+    tier, not the universal common rate — anyone without the card gets 0%."""
+    from discount_engine.grid import _collect_firsttrip_b2c_rows
+    card_only = {("DAC", "CGP", "d"): [
+        {"airline": "BS", "headline_rate": 16.0, "coupon_code": "FTEBLDOM07",
+         "dynamic_rate": 0.0, "dynamic_code": None,
+         "realized_pct": 15.0, "coupon_cap_bdt": None}]}
+    assert _collect_firsttrip_b2c_rows(card_only) == {("DOM", "BS"): "0, 16 (EBL)"}
+    # a GENERAL (non-card) promo coupon with no dynamic slot stays the universal common rate
+    promo = {("DAC", "CGP", "d"): [
+        {"airline": "BS", "headline_rate": 12.0, "coupon_code": "FTBSDOM",
+         "dynamic_rate": 0.0, "dynamic_code": None,
+         "realized_pct": 11.0, "coupon_cap_bdt": None}]}
+    assert _collect_firsttrip_b2c_rows(promo) == {("DOM", "BS"): "12"}
+
+
+def test_firsttrip_b2c_reads_dedicated_special_coupon_slot():
+    """A card special carried ONLY in the offer's specialCoupon* fields (not couponCode)
+    must still surface as the special tier (was previously dropped)."""
+    from discount_engine.grid import _collect_firsttrip_b2c_rows
+    rows = {("DAC", "CGP", "d"): [
+        {"airline": "BS", "headline_rate": 14.0, "coupon_code": "FTBSDOM",
+         "dynamic_rate": 0.0, "dynamic_code": None,
+         "special_rate": 16.0, "special_code": "FTEBLDOM07",
+         "realized_pct": 13.0, "coupon_cap_bdt": None}]}
+    assert _collect_firsttrip_b2c_rows(rows) == {("DOM", "BS"): "14, 16 (EBL)"}
+
+
 def test_firsttrip_parse_gateway_fee(tmp_path):
     import json
     from modules import firsttrip
@@ -116,6 +164,26 @@ def test_firsttrip_parse_gateway_fee(tmp_path):
     p.write_text(json.dumps(har), encoding="utf-8")
     assert firsttrip.parse_b2c_gateway_fee(str(p)) == 1.0            # cheapest non-zero
     assert firsttrip.parse_b2c_gateway_fee(str(tmp_path / "none.har")) is None
+
+
+def test_firsttrip_gateway_fee_from_booking_payment_method_list(tmp_path):
+    """A booking/payment-page HAR carries fees under GetPaymentMethodList with
+    convenienceChargeRate (not GetActivePaymentGateway/chargePercentage)."""
+    import json
+    from modules import firsttrip
+    body = json.dumps({"data": [
+        {"name": "Nagad", "gatewayChargeRate": 1.0, "convenienceChargeRate": 1.2},
+        {"name": "bKash", "gatewayChargeRate": 1.5, "convenienceChargeRate": 1.65},
+        {"name": "VISA", "gatewayChargeRate": 1.5, "convenienceChargeRate": 1.96},
+        {"name": "EBL", "gatewayChargeRate": 1.5, "convenienceChargeRate": 1.96},
+        {"name": "AMEX", "gatewayChargeRate": 3.0, "convenienceChargeRate": 2.91}]})
+    har = {"log": {"entries": [
+        {"request": {"url": "https://b2c-api.firsttrip.com/flight/api/v1/GeneralPurpose/GetPaymentMethodList"},
+         "response": {"content": {"text": body}}}]}}
+    p = tmp_path / "ft_booking.har"
+    p.write_text(json.dumps(har), encoding="utf-8")
+    fees = firsttrip.b2c_gateway_fees(firsttrip.parse_b2c_gateways(str(p)))
+    assert fees == {"common": 1.2, "card": 1.96}    # Nagad cheapest; cheapest CARD = Visa/EBL
 
 
 def test_gozayaan_no_surcharge_is_bare(monkeypatch):
