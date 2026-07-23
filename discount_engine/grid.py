@@ -92,22 +92,35 @@ def _fetch_firsttrip_b2c(routes: list[tuple[str, str, Optional[str]]],
     return rows_by_route
 
 
+def _firsttrip_b2c_cell(cell: dict[str, Any], common_fee: Optional[float],
+                        card_fee: Optional[float]) -> str:
+    """Two-tier FT B2C cell like ShareTrip/GoZayaan: the common discount anyone gets
+    (with its convenience fee), then the higher card/loyalty coupon (with the card fee)."""
+    common_rate = cell.get("common_rate", cell.get("rate", 0))
+    common_note = f"({_fmt(common_fee)}% fee)" if (common_fee and common_rate) else ""
+    text = _fmt(common_rate) + common_note
+    special = cell.get("special_rate")
+    if special:
+        label = cell.get("special_label") or cell.get("special_code") or "card"
+        card_note = f", {_fmt(card_fee)}% fee" if card_fee else ""
+        text += f", {_fmt(special)} ({label}{card_note})"
+    return text
+
+
 def _collect_firsttrip_b2c_rows(
         rows_by_route: dict[tuple[str, str, str], list[dict[str, Any]]],
-        fee_pct: Optional[float] = None,
+        common_fee: Optional[float] = None, card_fee: Optional[float] = None,
         ) -> dict[tuple[str, str], str]:
-    # FirstTrip adds a payment-step convenience fee (cheapest gateway charge);
-    # annotate it like the other channels when the gateway catalog was captured.
-    fee_note = f"({_fmt(fee_pct)}% fee)" if fee_pct else ""
     cells: dict[tuple[str, str], str] = {}
     for (origin, destination, _date), rows in rows_by_route.items():
         rt = _route_type(origin, destination)
         summary = firsttrip.summarize_b2c_discounts(rows)
         for airline, cell in summary.items():
             key = (rt, airline)
-            # keep the highest rate seen for this airline/route_type
-            text = _fmt(cell["rate"]) + fee_note
-            if key not in cells or cell["rate"] > _existing_rate(cells[key]):
+            text = _firsttrip_b2c_cell(cell, common_fee, card_fee)
+            # keep the highest common rate seen for this airline/route_type
+            rank = cell.get("common_rate", cell.get("rate", 0))
+            if key not in cells or rank > _existing_rate(cells[key]):
                 cells[key] = text
     return cells
 
@@ -614,14 +627,14 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
         if h in amy_rows_by_path else collect_amy(h), "HAR")
 
     if routes or b2c_rows_by_route:
-        # FT B2C convenience fee (payment-step, gateway-dependent): cheapest gateway
-        # charge from any FirstTrip booking HAR that captured GetActivePaymentGateway.
-        ft_b2c_fee = None
+        # FT B2C convenience fee (payment-step, gateway-dependent) from GetActivePaymentGateway
+        # in the captured FT booking HAR: common = cheapest gateway, card = a card gateway.
+        gws: list[dict[str, Any]] = []
         for h in (firsttrip_b2b_hars or []) + (firsttrip_b2c_hars or []):
-            fee = firsttrip.parse_b2c_gateway_fee(h)
-            if fee is not None and (ft_b2c_fee is None or fee < ft_b2c_fee):
-                ft_b2c_fee = fee
-        channel_cells["Firsttrip-B2C"] = _collect_firsttrip_b2c_rows(b2c_rows_by_route, ft_b2c_fee)
+            gws += firsttrip.parse_b2c_gateways(h)
+        fees = firsttrip.b2c_gateway_fees(gws)
+        channel_cells["Firsttrip-B2C"] = _collect_firsttrip_b2c_rows(
+            b2c_rows_by_route, fees.get("common"), fees.get("card"))
         parts = []
         if routes:
             parts.append(f"live: {len(routes)} route(s)")

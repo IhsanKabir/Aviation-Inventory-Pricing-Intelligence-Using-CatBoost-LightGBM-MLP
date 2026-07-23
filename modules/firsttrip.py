@@ -446,12 +446,27 @@ def parse_b2c_har(har_path: str) -> List[Dict[str, Any]]:
     return _b2c_rows_from_offers(offers)
 
 
+def _ft_coupon_label(code: Optional[str]) -> str:
+    """Readable card/offer label from a FirstTrip coupon code, e.g.
+    FTEBLDOM07 -> 'EBL', FTCITYDOM -> 'City'. Falls back to the raw code."""
+    if not code:
+        return ""
+    core = re.sub(r"^FT", "", str(code).upper())
+    core = re.sub(r"(DOM|INT|INTL|OW|RT).*$", "", core)
+    core = re.sub(r"\d+$", "", core).strip()
+    known = {"EBL": "EBL", "CITY": "City Bank", "DBBL": "DBBL", "BRAC": "BRAC",
+             "GPSTAR": "GPStar", "GP": "GPStar", "SCB": "SCB", "MTB": "MTB"}
+    return known.get(core, core or str(code))
+
+
 def summarize_b2c_discounts(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
-    Collapse FirstTrip B2C coupon rows into one grid cell per airline: the best
-    available rate, which is the auto-applied coupon OR the dynamic-discount slot
-    (carriers without a coupon, e.g. BG/VQ, still get a dynamic rate). This
-    reproduces the manual report (BS/2A=16, BG=8.7, VQ=5).
+    One grid cell per airline, split into TWO tiers like ShareTrip/GoZayaan:
+      * common  = the dynamic discount ANYONE gets (e.g. FTBSDOM 14%)
+      * special = the coupon that beats it but needs a specific card/loyalty
+                  (e.g. FTEBLDOM07 16% = EBL cardholders) — shown with its label
+    Carriers with only one rate (e.g. VQ) get common alone. `rate` (the max) is
+    kept for backward-compatible ranking.
     """
     by_air: Dict[str, List[Dict[str, Any]]] = {}
     for r in rows:
@@ -464,15 +479,30 @@ def summarize_b2c_discounts(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
     for airline, items in by_air.items():
         best = max(items, key=best_rate)
         coupon_rate = best["headline_rate"]
+        coupon_code = best["coupon_code"]
         dynamic_rate = best.get("dynamic_rate") or 0.0
-        if dynamic_rate > coupon_rate:
-            rate, code, source = dynamic_rate, best.get("dynamic_code"), "dynamic"
+        dynamic_code = best.get("dynamic_code")
+
+        # common = the general (dynamic) discount; if there's no dynamic slot the
+        # coupon itself is the common one.
+        if dynamic_rate > 0:
+            common_rate, common_code = dynamic_rate, dynamic_code
+            # the coupon is a card/loyalty special only when it beats the common rate
+            special_rate = coupon_rate if coupon_rate > dynamic_rate else 0.0
+            special_code = coupon_code if special_rate else None
         else:
-            rate, code, source = coupon_rate, best["coupon_code"], "coupon"
+            common_rate, common_code = coupon_rate, coupon_code
+            special_rate, special_code = 0.0, None
+
         out[airline] = {
-            "rate": rate,
-            "code": code,
-            "source": source,                 # "coupon" | "dynamic"
+            "rate": max(common_rate, special_rate),   # backward-compat ranking
+            "code": special_code or common_code,
+            "source": "coupon" if special_rate else "dynamic",
+            "common_rate": common_rate,
+            "common_code": common_code,
+            "special_rate": special_rate or None,
+            "special_code": special_code,
+            "special_label": _ft_coupon_label(special_code),
             "realized_pct": best["realized_pct"],
             "cap_bdt": best["coupon_cap_bdt"],
         }
@@ -486,31 +516,33 @@ def summarize_b2c_discounts(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
 _GATEWAY_ENDPOINT = "GetActivePaymentGateway"
 
 
-def _gateway_charges(node: Any) -> List[float]:
-    """Every chargePercentage found anywhere in a GetActivePaymentGateway payload."""
-    out: List[float] = []
+_CARD_HINTS = ("visa", "master", "amex", "card", "ebl", "city", "brac", "dbbl",
+               "scb", "standard chartered", "mtb", "bank", "credit", "debit")
+
+
+def _gateways(node: Any, acc: List[Dict[str, Any]]) -> None:
+    """Every {name, chargePercentage} found in a GetActivePaymentGateway payload."""
     if isinstance(node, dict):
         if "chargePercentage" in node:
             try:
-                out.append(float(node.get("chargePercentage") or 0))
+                acc.append({"name": str(node.get("name") or node.get("detailsName") or ""),
+                            "charge": float(node.get("chargePercentage") or 0)})
             except (TypeError, ValueError):
                 pass
         for v in node.values():
-            out += _gateway_charges(v)
+            _gateways(v, acc)
     elif isinstance(node, list):
         for v in node:
-            out += _gateway_charges(v)
-    return out
+            _gateways(v, acc)
 
 
-def parse_b2c_gateway_fee(har_path: str) -> Optional[float]:
-    """Cheapest non-zero payment-gateway charge % from a FirstTrip booking HAR
-    (GetActivePaymentGateway). Returns None when the endpoint isn't captured."""
+def parse_b2c_gateways(har_path: str) -> List[Dict[str, Any]]:
+    """All payment gateways ({name, charge}) from a FirstTrip booking HAR."""
     try:
         har = json.loads(Path(har_path).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
-        return None
-    charges: List[float] = []
+        return []
+    gws: List[Dict[str, Any]] = []
     for e in har.get("log", {}).get("entries", []):
         if _GATEWAY_ENDPOINT not in e.get("request", {}).get("url", ""):
             continue
@@ -518,9 +550,26 @@ def parse_b2c_gateway_fee(har_path: str) -> Optional[float]:
             data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
         except json.JSONDecodeError:
             continue
-        charges += _gateway_charges(data)
-    nonzero = [c for c in charges if c > 0]
-    return round(min(nonzero), 2) if nonzero else None
+        _gateways(data, gws)
+    return gws
+
+
+def b2c_gateway_fees(gws: List[Dict[str, Any]]) -> Dict[str, Optional[float]]:
+    """{'common': cheapest wallet/any charge, 'card': cheapest CARD charge} from a
+    gateway list. Card falls back to the dearest non-zero when no card is captured
+    (wallet-only B2B lists), so the special tier still shows a sensible fee."""
+    nonzero = [g for g in gws if g["charge"] > 0]
+    if not nonzero:
+        return {"common": None, "card": None}
+    common = round(min(g["charge"] for g in nonzero), 2)
+    cards = [g for g in nonzero if any(h in g["name"].lower() for h in _CARD_HINTS)]
+    card = round(min(g["charge"] for g in cards), 2) if cards else round(max(g["charge"] for g in nonzero), 2)
+    return {"common": common, "card": card}
+
+
+def parse_b2c_gateway_fee(har_path: str) -> Optional[float]:
+    """Cheapest non-zero gateway charge % from a FirstTrip booking HAR (compat helper)."""
+    return b2c_gateway_fees(parse_b2c_gateways(har_path)).get("common")
 
 
 def _b2b_commission_row(offer: Dict[str, Any]) -> Optional[Dict[str, Any]]:

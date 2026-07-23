@@ -84,13 +84,22 @@ def test_gozayaan_appends_surcharge_fee(monkeypatch):
     assert cells[("DOM", "VQ")] == "7(2.1% fee)"
 
 
-def test_firsttrip_b2c_appends_gateway_fee():
+def test_firsttrip_b2c_two_tier_with_fees():
     from discount_engine.grid import _collect_firsttrip_b2c_rows
+    # dynamic 14% = common (anyone); coupon 16% (FTEBLDOM07) = EBL card special
     rows = {("DAC", "CXB", "d"): [
-        {"airline": "BS", "headline_rate": 16.0, "dynamic_rate": 14.0, "coupon_code": "C",
+        {"airline": "BS", "headline_rate": 16.0, "coupon_code": "FTEBLDOM07",
+         "dynamic_rate": 14.0, "dynamic_code": "FTBSDOM",
          "realized_pct": 13.0, "coupon_cap_bdt": 515}]}
-    assert _collect_firsttrip_b2c_rows(rows) == {("DOM", "BS"): "16"}
-    assert _collect_firsttrip_b2c_rows(rows, 1.0) == {("DOM", "BS"): "16(1% fee)"}
+    assert _collect_firsttrip_b2c_rows(rows) == {("DOM", "BS"): "14, 16 (EBL)"}
+    assert _collect_firsttrip_b2c_rows(rows, 1.0, 2.0) == {
+        ("DOM", "BS"): "14(1% fee), 16 (EBL, 2% fee)"}
+    # single-tier carrier (only common, no higher coupon) shows one rate
+    solo = {("DAC", "CXB", "d"): [
+        {"airline": "VQ", "headline_rate": 5.0, "coupon_code": "FTVQ",
+         "dynamic_rate": 0.0, "dynamic_code": None,
+         "realized_pct": 4.0, "coupon_cap_bdt": None}]}
+    assert _collect_firsttrip_b2c_rows(solo, 1.0, 2.0) == {("DOM", "VQ"): "5(1% fee)"}
 
 
 def test_firsttrip_parse_gateway_fee(tmp_path):
