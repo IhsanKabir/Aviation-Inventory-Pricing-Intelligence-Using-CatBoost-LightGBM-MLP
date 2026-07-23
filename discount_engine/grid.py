@@ -839,6 +839,22 @@ def _read_prev_grid(ws) -> dict[tuple[str, str, str], float]:
     return grid
 
 
+def _write_grid_value(cell, raw: str, center) -> bool:
+    """Set a grid cell's value with the shared formatting (plain rate -> 0.00% number;
+    coupon text -> %-suffixed string). Returns True for a (taller) coupon cell."""
+    raw = str(raw or "").strip()
+    num = _leading_number(raw)
+    if num is None:
+        cell.value = raw or None
+        return False
+    if _fmt(num) == raw:
+        cell.value, cell.number_format = num / 100.0, "0.00%"
+        return False
+    cell.value = re.sub(r"(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(?![\d.%A-Za-z])", r"\1%", raw)
+    cell.alignment = center
+    return True
+
+
 def _render_report_sheet(ws, report: dict[str, Any],
                          prev_lookup: dict[tuple[str, str, str], float]) -> None:
     """Render the colored grid into a worksheet, coloring from compute_highlights().
@@ -922,19 +938,7 @@ def _render_report_sheet(ws, report: dict[str, Any],
                 raw = str(cells.get(airline, "") or "").strip()
                 cell = ws.cell(r, ci)
                 cell.font, cell.alignment, cell.border = data_font, right, border
-                num = _leading_number(raw)
-                if num is None:
-                    cell.value = raw or None
-                elif _fmt(num) == raw:
-                    # plain single-rate cell -> number with % format
-                    cell.value, cell.number_format = num / 100.0, "0.00%"
-                else:
-                    # coupon cell (common + special) -> show BOTH %s in the cell.
-                    # Suffix % only to standalone numbers, NOT ones already ending in %
-                    # (fees like "2% fee") nor digits inside a code -> avoids "2%%".
-                    cell.value = re.sub(
-                        r"(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(?![\d.%A-Za-z])", r"\1%", raw)
-                    cell.alignment = center   # wrap the longer coupon text
+                if _write_grid_value(cell, raw, center):
                     has_coupon = True
                 style = flag_style.get(flags.get((label, airline)))
                 if style:
@@ -958,6 +962,88 @@ def _render_report_sheet(ws, report: dict[str, Any],
     for ci in range(2, max_cols + 1):
         ws.column_dimensions[get_column_letter(ci)].width = 12
     ws.freeze_panes = "B1"   # keep OTA labels visible when scrolling across airlines
+
+
+def _render_transposed_sheet(ws, report: dict[str, Any],
+                             prev_lookup: dict[tuple[str, str, str], float]) -> None:
+    """Rotated layout: AIRLINES down the rows, OTA channels across the columns, with the
+    winning OTA as the rightmost 'Best OTA' column. Same data as the main sheet, flipped."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    hl = compute_highlights(report, prev_lookup)
+    cal = "Calibri"
+    thin = Side(style="thin", color="BFBFBF")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    hdr_fill = PatternFill("solid", fgColor=HDR_BG)
+    best_fill = PatternFill("solid", fgColor=BEST_BG)
+    title_font = Font(name=cal, bold=True, size=11)
+    head_font = Font(name=cal, bold=True, size=11, color=HDR_TX)
+    label_font = Font(name=cal, bold=True, size=11)
+    data_font = Font(name=cal, size=11)
+    best_font = Font(name=cal, bold=True, size=11, color=BEST_TX)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="center")
+    win_fill = PatternFill("solid", fgColor=HL_GREEN)
+    win_font = Font(name=cal, bold=True, size=11, color=HL_GREEN_TX)
+    changed_fill = PatternFill("solid", fgColor=HL_RED)
+    changed_font = Font(name=cal, size=11, color=HL_RED_TX)
+
+    date_label, time_label = report["report_date"], f"{report['report_time']}hrs"
+    max_cols = 1
+    r = 1
+    for rt, name in (("INTL", "INTERNATIONAL"), ("DOM", "DOMESTIC")):
+        grid = report.get("grids", {}).get(rt)
+        if not grid or not grid["columns"]:
+            continue
+        airlines = grid["columns"]
+        rows_by_label = {row["label"]: row.get("cells", {}) for row in grid["rows"]}
+        channels = [lbl for lbl, kind in ROW_ORDER if kind != "sep" and lbl in rows_by_label]
+        flags, best = hl[rt]["flags"], hl[rt]["best"]
+        ncol = 2 + len(channels)          # Airline + channels + Best OTA
+        max_cols = max(max_cols, ncol)
+
+        tcell = ws.cell(r, 1, f"{date_label} ({name})/ {time_label}\n{LEGEND}")
+        tcell.font, tcell.alignment = title_font, center
+        for ci in range(1, ncol + 1):
+            ws.cell(r, ci).border = border
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=ncol)
+        ws.row_dimensions[r].height = 30
+        r += 1
+
+        for ci, head in enumerate(["Airline", *channels, "Best OTA"], start=1):
+            c = ws.cell(r, ci, head)
+            c.font, c.fill, c.alignment, c.border = head_font, hdr_fill, center, border
+        r += 1
+
+        for airline in airlines:
+            wc = ws.cell(r, 1, airline)
+            wc.font, wc.alignment, wc.border = label_font, center, border
+            win_channel = (best.get(airline) or {}).get("channel")
+            has_coupon = False
+            for ci, ch in enumerate(channels, start=2):
+                raw = str(rows_by_label[ch].get(airline, "") or "").strip()
+                cell = ws.cell(r, ci)
+                cell.font, cell.alignment, cell.border = data_font, center, border
+                if _write_grid_value(cell, raw, center):
+                    has_coupon = True
+                if flags.get((ch, airline)) == "changed":
+                    cell.fill, cell.font = changed_fill, changed_font
+                elif ch == win_channel and raw:
+                    cell.fill, cell.font = win_fill, win_font
+            bcell = ws.cell(r, 2 + len(channels))
+            bcell.font, bcell.fill, bcell.alignment, bcell.border = best_font, best_fill, center, border
+            bcell.value = (best.get(airline) or {}).get("display")
+            if has_coupon:
+                ws.row_dimensions[r].height = 28
+            r += 1
+        r += 2
+
+    ws.column_dimensions["A"].width = 10
+    for ci in range(2, max_cols):
+        ws.column_dimensions[get_column_letter(ci)].width = 22
+    ws.column_dimensions[get_column_letter(max_cols)].width = 16   # Best OTA
+    ws.freeze_panes = "B1"
 
 
 def _save_workbook(wb, xlsx_path: Path) -> Path:
@@ -1026,8 +1112,11 @@ def write_single_sheet_xlsx(report: dict[str, Any],
     xlsx_path.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
     wb.remove(wb.active)
-    ws = wb.create_sheet(title=_sheet_name(report))
-    _render_report_sheet(ws, report, prev_lookup_from_report(prev_report))
+    prev_lookup = prev_lookup_from_report(prev_report)
+    # Two layouts in one download: OTA-rows (default) + the rotated airline-rows view.
+    _render_report_sheet(wb.create_sheet(title=_sheet_name(report)), report, prev_lookup)
+    _render_transposed_sheet(
+        wb.create_sheet(title=f"{_sheet_name(report)} (by airline)"), report, prev_lookup)
     return _save_workbook(wb, xlsx_path)
 
 
