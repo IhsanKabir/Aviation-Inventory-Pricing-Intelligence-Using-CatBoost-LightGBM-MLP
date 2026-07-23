@@ -291,13 +291,20 @@ def parse_agent_har(path: str | Path) -> List[Dict[str, Any]]:
     entries = har.get("log", {}).get("entries", [])
     rows: List[Dict[str, Any]] = []
     seen: set = set()
+    saw_flightfind = False
+    saw_getcheap = False
     for e in entries:
         try:
             body = json.loads((e.get("request", {}).get("postData") or {}).get("text", "") or "{}")
         except json.JSONDecodeError:
             continue
-        if not isinstance(body, dict) or body.get("CMND") != "_FLIGHTFIND_":
+        if not isinstance(body, dict):
             continue
+        cmnd = body.get("CMND")
+        saw_getcheap = saw_getcheap or cmnd == "_GETCHEAP_"
+        if cmnd != "_FLIGHTFIND_":
+            continue
+        saw_flightfind = True
         try:
             data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
         except json.JSONDecodeError:
@@ -314,6 +321,10 @@ def parse_agent_har(path: str | Path) -> List[Dict[str, Any]]:
                 continue
             seen.add(sig)
             rows.append(row)
+    if not rows and saw_getcheap and not saw_flightfind:
+        print(f"  ! Amy HAR {Path(path).name}: only the 'Cheapest Fares' view was captured "
+              "(_GETCHEAP_ has no fare breakdown). Do a full flight SEARCH (route + date -> "
+              "Search, wait for the results list) and re-export for domestic commissions.")
     return rows
 
 
