@@ -170,7 +170,7 @@ def test_read_colors_against_stored_previous(client, monkeypatch):
     row = body["report"]["grids"]["DOM"]["rows"][0]
     assert row["highlights"]["BS"] == "changed"           # 11 -> 12: server-computed red
     assert body["prev_report_date"] == "2026-07-01"
-    assert body["report"]["grids"]["DOM"]["best"]["BS"]["display"] == "12% · USBA"
+    assert body["report"]["grids"]["DOM"]["best"]["BS"]["display"] == "12% net · USBA"
 
 
 def test_sync_consumes_a_use_and_reports_remaining(client, monkeypatch):
