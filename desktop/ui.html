@@ -518,7 +518,7 @@ function renderReport(report, prevAvailable) {
   document.getElementById("result-card").style.display = "";
   document.getElementById("report-meta").textContent =
     `${report.report_date} / ${report.report_time}hrs` +
-    (prevAvailable ? " · changes vs previous synced report" : " · no previous report (no change diff)");
+    (prevAvailable ? ` · changes vs your previous capture${report.prev_report_date ? ` (${report.prev_report_date})` : ""}` : " · first capture on this machine (no change diff)");
   document.getElementById("banners").innerHTML = "";
   if (report.normalized === false) {
     addBanner("warn", "NOT NORMALIZED: no exact-base source (FirstTrip B2B HAR / live route) — BDFare & AKIJ are on their own base. Capture a FirstTrip B2B HAR to fix.");

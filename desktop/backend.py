@@ -657,9 +657,29 @@ class DesktopApi:
         return {"ok": True, "moved": moved, "dest": str(dest)}
 
     # --------------------------------------------------------------------- run
+    def _local_prev_path(self) -> Path:
+        return config_dir() / "last_report.json"
+
+    def _load_local_prev(self) -> Optional[dict[str, Any]]:
+        """This machine's OWN previous run — the red-diff source. Change detection is
+        vs YOUR last capture on THIS machine, not the team's last synced report."""
+        try:
+            return json.loads(self._local_prev_path().read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def _save_local_prev(self, report: dict[str, Any]) -> None:
+        """Remember this run as the baseline for the next run's change diff."""
+        try:
+            p = self._local_prev_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+
     def _fetch_previous_payload(self, before: date) -> Optional[dict[str, Any]]:
-        """Backend-stored report strictly before `before` — the red-diff source.
-        Offline/unauthed is fine: the grid renders without 'changed' flags."""
+        """Backend-stored report strictly before `before` (kept for reference; the run
+        diff now uses the LOCAL previous report). Offline/unauthed returns None."""
         token = self._token()
         if not token:
             return None
@@ -745,11 +765,15 @@ class DesktopApi:
                     firsttrip_b2c_hars=hars.get("firsttrip_b2c"),
                     use_true_base=True,
                 )
-            self._status = "Fetching previous report for change detection…"
-            run_date = datetime.strptime(report["report_date"], "%d/%m/%Y").date()
-            self._prev_payload = self._fetch_previous_payload(run_date)
+            # Change detection is vs THIS machine's previous run (local), not the
+            # team's last synced report — each analyst sees what changed since they
+            # last captured. Load the prior baseline, diff, then save this run as the
+            # new baseline.
+            self._status = "Comparing to your previous capture…"
+            self._prev_payload = self._load_local_prev()
             colored = apply_highlights(report, self._prev_payload)
             self._report = report
+            self._save_local_prev(report)
             self._status = "Done."
             self._log_usage("run_report",
                             count=sum(len(v) for v in hars.values()),
