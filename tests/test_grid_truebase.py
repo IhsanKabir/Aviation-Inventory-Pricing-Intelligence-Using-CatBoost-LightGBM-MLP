@@ -79,8 +79,34 @@ def test_gozayaan_appends_surcharge_fee(monkeypatch):
     monkeypatch.setattr(g.gozayaan_har, "summarize_discounts", lambda rows: _gz_summary())
     monkeypatch.setattr(g.gozayaan_har, "parse_surcharge", lambda p, har=None: {"DOM": 2.1, "INTL": 2.1})
     cells = g.collect_gozayaan("x.har")
-    assert cells[("DOM", "BS")] == "7(2.1% fee), 10 (Dhaka Bank Master)"
+    # the booking-wide surcharge applies to the card special too
+    assert cells[("DOM", "BS")] == "7(2.1% fee), 10 (Dhaka Bank Master, 2.1% fee)"
     assert cells[("DOM", "VQ")] == "7(2.1% fee)"
+
+
+def test_firsttrip_b2c_appends_gateway_fee():
+    from discount_engine.grid import _collect_firsttrip_b2c_rows
+    rows = {("DAC", "CXB", "d"): [
+        {"airline": "BS", "headline_rate": 16.0, "dynamic_rate": 14.0, "coupon_code": "C",
+         "realized_pct": 13.0, "coupon_cap_bdt": 515}]}
+    assert _collect_firsttrip_b2c_rows(rows) == {("DOM", "BS"): "16"}
+    assert _collect_firsttrip_b2c_rows(rows, 1.0) == {("DOM", "BS"): "16(1% fee)"}
+
+
+def test_firsttrip_parse_gateway_fee(tmp_path):
+    import json
+    from modules import firsttrip
+    body = json.dumps({"data": {"data": [
+        {"name": "Bkash", "chargePercentage": 1.5},
+        {"name": "Nagad", "chargePercentage": 1.0},
+        {"name": "Free", "chargePercentage": 0}]}})
+    har = {"log": {"entries": [
+        {"request": {"url": "https://api.firsttrip.com/api/PaymentGateway/GetActivePaymentGateway/"},
+         "response": {"content": {"text": body}}}]}}
+    p = tmp_path / "ft.har"
+    p.write_text(json.dumps(har), encoding="utf-8")
+    assert firsttrip.parse_b2c_gateway_fee(str(p)) == 1.0            # cheapest non-zero
+    assert firsttrip.parse_b2c_gateway_fee(str(tmp_path / "none.har")) is None
 
 
 def test_gozayaan_no_surcharge_is_bare(monkeypatch):

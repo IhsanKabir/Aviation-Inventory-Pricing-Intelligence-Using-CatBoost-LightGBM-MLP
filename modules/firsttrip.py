@@ -11,6 +11,7 @@ and flight_offers / flight_offer_raw_meta.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -476,6 +477,50 @@ def summarize_b2c_discounts(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
             "cap_bdt": best["coupon_cap_bdt"],
         }
     return out
+
+
+# --- B2C convenience fee (payment-step, gateway-dependent) --------------------------------
+# FirstTrip adds a convenience fee at checkout that is NOT in the search response — it comes
+# from GetActivePaymentGateway (per-gateway chargePercentage, e.g. Nagad 1.0 / Bkash 1.5 /
+# cards ~2). Like the ShareTrip gateway fee, we annotate the cheapest eligible charge.
+_GATEWAY_ENDPOINT = "GetActivePaymentGateway"
+
+
+def _gateway_charges(node: Any) -> List[float]:
+    """Every chargePercentage found anywhere in a GetActivePaymentGateway payload."""
+    out: List[float] = []
+    if isinstance(node, dict):
+        if "chargePercentage" in node:
+            try:
+                out.append(float(node.get("chargePercentage") or 0))
+            except (TypeError, ValueError):
+                pass
+        for v in node.values():
+            out += _gateway_charges(v)
+    elif isinstance(node, list):
+        for v in node:
+            out += _gateway_charges(v)
+    return out
+
+
+def parse_b2c_gateway_fee(har_path: str) -> Optional[float]:
+    """Cheapest non-zero payment-gateway charge % from a FirstTrip booking HAR
+    (GetActivePaymentGateway). Returns None when the endpoint isn't captured."""
+    try:
+        har = json.loads(Path(har_path).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    charges: List[float] = []
+    for e in har.get("log", {}).get("entries", []):
+        if _GATEWAY_ENDPOINT not in e.get("request", {}).get("url", ""):
+            continue
+        try:
+            data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
+        except json.JSONDecodeError:
+            continue
+        charges += _gateway_charges(data)
+    nonzero = [c for c in charges if c > 0]
+    return round(min(nonzero), 2) if nonzero else None
 
 
 def _b2b_commission_row(offer: Dict[str, Any]) -> Optional[Dict[str, Any]]:

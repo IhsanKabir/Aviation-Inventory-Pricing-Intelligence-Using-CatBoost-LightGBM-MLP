@@ -94,7 +94,11 @@ def _fetch_firsttrip_b2c(routes: list[tuple[str, str, Optional[str]]],
 
 def _collect_firsttrip_b2c_rows(
         rows_by_route: dict[tuple[str, str, str], list[dict[str, Any]]],
+        fee_pct: Optional[float] = None,
         ) -> dict[tuple[str, str], str]:
+    # FirstTrip adds a payment-step convenience fee (cheapest gateway charge);
+    # annotate it like the other channels when the gateway catalog was captured.
+    fee_note = f"({_fmt(fee_pct)}% fee)" if fee_pct else ""
     cells: dict[tuple[str, str], str] = {}
     for (origin, destination, _date), rows in rows_by_route.items():
         rt = _route_type(origin, destination)
@@ -102,7 +106,7 @@ def _collect_firsttrip_b2c_rows(
         for airline, cell in summary.items():
             key = (rt, airline)
             # keep the highest rate seen for this airline/route_type
-            text = _fmt(cell["rate"])
+            text = _fmt(cell["rate"]) + fee_note
             if key not in cells or cell["rate"] > _existing_rate(cells[key]):
                 cells[key] = text
     return cells
@@ -137,10 +141,12 @@ def collect_gozayaan(har_path: str) -> dict[tuple[str, str], str]:
         if common is None:
             continue
         fee = surcharge.get(rt)
+        fee_note = f", {_fmt(fee)}% fee" if fee else ""
         text = _fmt(common) + (f"({_fmt(fee)}% fee)" if fee else "")
         special = cell.get("special")
         if special:
-            text += f", {_fmt(special['pct'])} ({special['eligibility']})"
+            # the surcharge is booking-wide, so it applies to the card special too
+            text += f", {_fmt(special['pct'])} ({special['eligibility']}{fee_note})"
         cells[(rt, airline)] = text
     return cells
 
@@ -608,7 +614,14 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
         if h in amy_rows_by_path else collect_amy(h), "HAR")
 
     if routes or b2c_rows_by_route:
-        channel_cells["Firsttrip-B2C"] = _collect_firsttrip_b2c_rows(b2c_rows_by_route)
+        # FT B2C convenience fee (payment-step, gateway-dependent): cheapest gateway
+        # charge from any FirstTrip booking HAR that captured GetActivePaymentGateway.
+        ft_b2c_fee = None
+        for h in (firsttrip_b2b_hars or []) + (firsttrip_b2c_hars or []):
+            fee = firsttrip.parse_b2c_gateway_fee(h)
+            if fee is not None and (ft_b2c_fee is None or fee < ft_b2c_fee):
+                ft_b2c_fee = fee
+        channel_cells["Firsttrip-B2C"] = _collect_firsttrip_b2c_rows(b2c_rows_by_route, ft_b2c_fee)
         parts = []
         if routes:
             parts.append(f"live: {len(routes)} route(s)")
