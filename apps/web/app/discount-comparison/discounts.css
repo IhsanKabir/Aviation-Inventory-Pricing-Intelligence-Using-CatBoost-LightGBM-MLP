@@ -106,6 +106,12 @@
   font-weight: 700;
 }
 
+.dg-best-gated {
+  font-weight: 400;
+  font-size: 0.82em;
+  opacity: 0.85;
+}
+
 .dg-status-warn {
   margin-left: 6px;
   cursor: help;

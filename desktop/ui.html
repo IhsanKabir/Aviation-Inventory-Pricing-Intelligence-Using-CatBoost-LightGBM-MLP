@@ -507,8 +507,14 @@ function gridTable(title, block, channelStatus) {
         return `<td class="${flag !== "none" ? "hl-" + flag : ""}">${esc(fmtCell((r.cells || {})[c]))}</td>`;
       }).join("")}
     </tr>`).join("");
-  const best = `<tr class="best"><th>Best (OTA)</th>${block.columns.map(c =>
-    `<td>${esc((block.best || {})[c]?.display || "—")}</td>`).join("")}</tr>`;
+  const best = `<tr class="best"><th>Best (net)</th>${block.columns.map(c => {
+    const b = (block.best || {})[c];
+    const uni = b && (b.universal || { display: b.display, net: b.pct });
+    const g = b && b.gated;
+    const gated = g && uni && g.net > uni.net
+      ? `<br><span style="font-weight:400;font-size:11px;opacity:.85">card: ${esc(g.display)}</span>` : "";
+    return `<td>${uni ? esc(uni.display) : "—"}${gated}</td>`;
+  }).join("")}</tr>`;
   return `
     <div class="grid-title"><h2>${esc(title)}</h2></div>
     <div class="table-wrap"><table><thead>${head}</thead><tbody>${body}${best}</tbody></table></div>`;

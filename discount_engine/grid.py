@@ -855,6 +855,18 @@ def _write_grid_value(cell, raw: str, center) -> bool:
     return True
 
 
+def _best_cell_text(b: Optional[dict[str, Any]]) -> Optional[str]:
+    """Net, tier-aware Best cell: the universal (anyone) net rate, plus the card/loyalty
+    net rate on a second line when it beats the universal one."""
+    if not b:
+        return None
+    lines = [b["universal"]["display"]]
+    g = b.get("gated")
+    if g and g["net"] > b["universal"]["net"]:
+        lines.append("card: " + g["display"])
+    return "\n".join(lines)
+
+
 def _render_report_sheet(ws, report: dict[str, Any],
                          prev_lookup: dict[tuple[str, str, str], float]) -> None:
     """Render the colored grid into a worksheet, coloring from compute_highlights().
@@ -947,14 +959,14 @@ def _render_report_sheet(ws, report: dict[str, Any],
                 ws.row_dimensions[r].height = 30
             r += 1
 
-        # "Best (OTA)" summary row (slate band) from the shared best-per-airline.
-        blabel = ws.cell(r, 1, "Best (OTA)")
+        # "Best (OTA)" summary row (slate band): NET, tier-aware — the best rate anyone
+        # gets, then the best card/loyalty rate on a second line when higher.
+        blabel = ws.cell(r, 1, "Best (net)")
         blabel.font, blabel.fill, blabel.alignment, blabel.border = best_font, best_fill, left, border
         for ci, airline in enumerate(cols, start=2):
             cell = ws.cell(r, ci)
             cell.font, cell.fill, cell.alignment, cell.border = best_font, best_fill, center, border
-            if airline in best:
-                cell.value = best[airline]["display"]
+            cell.value = _best_cell_text(best.get(airline))
         ws.row_dimensions[r].height = 30
         r += 3   # Best row + gap between the INTERNATIONAL and DOMESTIC blocks
 
@@ -1033,7 +1045,7 @@ def _render_transposed_sheet(ws, report: dict[str, Any],
                     cell.fill, cell.font = win_fill, win_font
             bcell = ws.cell(r, 2 + len(channels))
             bcell.font, bcell.fill, bcell.alignment, bcell.border = best_font, best_fill, center, border
-            bcell.value = (best.get(airline) or {}).get("display")
+            bcell.value = _best_cell_text(best.get(airline))
             if has_coupon:
                 ws.row_dimensions[r].height = 28
             r += 1
@@ -1044,6 +1056,80 @@ def _render_transposed_sheet(ws, report: dict[str, Any],
         ws.column_dimensions[get_column_letter(ci)].width = 22
     ws.column_dimensions[get_column_letter(max_cols)].width = 16   # Best OTA
     ws.freeze_panes = "B1"
+
+
+def _render_detailed_sheet(ws, report: dict[str, Any]) -> None:
+    """Detailed breakdown: one row per airline x OTA, with the common discount, its
+    coupon/method, the convenience fee, and the card/loyalty special split into their own
+    columns (instead of the dense combined cell) — plus the net value used for ranking."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    from .highlight import parse_cell_tiers
+
+    cal = "Calibri"
+    thin = Side(style="thin", color="BFBFBF")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    hdr_fill = PatternFill("solid", fgColor=HDR_BG)
+    head_font = Font(name=cal, bold=True, size=11, color=HDR_TX)
+    title_font = Font(name=cal, bold=True, size=11)
+    label_font = Font(name=cal, bold=True, size=11)
+    data_font = Font(name=cal, size=11)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="center")
+    pct = "0.00%"
+
+    HEADERS = ["Airline", "OTA", "Common %", "Offer / method", "Conv. fee",
+               "Card %", "Card / loyalty", "Card fee", "Capped", "Best net %"]
+    date_label, time_label = report["report_date"], f"{report['report_time']}hrs"
+    r = 1
+    for rt, name in (("INTL", "INTERNATIONAL"), ("DOM", "DOMESTIC")):
+        grid = report.get("grids", {}).get(rt)
+        if not grid or not grid["columns"]:
+            continue
+        rows_by_label = {row["label"]: row.get("cells", {}) for row in grid["rows"]}
+        channels = [lbl for lbl, kind in ROW_ORDER if kind != "sep" and lbl in rows_by_label]
+
+        t = ws.cell(r, 1, f"{date_label} ({name}) / {time_label} — detailed")
+        t.font, t.alignment = title_font, left
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=len(HEADERS))
+        r += 1
+        for ci, h in enumerate(HEADERS, start=1):
+            c = ws.cell(r, ci, h)
+            c.font, c.fill, c.alignment, c.border = head_font, hdr_fill, center, border
+        r += 1
+
+        for airline in grid["columns"]:
+            first = True
+            for ch in channels:
+                tiers = parse_cell_tiers(rows_by_label[ch].get(airline))
+                if not tiers:
+                    continue
+                common = tiers[0]
+                special = max(tiers[1:], key=lambda x: x["net"]) if len(tiers) > 1 else None
+                best_net = max(t["net"] for t in tiers)
+                vals = [airline if first else "", ch,
+                        common["pct"] / 100.0, common["label"] or "auto",
+                        (common["fee_pct"] / 100.0) if common["fee_pct"] else "",
+                        (special["pct"] / 100.0) if special else "",
+                        special["label"] if special else "",
+                        (special["fee_pct"] / 100.0) if special and special["fee_pct"] else "",
+                        "capped" if (special and special["capped"]) else "",
+                        best_net / 100.0]
+                for ci, v in enumerate(vals, start=1):
+                    cell = ws.cell(r, ci, v if v != "" else None)
+                    cell.font = label_font if ci == 1 else data_font
+                    cell.alignment = left if ci in (1, 2, 4, 7) else center
+                    cell.border = border
+                    if isinstance(v, float):
+                        cell.number_format = pct
+                first = False
+                r += 1
+        r += 1
+
+    widths = [9, 15, 10, 18, 9, 9, 18, 9, 9, 11]
+    for ci, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+    ws.freeze_panes = "A3"
 
 
 def _save_workbook(wb, xlsx_path: Path) -> Path:
@@ -1113,10 +1199,12 @@ def write_single_sheet_xlsx(report: dict[str, Any],
     wb = Workbook()
     wb.remove(wb.active)
     prev_lookup = prev_lookup_from_report(prev_report)
-    # Two layouts in one download: OTA-rows (default) + the rotated airline-rows view.
+    # Three layouts in one download: OTA-rows (default), rotated airline-rows, and the
+    # detailed tier/coupon/fee breakdown.
     _render_report_sheet(wb.create_sheet(title=_sheet_name(report)), report, prev_lookup)
     _render_transposed_sheet(
         wb.create_sheet(title=f"{_sheet_name(report)} (by airline)"), report, prev_lookup)
+    _render_detailed_sheet(wb.create_sheet(title=f"{_sheet_name(report)} (detailed)"), report)
     return _save_workbook(wb, xlsx_path)
 
 

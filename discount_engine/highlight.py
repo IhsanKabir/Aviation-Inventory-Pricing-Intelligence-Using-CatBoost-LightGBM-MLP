@@ -37,6 +37,55 @@ def leading_number(text: Any) -> Optional[float]:
     return float(m.group(1)) if m else None
 
 
+def _split_top_level(s: str) -> list[str]:
+    """Split on top-level commas only (labels inside (...) may contain commas)."""
+    parts, depth, cur = [], 0, ""
+    for ch in s:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        parts.append(cur)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def parse_cell_tiers(raw: Any) -> list[dict[str, Any]]:
+    """Parse a discount cell into ordered tiers. tiers[0] = the COMMON rate anyone gets;
+    the rest are card/loyalty specials. Each tier: {pct, label, fee_pct, capped, net}.
+    net = pct - fee_pct (the value a customer actually keeps after the convenience fee).
+      '9(Bkash, 2% fee), 18 (Stellar Signature, 2% fee)'
+        -> [{9,'Bkash',2,F,7}, {18,'Stellar Signature',2,F,16}]
+      '7.1%, 8.1% (GPStar, 1.5% fee), 7.4% (Stellar Signature, capped, 2% fee)'
+        -> [{7.1,'',0,F,7.1}, {8.1,'GPStar',1.5,F,6.6}, {7.4,'Stellar Signature',2,T,5.4}]"""
+    text = str(raw or "").strip()
+    tiers: list[dict[str, Any]] = []
+    for seg in _split_top_level(text):
+        m = re.match(r"~?\s*(-?\d+(?:\.\d+)?)", seg)
+        if not m:
+            continue
+        pct = float(m.group(1))
+        paren = re.search(r"\(([^)]*)\)", seg)
+        label, fee, capped = "", 0.0, False
+        if paren:
+            body = paren.group(1)
+            capped = "capped" in body.lower()
+            fm = re.search(r"(\d+(?:\.\d+)?)\s*%\s*fee", body)
+            if fm:
+                fee = float(fm.group(1))
+            lab = re.sub(r",?\s*\d+(?:\.\d+)?\s*%\s*fee", "", body)
+            lab = re.sub(r",?\s*capped", "", lab, flags=re.I)
+            label = lab.strip().strip(",").strip()
+        tiers.append({"pct": pct, "label": label, "fee_pct": fee,
+                      "capped": capped, "net": round(pct - fee, 2)})
+    return tiers
+
+
 def prev_lookup_from_report(prev_report: Optional[dict[str, Any]],
                             ) -> dict[tuple[str, str, str], float]:
     """{(route_type, ota_label, airline): common rate %} from a stored report dict."""
@@ -63,22 +112,29 @@ def compute_highlights(report: dict[str, Any],
         cols = grid.get("columns", [])
         rows = [r for r in grid.get("rows", []) if r.get("kind") != "sep"]
 
-        # Common rate per (label, airline), in ROW_ORDER (insertion order matters for
-        # the Best row's first-wins tie-break, matching the original xlsx behavior).
-        val: dict[tuple[str, str], float] = {}
+        # Per (label, airline): gross common (for change detection vs prev), NET common
+        # (pct - fee, the real value used for ranking), and the parsed tiers.
+        gross: dict[tuple[str, str], float] = {}
+        net_common: dict[tuple[str, str], float] = {}
+        tiers_by: dict[tuple[str, str], list] = {}
         group_labels: dict[str, list[str]] = {}
         for row in rows:
             group_labels.setdefault(row.get("kind", "b2b"), []).append(row["label"])
             for airline in cols:
-                n = leading_number((row.get("cells") or {}).get(airline))
-                if n is not None:
-                    val[(row["label"], airline)] = n
+                tiers = parse_cell_tiers((row.get("cells") or {}).get(airline))
+                if not tiers:
+                    continue
+                key = (row["label"], airline)
+                gross[key] = tiers[0]["pct"]
+                net_common[key] = tiers[0]["net"]
+                tiers_by[key] = tiers
 
+        # highest/second rank by NET common; "changed" (vs prev gross) still wins.
         flags: dict[tuple[str, str], str] = {}
         for labels in group_labels.values():
             for airline in cols:
-                present = [(lab, val[(lab, airline)]) for lab in labels
-                           if (lab, airline) in val]
+                present = [(lab, net_common[(lab, airline)]) for lab in labels
+                           if (lab, airline) in net_common]
                 if not present:
                     continue
                 ranked = sorted({v for _, v in present}, reverse=True)
@@ -86,21 +142,46 @@ def compute_highlights(report: dict[str, Any],
                 second = ranked[1] if len(ranked) > 1 else None
                 for lab, v in present:
                     prev = prev_lookup.get((rt, lab, airline))
-                    if prev is not None and abs(prev - v) > 1e-6:
+                    if prev is not None and abs(prev - gross[(lab, airline)]) > 1e-6:
                         flags[(lab, airline)] = "changed"       # change wins
                     elif v == hi:
                         flags[(lab, airline)] = "highest"
                     elif second is not None and v == second:
                         flags[(lab, airline)] = "second"
 
+        # Best per airline, NET and TIER-AWARE:
+        #   universal = best net rate anyone gets (common tiers)
+        #   gated     = best net rate needing a specific card/loyalty (special tiers)
         best: dict[str, dict[str, Any]] = {}
         for airline in cols:
-            cand = [(v, lab) for (lab, a), v in val.items() if a == airline]
-            if cand:
-                bv, blab = max(cand, key=lambda x: x[0])
-                short = BEST_SHORT.get(blab, blab)
-                best[airline] = {"pct": bv, "channel": blab, "short": short,
-                                 "display": f"{bv:g}% · {short}"}
+            uni = []                      # (net, gross, short, full_label)
+            gated = []                    # (net, gross, short, full_label, card_label, capped)
+            for lab in [l for labs in group_labels.values() for l in labs]:
+                tiers = tiers_by.get((lab, airline))
+                if not tiers:
+                    continue
+                short = BEST_SHORT.get(lab, lab)
+                uni.append((tiers[0]["net"], tiers[0]["pct"], short, lab))
+                for t in tiers[1:]:
+                    gated.append((t["net"], t["pct"], short, lab, t["label"], t["capped"]))
+            if not uni:
+                continue
+            un = max(uni, key=lambda x: x[0])
+            universal = {"net": un[0], "gross": un[1], "short": un[2], "channel": un[3],
+                         "display": f"{un[0]:g}% net · {un[2]}"}
+            gated_best = None
+            if gated:
+                gb = max(gated, key=lambda x: x[0])
+                lbl = f", {gb[4]}" if gb[4] else ""
+                cap = ", capped" if gb[5] else ""
+                gated_best = {"net": gb[0], "gross": gb[1], "short": gb[2], "channel": gb[3],
+                              "label": gb[4], "capped": gb[5],
+                              "display": f"{gb[0]:g}% net · {gb[2]}{lbl}{cap}"}
+            # Primary (backward-compat) = the UNIVERSAL best (what anyone gets), matching
+            # the historical Best row; the card-gated tier is carried alongside.
+            best[airline] = {"pct": universal["gross"], "channel": universal["channel"],
+                             "short": universal["short"], "display": universal["display"],
+                             "universal": universal, "gated": gated_best}
         out[rt] = {"flags": flags, "best": best}
     return out
 

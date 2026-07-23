@@ -12,11 +12,23 @@ export interface DiscountRow {
   highlights?: Record<string, DiscountCellFlag>;
 }
 
+export interface DiscountBestTier {
+  net: number;
+  gross: number;
+  short: string;
+  channel: string;
+  display: string;
+  label?: string;
+  capped?: boolean;
+}
+
 export interface DiscountBestCell {
   pct: number;
   channel: string;
   short: string;
   display: string;
+  universal?: DiscountBestTier;
+  gated?: DiscountBestTier | null;
 }
 
 export interface DiscountGridBlock {

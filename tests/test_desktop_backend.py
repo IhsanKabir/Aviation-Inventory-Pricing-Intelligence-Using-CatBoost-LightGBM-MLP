@@ -173,7 +173,7 @@ def test_run_shares_engine_and_colors_against_prev(api, monkeypatch):
     assert result["ok"] and result["prev_available"]
     row = result["report"]["grids"]["DOM"]["rows"][0]
     assert row["highlights"]["BS"] == "changed"                # 11 -> 12 vs local prev
-    assert result["report"]["grids"]["DOM"]["best"]["BS"]["display"] == "12% · USBA"
+    assert result["report"]["grids"]["DOM"]["best"]["BS"]["display"] == "12% net · USBA"
 
 
 def test_run_skip_paths_filter(api, monkeypatch):

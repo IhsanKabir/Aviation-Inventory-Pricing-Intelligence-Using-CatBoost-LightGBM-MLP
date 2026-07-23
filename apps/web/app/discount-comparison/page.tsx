@@ -91,10 +91,24 @@ function GridBlock({
               </tr>
             ))}
             <tr className="dg-best-row">
-              <th scope="row">Best (OTA)</th>
-              {block.columns.map((airline) => (
-                <td key={airline}>{block.best?.[airline]?.display ?? "—"}</td>
-              ))}
+              <th scope="row">Best (net)</th>
+              {block.columns.map((airline) => {
+                const b = block.best?.[airline];
+                const uni = b?.universal ?? (b ? { display: b.display, net: b.pct } : null);
+                const gated = b?.gated;
+                const showGated = gated && uni && gated.net > uni.net;
+                return (
+                  <td key={airline}>
+                    {uni?.display ?? "—"}
+                    {showGated ? (
+                      <>
+                        <br />
+                        <span className="dg-best-gated">card: {gated!.display}</span>
+                      </>
+                    ) : null}
+                  </td>
+                );
+              })}
             </tr>
           </tbody>
         </table>

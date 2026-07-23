@@ -70,9 +70,26 @@ def test_coupon_text_change_detected_by_common_rate():
 
 def test_best_row_across_all_channels():
     best = compute_highlights(_report(BASE))["DOM"]["best"]
-    assert best["BS"] == {"pct": 16.0, "channel": "Firsttrip-B2C",
-                          "short": "FT-B2C", "display": "16% · FT-B2C"}
-    assert best["2A"]["pct"] == 16.0
+    # primary (universal) = best NET rate anyone gets (no fees in BASE -> net == gross)
+    assert best["BS"]["display"] == "16% net · FT-B2C"
+    assert best["BS"]["channel"] == "Firsttrip-B2C"
+    assert best["BS"]["universal"]["net"] == 16.0
+    # gated = best card-special (ShareTrip's "18 (Stellar)")
+    assert best["BS"]["gated"]["display"] == "18% net · ST-B2C, Stellar"
+    assert best["2A"]["universal"]["gross"] == 16.0
+
+
+def test_best_ranks_by_net_of_fee():
+    # FT common 9% but 2% fee -> 7 net; ShareTrip common 8% but 0.5% fee -> 7.5 net.
+    # Net ranking must pick ShareTrip as universal-best despite its LOWER gross rate.
+    cells = {"USBA OTA B2B": {"BS": "5", "2A": "5"}, "BDFare": {"BS": "5", "2A": "5"},
+             "Firsttrip-B2C": {"BS": "9(Bkash, 2% fee)", "2A": "9(Bkash, 2% fee)"},
+             "ShareTrip-B2C": {"BS": "8(bKash, 0.5% fee)", "2A": "8(bKash, 0.5% fee)"}}
+    hl = compute_highlights(_report(cells))["DOM"]
+    assert hl["best"]["BS"]["universal"]["short"] == "ST-B2C"       # 7.5 net beats 7 net
+    assert hl["best"]["BS"]["universal"]["net"] == 7.5
+    assert hl["flags"][("ShareTrip-B2C", "BS")] == "highest"        # green by NET
+    assert hl["flags"][("Firsttrip-B2C", "BS")] == "second"
 
 
 def test_apply_highlights_embeds_flags_best_and_prev_date():
@@ -81,7 +98,7 @@ def test_apply_highlights_embeds_flags_best_and_prev_date():
     dom = out["grids"]["DOM"]
     row = {r["label"]: r for r in dom["rows"]}["USBA OTA B2B"]
     assert row["highlights"]["BS"] == "changed"
-    assert dom["best"]["BS"]["display"] == "16% · FT-B2C"
+    assert dom["best"]["BS"]["display"] == "16% net · FT-B2C"
     assert out["prev_report_date"] == "02/07/2026"
     # original report untouched (copy semantics)
     src = _report(BASE)
@@ -107,7 +124,7 @@ def test_write_single_sheet_xlsx_colors_from_prev_report():
 
     assert fill("USBA OTA B2B", 2) == "FFC7CE"       # changed -> red
     assert fill("Firsttrip-B2C", 2) == "C6EFCE"      # highest -> green
-    assert any(ws.cell(ri, 1).value == "Best (OTA)" for ri in range(1, ws.max_row + 1))
+    assert any(ws.cell(ri, 1).value == "Best (net)" for ri in range(1, ws.max_row + 1))
 
 
 if __name__ == "__main__":
