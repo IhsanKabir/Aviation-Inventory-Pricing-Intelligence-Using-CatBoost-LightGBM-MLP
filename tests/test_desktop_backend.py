@@ -166,12 +166,13 @@ def test_run_shares_engine_and_colors_against_prev(api, monkeypatch):
                         lambda d: {"firsttrip_b2b": [str(tmp_path / "x.har")]})
     monkeypatch.setattr(backend_mod, "build_report",
                         lambda *a, **kw: _report(bs="12"))
-    monkeypatch.setattr(api, "_fetch_previous_payload",
-                        lambda before: _report(bs="11"))
+    # change diff is now vs THIS machine's previous local run, not the backend
+    monkeypatch.setattr(api, "_load_local_prev", lambda: _report(bs="11"))
+    monkeypatch.setattr(api, "_save_local_prev", lambda report: None)
     result = api.run()
     assert result["ok"] and result["prev_available"]
     row = result["report"]["grids"]["DOM"]["rows"][0]
-    assert row["highlights"]["BS"] == "changed"                # 11 -> 12 vs backend prev
+    assert row["highlights"]["BS"] == "changed"                # 11 -> 12 vs local prev
     assert result["report"]["grids"]["DOM"]["best"]["BS"]["display"] == "12% · USBA"
 
 
