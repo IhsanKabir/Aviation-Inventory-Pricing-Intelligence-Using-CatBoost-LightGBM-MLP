@@ -97,6 +97,11 @@ tools/test_sharetrip_live.py
 tools/refresh_sharetrip_live.py
 tests/test_sharetrip_live.py
 config/sharetrip_gateways.json
+# Live-search plugin folders (contain the private forge module) — never publish.
+plugins/
+**/plugins/
+sharetrip_permit_kit/
+*_permit_kit.zip
 apps/web/.vercel/
 
 # Build artifacts (added 2026-07-03)

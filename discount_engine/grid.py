@@ -378,7 +378,12 @@ def _collect_amy_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
         key = (rt, r["airline"])
         if key not in best or r["net_pay"] < best[key]["net_pay"]:
             best[key] = r
-    return {key: _fmt(r["commission_pct"]) for key, r in best.items()}
+
+    def _cell(r: dict[str, Any]) -> str:
+        fee = r.get("conv_fee_pct") or 0
+        return _fmt(r["commission_pct"]) + (f"({_fmt(fee)}% fee)" if fee else "")
+
+    return {key: _cell(r) for key, r in best.items()}
 
 
 def collect_amy(har_path: str) -> dict[tuple[str, str], str]:
@@ -898,8 +903,11 @@ def _render_report_sheet(ws, report: dict[str, Any],
                     # plain single-rate cell -> number with % format
                     cell.value, cell.number_format = num / 100.0, "0.00%"
                 else:
-                    # coupon cell (common + special) -> show BOTH %s in the cell
-                    cell.value = re.sub(r"(\d+(?:\.\d+)?)", r"\1%", raw)
+                    # coupon cell (common + special) -> show BOTH %s in the cell.
+                    # Suffix % only to standalone numbers, NOT ones already ending in %
+                    # (fees like "2% fee") nor digits inside a code -> avoids "2%%".
+                    cell.value = re.sub(
+                        r"(?<![A-Za-z\d.])(\d+(?:\.\d+)?)(?![\d.%A-Za-z])", r"\1%", raw)
                     cell.alignment = center   # wrap the longer coupon text
                     has_coupon = True
                 style = flag_style.get(flags.get((label, airline)))

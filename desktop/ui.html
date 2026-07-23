@@ -129,6 +129,7 @@
       <button class="secondary" onclick="pickFolder()">Browse…</button>
       <button class="secondary" onclick="archiveHars()" title="Move all .har files into archive/YYYY-MM-DD/ so today's captures start clean">Archive old HARs</button>
       <label>Live routes (FirstTrip B2C) <input id="routes"></label>
+      <span id="live-plugin-routes"></span>
       <label>Travel date (YYYY-MM-DD) <input id="travel_date" placeholder="2026-07-30"></label>
       <button class="secondary" onclick="saveConfig()">Save</button>
       <button class="big" id="run-btn" onclick="runReport()">Run report</button>
@@ -205,6 +206,7 @@ async function refreshState() {
   document.getElementById("har_dir").value = state.har_dir;
   document.getElementById("routes").value = state.routes;
   document.getElementById("travel_date").value = state.travel_date;
+  renderLivePluginRoutes(state.live_channels || [], state.live_routes || {});
   if (state.insecure_token_store) {
     addBanner("warn", "No OS keyring available — the session token is stored in the config file. Prefer a machine with Windows Credential Manager.");
   }
@@ -408,10 +410,24 @@ async function archiveHars() {
   renderScan(await api().scan());
 }
 
+function renderLivePluginRoutes(channels, saved) {
+  const host = document.getElementById("live-plugin-routes");
+  if (!host) return;
+  host.innerHTML = channels.map(c =>
+    `<label>Live routes (${esc(c.label)}) <input class="live-plugin-input" data-channel="${esc(c.channel)}" value="${esc(saved[c.channel] || "")}" placeholder="DAC-CXB,DAC-DXB"></label>`
+  ).join("");
+}
+
+function collectLiveRoutes() {
+  const out = {};
+  document.querySelectorAll(".live-plugin-input").forEach(el => { out[el.dataset.channel] = el.value; });
+  return out;
+}
+
 async function saveConfig() {
   await api().set_config(
     "", document.getElementById("routes").value,
-    document.getElementById("travel_date").value, "");
+    document.getElementById("travel_date").value, "", collectLiveRoutes());
   const scan = await api().scan();
   renderScan(scan);
   addBanner("ok", "Saved.");
@@ -443,7 +459,7 @@ async function runReport() {
   // date silently skipped the live FT B2C fetch (real field bug, 2026-07-03).
   await api().set_config(
     "", document.getElementById("routes").value,
-    document.getElementById("travel_date").value, "");
+    document.getElementById("travel_date").value, "", collectLiveRoutes());
   const skips = scanFiles
     .filter((f, i) => { const cb = document.querySelector(`input[data-idx="${i}"]`); return cb && !cb.checked; })
     .map(f => f.path);

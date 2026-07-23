@@ -257,6 +257,9 @@ def _commission_row(trip: Dict[str, Any], leg_by_id: Dict[Any, Dict]) -> Optiona
     departure = (leg or {}).get("fDTime") or trip.get("JDate")
 
     commission = tot - net
+    # AmyBD adds a convenience/counter fee (ctfee) to the payable total, like the
+    # ShareTrip gateway fee / GoZayaan surcharge — a real customer-facing cost.
+    ctfee = float(fare.get("ctfee") or 0)
     return {
         "channel": "amy",
         "persona": "B2B",
@@ -271,6 +274,8 @@ def _commission_row(trip: Dict[str, Any], leg_by_id: Dict[Any, Dict]) -> Optiona
         "commission_bdt": round(commission),
         "commission_pct": round(commission / base * 100, 2),       # % off base (report basis)
         "commission_pct_tot": round(commission / tot * 100, 2),    # % off gross total
+        "conv_fee_bdt": round(ctfee),
+        "conv_fee_pct": round(ctfee / tot * 100, 1) if tot else 0.0,  # % of gross payable
         "discount": float(fare.get("discount") or 0),
         "cashback": float(fare.get("cashback") or 0),
     }

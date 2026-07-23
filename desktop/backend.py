@@ -26,6 +26,7 @@ from discount_engine.highlight import apply_highlights
 from discount_engine.sanitize import sanitize_report_for_sync
 
 from . import APP_ID, __version__
+from .live_plugins import load_live_plugins, write_live_hars
 from .outbox import Outbox
 
 DEFAULT_API_BASE = "https://aero-pulse-api-591603094460.asia-south1.run.app"
@@ -57,6 +58,12 @@ def config_dir() -> Path:
     return Path(base) / "OTADiscountReport"
 
 
+def _default_live_date() -> str:
+    """A safe future search date when the Travel date box is blank (~2 weeks out)."""
+    from datetime import timedelta
+    return (date.today() + timedelta(days=14)).strftime("%Y-%m-%d")
+
+
 def _sync_id_for(payload: dict[str, Any]) -> str:
     """Deterministic id for a report payload: same report (incl. generated_at) ->
     same id, so an outbox retry dedupes server-side and never double-bills a use.
@@ -78,6 +85,8 @@ class DesktopApi:
         self._prev_payload: Optional[dict[str, Any]] = None  # backend prev (red diff)
         self._busy = False
         self._status = ""
+        # Optional local live-search extensions (absent on standard installs -> HAR-only).
+        self._live_plugins = load_live_plugins(config_dir())
         # Every launch shows up on the /usage dashboard (no-op when signed out —
         # and signed-out users can't get past the sign-in wall anyway).
         self._log_usage("app_launch", target=f"v{__version__}")
@@ -201,6 +210,11 @@ class DesktopApi:
             "busy": self._busy,
             "status": self._status,
             "has_report": self._report is not None,
+            # Extra live-search channels this machine has a plugin for (empty on
+            # standard installs). The UI renders a "Live routes (<label>)" box per entry.
+            "live_channels": [{"channel": c, "label": p["label"]}
+                              for c, p in self._live_plugins.items()],
+            "live_routes": self._config.get("live_routes") or {},
         }
 
     # Sentinel: set_config leaves a field untouched unless a value is passed. The
@@ -208,7 +222,8 @@ class DesktopApi:
     # travel_date (otherwise an expired date could never be removed and would keep
     # hard-failing run()).
     def set_config(self, api_base: str | None = None, routes: str | None = None,
-                   travel_date: str | None = None, har_dir: str | None = None) -> dict[str, Any]:
+                   travel_date: str | None = None, har_dir: str | None = None,
+                   live_routes: dict[str, str] | None = None) -> dict[str, Any]:
         if api_base:
             self._config["api_base"] = api_base.strip().rstrip("/")
         if routes is not None:
@@ -217,6 +232,10 @@ class DesktopApi:
             self._config["travel_date"] = travel_date.strip()
         if har_dir:
             self._config["har_dir"] = har_dir.strip()
+        if live_routes is not None:
+            # keep only channels we actually have a plugin for; "" clears a channel
+            self._config["live_routes"] = {
+                c: str(live_routes.get(c) or "").strip() for c in self._live_plugins}
         self._save_config()
         return self.get_state()
 
@@ -704,6 +723,15 @@ class DesktopApi:
         log_buffer = io.StringIO()
         try:
             skips = set(skip_paths or [])
+            with contextlib.redirect_stdout(log_buffer):
+                # Live-search plugins (if installed + routes entered) fetch live and drop a
+                # channel HAR into the folder, which auto-detect then picks up like any HAR.
+                live_routes = self._config.get("live_routes") or {}
+                if self._live_plugins and any((live_routes.get(c) or "").strip()
+                                              for c in self._live_plugins):
+                    self._status = "Live search…"
+                    write_live_hars(self._live_plugins, live_routes, Path(har_dir),
+                                    travel_date or _default_live_date(), log=print)
             detected = auto_detect_hars(Path(har_dir))
             hars = {ch: [p for p in paths if p not in skips]
                     for ch, paths in detected.items()}
