@@ -17,17 +17,22 @@ def _write_json(name: str, payload: dict) -> Path:
 
 
 def test_current_schedule_timing_plan_loads():
+    schedule_file = Path("config/schedule.json")
     plan = load_scheduler_timing_plan(
-        schedule_file=Path("config/schedule.json"),
+        schedule_file=schedule_file,
         airlines_file=Path("config/airlines.json"),
         source_switches_file=Path("config/source_switches.json"),
     )
 
     global_entry = find_timing_entry(plan, scope_type="global", scope_id="global")
 
+    # Assert the loaded plan faithfully mirrors the CURRENT config rather than a hard-coded
+    # time — the schedule is retuned from time to time (e.g. moved to 01:00), and a pinned
+    # literal here silently goes stale and fails for no real reason.
+    cfg_global = json.loads(schedule_file.read_text(encoding="utf-8"))["scheduler_timing"]["global"]
     assert global_entry is not None
-    assert global_entry.start_time == "12:00"
-    assert global_entry.repeat_minutes == 1440
+    assert global_entry.start_time == cfg_global["start_time"]
+    assert global_entry.repeat_minutes == cfg_global["repeat_minutes"]
 
 
 def test_source_airline_and_route_timing_filters():
