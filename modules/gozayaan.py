@@ -1097,6 +1097,62 @@ def _candidate_leg_hashes_for_airline(
     return sorted(found)
 
 
+def _resolve_segments(
+    fare: Dict[str, Any],
+    leg_obj: Optional[Dict[str, Any]],
+    legs_by_hash: Dict[str, Dict[str, Any]],
+    segments_by_hash: Dict[str, Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Segments for one fare, plus WHY none were found.
+
+    The old path accepted exactly one shape: ``leg["segment_hashes"]`` holding
+    hashes present in ``segments_by_hash``. When any link in that chain broke
+    the caller silently received ``[]``, and the row builder then invented a
+    departure of midnight and a stop count of zero. That ran from April to
+    August across BS and 2A -- 33,079 rows, 14 of them with a real clock --
+    and no gate noticed, because rows kept arriving.
+
+    So every shape the payload has been seen to use is tried, and the failure
+    is named rather than returned as an empty list.
+    """
+    if not isinstance(leg_obj, dict):
+        return [], "leg hash not in payload"
+
+    # a) the documented shape: hashes on the leg
+    hashes = leg_obj.get("segment_hashes")
+    # b) some payloads name it `segments`, holding hashes OR whole segments
+    if not isinstance(hashes, list) or not hashes:
+        alt = leg_obj.get("segments")
+        if isinstance(alt, list) and alt:
+            if all(isinstance(x, dict) for x in alt):
+                return list(alt), ""          # already whole segments
+            hashes = alt
+    # c) the fare itself sometimes carries them
+    if not isinstance(hashes, list) or not hashes:
+        alt = fare.get("segment_hashes")
+        if isinstance(alt, list) and alt:
+            hashes = alt
+
+    if not isinstance(hashes, list) or not hashes:
+        return [], "leg carries no segment reference"
+
+    out: List[Dict[str, Any]] = []
+    missed = 0
+    for sh in hashes:
+        if isinstance(sh, dict):
+            out.append(sh)
+            continue
+        seg = segments_by_hash.get(str(sh or "").strip())
+        if isinstance(seg, dict):
+            out.append(seg)
+        else:
+            missed += 1
+    if out:
+        return out, ("" if not missed
+                     else f"{missed} of {len(hashes)} segment hashes unmatched")
+    return [], f"none of {len(hashes)} segment hashes matched the payload"
+
+
 def _normalize_fare_row(
     *,
     airline_code: str,
@@ -1107,6 +1163,7 @@ def _normalize_fare_row(
     segments: List[Dict[str, Any]],
     policies: List[Dict[str, Any]],
     requested_cabin: str,
+    segment_reason: str = "",
     adt: int,
     chd: int,
     inf: int,
@@ -1122,15 +1179,17 @@ def _normalize_fare_row(
         or hash_meta.get("flight_number_hint")
         or str(fare.get("id") or "")
     )
+    # A real departure_date_time, or the date with NO invented clock. The
+    # date is still emitted because storage requires one and the row is a real
+    # offer -- but `departure_time_known` says the time is not a fact, so a
+    # schedule can exclude it instead of placing the flight at midnight.
     departure = (
         seg_first.get("departure_date_time")
         or (leg or {}).get("departure_date_time")
-        or (
-            f"{hash_meta['departure_date']}T00:00:00"
-            if hash_meta.get("departure_date")
-            else None
-        )
     )
+    departure_time_known = bool(departure)
+    if not departure and hash_meta.get("departure_date"):
+        departure = f"{hash_meta['departure_date']}T00:00:00"
     arrival = (
         seg_last.get("arrival_date_time")
         or (leg or {}).get("arrival_date_time")
@@ -1197,8 +1256,12 @@ def _normalize_fare_row(
         "tax_amount": tax_amount,
         "currency": currency,
         "duration_min": duration_min,
-        "stops": max(0, len(segments) - 1),
+        # With no segments there is nothing to count. Reporting 0 asserted
+        # "direct flight, no via" about a row we knew nothing about.
+        "stops": (max(0, len(segments) - 1) if segments else None),
         "via_airports": "|".join(via_airports) if via_airports else None,
+        "departure_time_known": departure_time_known,
+        "segment_reason": segment_reason or None,
         "booking_class": adt_rule.get("booking_code"),
         "baggage": _baggage_text(adt_rule),
         "equipment_code": equipment,
@@ -1318,14 +1381,8 @@ def _extract_rows_from_leg_fares_response(
             primary_leg_hash = str(fare.get("hash") or "").strip()
 
         leg_obj = legs_by_hash.get(primary_leg_hash)
-        seg_objs: List[Dict[str, Any]] = []
-        if isinstance(leg_obj, dict):
-            segment_hashes = leg_obj.get("segment_hashes")
-            if isinstance(segment_hashes, list):
-                for sh in segment_hashes:
-                    seg = segments_by_hash.get(str(sh or ""))
-                    if isinstance(seg, dict):
-                        seg_objs.append(seg)
+        seg_objs, seg_reason = _resolve_segments(
+            fare, leg_obj, legs_by_hash, segments_by_hash)
 
         row = _normalize_fare_row(
             airline_code=str(airline_code).upper(),
@@ -1334,6 +1391,7 @@ def _extract_rows_from_leg_fares_response(
             fare=fare,
             leg=leg_obj,
             segments=seg_objs,
+            segment_reason=seg_reason,
             policies=policies if isinstance(policies, list) else [],
             requested_cabin=requested_cabin,
             adt=adt,
@@ -1956,14 +2014,8 @@ def fetch_flights_for_airline(
                     primary_leg_hash = hs
 
             leg_obj = legs_by_hash.get(primary_leg_hash)
-            seg_objs: List[Dict[str, Any]] = []
-            if isinstance(leg_obj, dict):
-                segment_hashes = leg_obj.get("segment_hashes")
-                if isinstance(segment_hashes, list):
-                    for sh in segment_hashes:
-                        seg = segments_by_hash.get(str(sh or ""))
-                        if isinstance(seg, dict):
-                            seg_objs.append(seg)
+            seg_objs, seg_reason = _resolve_segments(
+                fare, leg_obj, legs_by_hash, segments_by_hash)
 
             row = _normalize_fare_row(
                 airline_code=str(airline_code).upper(),
@@ -1972,6 +2024,7 @@ def fetch_flights_for_airline(
                 fare=fare,
                 leg=leg_obj,
                 segments=seg_objs,
+                segment_reason=seg_reason,
                 policies=policies if isinstance(policies, list) else [],
                 requested_cabin=cabin,
                 adt=adt,
