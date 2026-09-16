@@ -27,6 +27,7 @@ from discount_engine.sanitize import sanitize_report_for_sync
 
 from . import APP_ID, __version__
 from .live_plugins import load_live_plugins, write_live_hars
+from .market_api import MarketApiMixin
 from .outbox import Outbox
 
 DEFAULT_API_BASE = "https://aero-pulse-api-591603094460.asia-south1.run.app"
@@ -73,7 +74,7 @@ def _sync_id_for(payload: dict[str, Any]) -> str:
     return hashlib.sha256(blob).hexdigest()[:32]
 
 
-class DesktopApi:
+class DesktopApi(MarketApiMixin):
     """Methods exposed to the webview UI via the pywebview JS bridge."""
 
     def __init__(self) -> None:

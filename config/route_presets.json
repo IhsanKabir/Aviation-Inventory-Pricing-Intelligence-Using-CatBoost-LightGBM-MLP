@@ -1,0 +1,42 @@
+{
+  "_comment": "Route groups offered in the Schedule/Fare tabs. Teammates pick one and may still type extra routes. Edit freely - the app reads this file.",
+  "Domestic": [
+    "DAC-CGP",
+    "DAC-CXB",
+    "DAC-ZYL",
+    "DAC-JSR",
+    "DAC-SPD",
+    "DAC-RJH",
+    "DAC-BZL"
+  ],
+  "Saudi (KSA)": [
+    "DAC-JED",
+    "DAC-RUH",
+    "DAC-DMM",
+    "DAC-MED",
+    "CGP-JED",
+    "ZYL-JED"
+  ],
+  "Gulf": [
+    "DAC-DXB",
+    "DAC-AUH",
+    "DAC-DOH",
+    "DAC-KWI",
+    "DAC-MCT",
+    "DAC-BAH"
+  ],
+  "Asia": [
+    "DAC-KUL",
+    "DAC-SIN",
+    "DAC-BKK",
+    "DAC-DEL",
+    "DAC-CCU",
+    "DAC-KTM"
+  ],
+  "Long haul": [
+    "DAC-LHR",
+    "DAC-IST",
+    "DAC-CAN",
+    "DAC-NRT"
+  ]
+}

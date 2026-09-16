@@ -27,9 +27,23 @@ block_cipher = None
 datas = [
     (os.path.join(ROOT, "desktop", "ui.html"), "desktop"),
     (os.path.join(ROOT, "config", "discount_manual_overrides.json"), "config"),
+    # Route groups offered by the Schedule/Fare tabs.
+    (os.path.join(ROOT, "config", "route_presets.json"), "config"),
 ]
 binaries = []
 hiddenimports = ["keyring.backends.Windows"]
+
+# The Schedule/Fare tabs import these lazily (inside methods), so PyInstaller's
+# static analysis never sees them -- they must be named explicitly or the tabs
+# fail only once a user clicks Run.
+hiddenimports += [
+    "market_engine", "market_engine.rows", "market_engine.sources",
+    "market_engine.cache", "market_engine.collect", "market_engine.schedule",
+    "market_engine.fares", "market_engine.render",
+    "engines", "engines.schedule_view",
+    "core", "core.field_quality", "core.flight_number",
+    "modules.firsttrip", "modules.biman", "modules.amyweb",
+]
 
 # Bundle the FULL runtime of the GUI stack — hooks alone miss the .NET pieces.
 for pkg in ("webview", "clr_loader", "pythonnet", "bottle", "proxy_tools"):

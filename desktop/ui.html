@@ -44,6 +44,14 @@
   .diag-row .muted { display: block; }
   .pill { padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
   .scan-bad { color: var(--red-tx); font-weight: 600; }
+  #tab-bar { display: flex; gap: 6px; margin-bottom: 12px; }
+  #tab-bar button { background: #fff; border: 1px solid var(--line); border-bottom: none;
+    border-radius: 8px 8px 0 0; padding: 8px 18px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  #tab-bar button.active { background: #1f4e79; color: #fff; border-color: #1f4e79; font-weight: 700; }
+  .flag { background: #fff2cc; color: #8a6100; padding: 1px 7px; border-radius: 4px;
+    font-size: 11px; margin-right: 4px; white-space: nowrap; }
+  .cheapest { background: #c6efce; color: #006100; font-weight: 700; }
+  .estimate { font-size: 12px; color: var(--muted); margin-top: 6px; }
   #status { font-size: 13px; color: var(--muted); }
   .grid-title { display: flex; justify-content: space-between; align-items: baseline; margin: 4px 0 8px; }
   .grid-title h2 { font-size: 14px; margin: 0; }
@@ -124,6 +132,12 @@
     </div>
   </section>
 
+  <div id="tab-bar" style="display:none">
+    <button data-tab="discounts" class="active" onclick="selectTab('discounts')">Discounts</button>
+    <button data-tab="schedule" onclick="selectTab('schedule')">Airline Schedule</button>
+    <button data-tab="fare" onclick="selectTab('fare')">Fare Comparison</button>
+  </div>
+
   <section class="card" id="main-card">
     <div class="row">
       <label>HAR capture folder
@@ -169,6 +183,41 @@
     <div id="grids"></div>
   </section>
 
+  <section class="card" id="tab-schedule" style="display:none">
+    <div class="row">
+      <label>Routes <input id="sch_routes" placeholder="DAC-CGP,DAC-JED" style="width:230px"></label>
+      <label>Preset <select id="sch_preset" onchange="applyPreset('sch')"></select></label>
+      <label>From <input id="sch_from" placeholder="YYYY-MM-DD"></label>
+      <label>To <input id="sch_to" placeholder="YYYY-MM-DD"></label>
+      <button class="secondary" onclick="estimateMarket('schedule')">Estimate</button>
+      <button class="big" id="sch-run" onclick="runMarket('schedule')">Build schedule</button>
+      <button class="secondary" id="sch-cancel" style="display:none" onclick="cancelMarket()">Cancel</button>
+      <button class="secondary" onclick="exportMarket()">Export xlsx</button>
+    </div>
+    <div class="row" style="margin-top:8px"><span class="muted">Sources</span><span id="sch_sources"></span></div>
+    <div class="estimate" id="sch_estimate"></div>
+    <div id="sch_notes" style="margin-top:8px"></div>
+    <div class="table-wrap" id="sch_result" style="margin-top:10px"></div>
+  </section>
+
+  <section class="card" id="tab-fare" style="display:none">
+    <div class="row">
+      <label>Routes <input id="far_routes" placeholder="DAC-CGP,DAC-JED" style="width:230px"></label>
+      <label>Preset <select id="far_preset" onchange="applyPreset('far')"></select></label>
+      <label>From <input id="far_from" placeholder="YYYY-MM-DD"></label>
+      <label>To <input id="far_to" placeholder="YYYY-MM-DD"></label>
+      <label style="font-size:12px"><input type="checkbox" id="far_direct"> Nonstop only</label>
+      <button class="secondary" onclick="estimateMarket('fare')">Estimate</button>
+      <button class="big" id="far-run" onclick="runMarket('fare')">Compare fares</button>
+      <button class="secondary" id="far-cancel" style="display:none" onclick="cancelMarket()">Cancel</button>
+      <button class="secondary" onclick="exportMarket()">Export xlsx</button>
+    </div>
+    <div class="row" style="margin-top:8px"><span class="muted">Sources</span><span id="far_sources"></span></div>
+    <div class="estimate" id="far_estimate"></div>
+    <div id="far_notes" style="margin-top:8px"></div>
+    <div class="table-wrap" id="far_result" style="margin-top:10px"></div>
+  </section>
+
   <footer class="muted" style="margin-top:18px;padding:10px 2px;font-size:11px;border-top:1px solid var(--line)">
     OTA Discount Comparison &middot; &copy; 2026 Ihsan Kabir. All Rights Reserved.
     Proprietary software &mdash; not for copying or redistribution.
@@ -204,8 +253,9 @@ async function refreshState() {
   document.getElementById("account-card").style.display = state.logged_in ? "" : "none";
   // Sign-in wall: the app's working surface only exists for identified users
   // (the backend enforces the same gate on run/export/archive/sync).
-  document.getElementById("main-card").style.display = state.logged_in ? "" : "none";
-  if (!state.logged_in) document.getElementById("result-card").style.display = "none";
+  loggedIn = state.logged_in;
+  applyTab();
+  if (loggedIn && !marketReady) { marketReady = true; initMarket(); }
   document.getElementById("har_dir").value = state.har_dir;
   document.getElementById("routes").value = state.routes;
   document.getElementById("travel_date").value = state.travel_date;
@@ -537,6 +587,7 @@ function gridTable(title, block, channelStatus) {
 }
 
 function renderReport(report, prevAvailable) {
+  hasDiscountResult = true;
   document.getElementById("result-card").style.display = "";
   document.getElementById("report-meta").textContent =
     `${report.report_date} / ${report.report_time}hrs` +
@@ -607,6 +658,153 @@ window.addEventListener("pywebviewready", async () => {
   flushPending();
   showAccess();
 });
+// ---- tabs + market views (schedule / fare) ----------------------------------
+let currentTab = "discounts";
+let loggedIn = false, marketReady = false, hasDiscountResult = false;
+let marketSources = [];
+
+function selectTab(name) { currentTab = name; applyTab(); }
+
+function applyTab() {
+  const show = (id, on) => { document.getElementById(id).style.display = on ? "" : "none"; };
+  show("tab-bar", loggedIn);
+  const disc = loggedIn && currentTab === "discounts";
+  show("main-card", disc);
+  show("result-card", disc && hasDiscountResult);
+  show("tab-schedule", loggedIn && currentTab === "schedule");
+  show("tab-fare", loggedIn && currentTab === "fare");
+  for (const b of document.querySelectorAll("#tab-bar button"))
+    b.classList.toggle("active", b.dataset.tab === currentTab);
+}
+
+async function initMarket() {
+  const st = await api().market_state();
+  marketSources = st.sources || [];
+  const iso = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+  for (const p of ["sch", "far"]) {
+    const sel = document.getElementById(p + "_preset");
+    sel.innerHTML = `<option value="">— preset —</option>` +
+      Object.keys(st.presets || {}).map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join("");
+    sel.dataset.presets = JSON.stringify(st.presets || {});
+    // A source that cannot answer THIS view is disabled with the reason, rather
+    // than silently returning nothing after a long run.
+    const want = p === "sch" ? "can_schedule" : "can_fare";
+    document.getElementById(p + "_sources").innerHTML = marketSources.map(s => {
+      const why = !s.available ? "not installed on this machine"
+                : (!s[want] ? "cannot answer this view" : (s.note || ""));
+      const off = !s.available || !s[want];
+      return `<label style="font-size:12px;margin-right:12px" title="${esc(why)}">
+        <input type="checkbox" class="${p}-src" value="${esc(s.key)}"
+          ${off ? "disabled" : (s.key === "firsttrip" ? "checked" : "")}>
+        ${esc(s.label)}${off ? ` <span class="muted">(${esc(why)})</span>` : ""}</label>`;
+    }).join("");
+    if (!document.getElementById(p + "_from").value) document.getElementById(p + "_from").value = iso(1);
+    if (!document.getElementById(p + "_to").value) document.getElementById(p + "_to").value = iso(30);
+  }
+}
+
+function applyPreset(p) {
+  const sel = document.getElementById(p + "_preset");
+  const routes = (JSON.parse(sel.dataset.presets || "{}"))[sel.value] || [];
+  if (routes.length) document.getElementById(p + "_routes").value = routes.join(",");
+}
+
+function marketArgs(kind) {
+  const p = kind === "schedule" ? "sch" : "far";
+  const sources = [...document.querySelectorAll("." + p + "-src")]
+    .filter(c => c.checked).map(c => c.value);
+  return [kind, document.getElementById(p + "_routes").value,
+          document.getElementById(p + "_from").value,
+          document.getElementById(p + "_to").value, sources, "Economy",
+          p === "far" && document.getElementById("far_direct").checked];
+}
+
+async function estimateMarket(kind) {
+  const p = kind === "schedule" ? "sch" : "far";
+  const a = marketArgs(kind);
+  const r = await api().market_estimate(a[0], a[1], a[2], a[3], a[4], a[5]);
+  const box = document.getElementById(p + "_estimate");
+  if (!r.ok) { box.textContent = r.error; return false; }
+  box.textContent = `${r.queries} queries · ${r.cached} cached · ${r.to_fetch} to fetch`
+    + ` · about ${Math.max(1, Math.round(r.est_seconds / 60))} min`;
+  return true;
+}
+
+async function runMarket(kind) {
+  const p = kind === "schedule" ? "sch" : "far";
+  if (!await estimateMarket(kind)) return;     // validation errors surface first
+  document.getElementById(p + "-run").disabled = true;
+  document.getElementById(p + "-cancel").style.display = "";
+  const a = marketArgs(kind);
+  const r = await api().run_market(a[0], a[1], a[2], a[3], a[4], a[5], a[6]);
+  document.getElementById(p + "-run").disabled = false;
+  document.getElementById(p + "-cancel").style.display = "none";
+  setStatus("");
+  if (await handleAuthRequired(r)) return;
+  if (!r.ok) { addBanner("err", r.error); return; }
+  if (kind === "schedule") renderSchedule(r); else renderFares(r);
+}
+
+async function cancelMarket() {
+  await api().cancel_market();
+  addBanner("warn", "Stopping after the current query — partial results will be kept.");
+}
+
+async function exportMarket() {
+  const r = await api().export_market();
+  if (!r.ok) { addBanner("err", r.error); return; }
+  addBanner("ok", "Saved " + r.path);
+}
+
+function marketNotes(r, extra) {
+  const bits = [`${r.rows} rows · ${r.from_cache} from cache · ${r.fetched} fetched · ${r.seconds}s`];
+  if (r.cancelled) bits.push("cancelled — showing partial results");
+  for (const [s, why] of Object.entries(r.refused || {})) bits.push(`source refused: ${s} — ${why}`);
+  return bits.concat(extra || []).map(t => `<div class="muted">${esc(t)}</div>`).join("");
+}
+
+function renderSchedule(r) {
+  const extra = [];
+  if (r.held_back) extra.push(`${r.held_back} connecting itineraries held back — a marketed origin-destination is not an operated leg`);
+  if (r.dropped_no_clock) extra.push(`${r.dropped_no_clock} rows excluded — no real departure time`);
+  if (r.dropped_no_flight) extra.push(`${r.dropped_no_flight} rows excluded — no readable flight number`);
+  document.getElementById("sch_notes").innerHTML = marketNotes(r, extra);
+  const rows = (r.patterns || []).map(p => {
+    const f = [];
+    if (p.varies) f.push('<span class="flag">pattern changes in range</span>');
+    if (p.time_varies) f.push('<span class="flag">retimes by day</span>');
+    if (p.disagreement) f.push('<span class="flag">sources disagree</span>');
+    return `<tr><td>${esc(p.route)}</td><td>${esc(p.airline)}</td><td>${esc(p.flight)}</td>
+      <td>${esc(p.operates)}</td><td>${esc(p.departure)}</td><td>${esc(p.arrival)}</td>
+      <td>${p.dates}</td><td>${esc((p.sources || []).join(", "))}</td><td>${f.join(" ")}</td></tr>`;
+  }).join("");
+  document.getElementById("sch_result").innerHTML = rows
+    ? `<table><thead><tr><th>Route</th><th>Airline</th><th>Flight</th><th>Operates</th><th>Dep</th><th>Arr</th><th>Dates</th><th>Sources</th><th>Flags</th></tr></thead><tbody>${rows}</tbody></table>`
+    : `<div class="muted">No operated legs for these routes and dates from the chosen sources.</div>`;
+}
+
+function renderFares(r) {
+  const extra = [];
+  if ((r.gross_only || []).length)
+    extra.push(`gross only — base not trustworthy from: ${r.gross_only.join(", ")}`);
+  document.getElementById("far_notes").innerHTML = marketNotes(r, extra);
+  const money = v => Math.round(v).toLocaleString();
+  const rows = (r.cells || []).map(c => {
+    const f = [];
+    if (!c.base_available) f.push('<span class="flag">base unavailable</span>');
+    else if (c.base_derived) f.push('<span class="flag">base partly derived</span>');
+    if (c.age_hours > 24) f.push(`<span class="flag">${Math.round(c.age_hours / 24)}d old</span>`);
+    const b = c.base_available;
+    return `<tr class="${c.cheapest ? "cheapest" : ""}"><td>${esc(c.route)}</td><td>${esc(c.airline)}</td>
+      <td>${c.flights}</td><td>${c.nonstop}</td><td>${c.dates}</td>
+      <td>${money(c.gross_low)}</td><td>${money(c.gross_high)}</td><td>${money(c.gross_avg)}</td>
+      <td>${b ? money(c.base_low) : "—"}</td><td>${b ? money(c.base_high) : "—"}</td>
+      <td>${b ? money(c.base_avg) : "—"}</td><td>${f.join(" ")}</td></tr>`;
+  }).join("");
+  document.getElementById("far_result").innerHTML = rows
+    ? `<table><thead><tr><th>Route</th><th>Airline</th><th>Flights</th><th>Nonstop</th><th>Dates</th><th>Gross low</th><th>Gross high</th><th>Gross avg</th><th>Base low</th><th>Base high</th><th>Base avg</th><th>Flags</th></tr></thead><tbody>${rows}</tbody></table>`
+    : `<div class="muted">No fares for these routes and dates from the chosen sources.</div>`;
+}
 </script>
 </body>
 </html>
