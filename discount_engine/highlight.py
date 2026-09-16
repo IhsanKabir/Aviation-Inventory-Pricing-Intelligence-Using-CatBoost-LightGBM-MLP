@@ -175,12 +175,13 @@ def compute_highlights(report: dict[str, Any],
                          "display": f"{un[0]:g}% net · {un[2]}"}
             gated_best = None
             if gated:
-                # KNOWN LIMITATION (deferred): a CAPPED tier ranks by its nominal net here,
-                # so a high-% capped coupon can outrank a lower-% uncapped one whose effective
-                # saving on a real fare is larger. The cap AMOUNT isn't carried into the cell,
-                # so we can't compute the true effective net at this layer — the display flags
-                # ", capped" so the operator can judge. Proper fix = plumb an eff_net (cap-aware,
-                # from grid's min(pct*base, maxDiscount)) through parse_cell_tiers, then rank on it.
+                # The cap is ALREADY APPLIED upstream: ShareTrip renders judge_cell's
+                # effective_pct and GoZayaan its realized_pct (min(pct*price, cap)). A
+                # capped 18% coupon therefore arrives here as 12.7 / 6.8 / 2.6 depending
+                # on the fare, while an uncapped one still reads 18. Ranking on net is
+                # correct, and ", capped" explains WHY the number is lower -- it is not an
+                # unapplied discount. Do NOT subtract a cap again here: that double-counts
+                # it and understates every capped tier.
                 gb = max(gated, key=lambda x: x[0])
                 lbl = f", {gb[4]}" if gb[4] else ""
                 cap = ", capped" if gb[5] else ""

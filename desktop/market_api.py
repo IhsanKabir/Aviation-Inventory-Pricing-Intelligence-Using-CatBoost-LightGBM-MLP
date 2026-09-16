@@ -66,14 +66,22 @@ class MarketApiMixin:
         reason, instead of running for minutes and then showing an empty table.
         """
         from market_engine import sources as S
+        from market_engine.har import find_hars
         available = S.live_available()
-        return {
-            "presets": self.route_presets(),
-            "max_days": self.MARKET_MAX_DAYS,
-            "sources": [{"key": k, "label": s.label, "available": bool(available.get(k)),
-                         "can_schedule": s.can_schedule, "can_fare": s.can_fare,
-                         "note": s.note} for k, s in S.LIVE.items()],
-        }
+        entries = [{"key": k, "label": s.label, "available": bool(available.get(k)),
+                    "can_schedule": s.can_schedule, "can_fare": s.can_fare,
+                    "note": s.note} for k, s in S.LIVE.items()]
+        # Manual captures are one pseudo-source over the capture folder; which
+        # channels inside it can answer is decided per file, and reported.
+        har_dir = (self._config.get("har_dir") or "") if hasattr(self, "_config") else ""
+        count = len(find_hars(Path(har_dir))) if har_dir else 0
+        entries.append({
+            "key": "har", "label": "Manual HAR captures", "available": count > 0,
+            "can_schedule": True, "can_fare": True,
+            "note": ("{} file(s) in the capture folder".format(count) if count
+                     else "no .har files in the capture folder (set it on the Discounts tab)")})
+        return {"presets": self.route_presets(), "max_days": self.MARKET_MAX_DAYS,
+                "sources": entries, "har_dir": har_dir}
 
     def _market_plan(self, kind: str, routes: str, date_from: str, date_to: str,
                      sources: list, cabin: str):
@@ -108,18 +116,20 @@ class MarketApiMixin:
                               span, self.MARKET_MAX_DAYS)}
 
         want = "schedule" if kind == "schedule" else "fare"
-        picked = [k for k in (sources or []) if k in S.LIVE]
-        if not picked:
+        chosen = list(sources or [])
+        use_har = "har" in chosen
+        picked = [k for k in chosen if k in S.LIVE]
+        if not picked and not use_har:
             return None, {"ok": False, "error": "Pick at least one source."}
         picked = [k for k in picked
                   if (S.LIVE[k].can_schedule if want == "schedule" else S.LIVE[k].can_fare)]
-        if not picked:
+        if not picked and not use_har:
             return None, {"ok": False,
                           "error": "None of the chosen sources can answer a {}.".format(want)}
 
         dates = [start + timedelta(days=i) for i in range(span)]
         return CollectPlan(routes=pairs, dates=dates, source_keys=picked,
-                           cabin=cabin or "Economy", purpose=want), None
+                           cabin=cabin or "Economy", purpose=want, use_har=use_har), None
 
     # --------------------------------------------------------------- operations
     def market_estimate(self, kind: str, routes: str, date_from: str, date_to: str,
@@ -162,6 +172,20 @@ class MarketApiMixin:
 
             result = collect(plan, self._market_cache(), progress=progress,
                              should_cancel=lambda: getattr(self, "_market_cancel", False))
+            har_notes: list = []
+            if plan.use_har:
+                from market_engine.har import collect_har_rows, coverage
+                self._status = "Reading manual HAR captures..."
+                har_rows, har_notes = collect_har_rows(
+                    Path(self._config.get("har_dir") or "."), purpose=plan.purpose,
+                    progress=progress)
+                result.rows.extend(har_rows)
+                # A capture covers the day it was taken, not the requested range;
+                # say which days it actually brought so no one assumes otherwise.
+                cov = coverage(har_rows)
+                if cov:
+                    har_notes.append("HAR coverage: " + "; ".join(
+                        "{} {}".format(rt, len(days)) for rt, days in sorted(cov.items())))
             first, last = plan.dates[0], plan.dates[-1]
             payload: dict[str, Any] = {
                 "ok": True, "kind": kind, "cancelled": result.cancelled,

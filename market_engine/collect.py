@@ -35,6 +35,10 @@ class CollectPlan:
     source_keys: list[str]
     cabin: str = "Economy"
     purpose: str = "fare"          # "schedule" | "fare" -> drives cache freshness
+    #: Also read manual HAR captures from the operator's capture folder. HARs
+    #: cover the days they were captured on, not the requested range, so they
+    #: supplement live rows rather than standing in for them.
+    use_har: bool = False
 
     @property
     def max_age(self) -> timedelta:

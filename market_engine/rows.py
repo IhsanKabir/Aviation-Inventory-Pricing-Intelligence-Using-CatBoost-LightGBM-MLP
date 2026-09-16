@@ -102,13 +102,17 @@ def from_connector(raw: dict[str, Any], *, source: str, cabin: str,
     a schedule or a fare view could do with it.
     """
     airline = str(raw.get("airline") or "").upper().strip()
-    gross = float(raw.get("price_total_bdt") or raw.get("gross_total_bdt") or 0)
+    # Channels name the sell price differently: live connectors use
+    # price_total_bdt, the Amy agent HAR uses tot_fare, FT B2B uses gross_total_bdt.
+    gross = float(raw.get("price_total_bdt") or raw.get("gross_total_bdt")
+                  or raw.get("tot_fare") or 0)
     if not airline or gross <= 0:
         return None
 
     dep_d, dep_t = _split_dt(raw.get("departure"))
     arr_d, arr_t = _split_dt(raw.get("arrival"))
-    base = float(raw.get("fare_amount") or raw.get("base_fare_bdt") or 0)
+    base = float(raw.get("fare_amount") or raw.get("base_fare_bdt")
+                 or raw.get("base_fare") or 0)
     stops = raw.get("stops")
 
     return FlightRow(

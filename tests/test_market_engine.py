@@ -53,10 +53,17 @@ def test_cache_freshness_is_per_purpose():
 
 
 def test_source_capability_is_declared_not_assumed():
-    assert S.HAR["bdfare"].can_fare and not S.HAR["bdfare"].can_schedule
-    assert not S.HAR["akij"].can_schedule and not S.HAR["akij"].can_fare
-    assert "bdfare" not in {s.key for s in S.usable(S.HAR, purpose="schedule")}
-    assert "bdfare" in {s.key for s in S.usable(S.HAR, purpose="fare")}
+    """Flags come from what the parsers actually emit, checked on real captures."""
+    # ShareTrip and GoZayaan HARs carry flight number + clock + price.
+    for key in ("sharetrip", "gozayaan"):
+        assert S.HAR[key].can_schedule and S.HAR[key].can_fare
+    # Amy's agent rows have a clock and a price but no flight number.
+    assert S.HAR["amy"].can_fare and not S.HAR["amy"].can_schedule
+    assert "amy" not in {s.key for s in S.usable(S.HAR, purpose="schedule")}
+    assert "amy" in {s.key for s in S.usable(S.HAR, purpose="fare")}
+    # BDFare and AKIJ have no flight-row parser at all.
+    for key in ("bdfare", "akij"):
+        assert not S.HAR[key].can_schedule and not S.HAR[key].can_fare
 
 
 def test_tallies_match_field_quality_contract():
@@ -178,6 +185,50 @@ def test_schedule_purpose_rejects_sources_that_cannot_answer_it():
     plan, err = _Api()._market_plan("schedule", "DAC-CGP", "2026-10-01",
                                     "2026-10-07", ["nope"], "Economy")
     assert plan is None and "at least one source" in err["error"]
+
+
+def test_har_capability_reflects_the_parsers(tmp_path):
+    """Declared capability must match what a parser can actually produce."""
+    from market_engine import sources as S
+    from market_engine.har import PARSERS
+    # Channels with no flight-row parser must be unusable for BOTH views.
+    for key in ("bdfare", "akij"):
+        assert key not in PARSERS
+        assert not S.HAR[key].can_schedule and not S.HAR[key].can_fare
+    # Amy's agent rows carry no flight number, so fares only.
+    assert "amy" in PARSERS
+    assert S.HAR["amy"].can_fare and not S.HAR["amy"].can_schedule
+
+
+def test_har_collector_explains_every_skipped_file(tmp_path):
+    """A file that contributes nothing must say why, never fail silently."""
+    from market_engine.har import collect_har_rows
+    (tmp_path / "mystery.har").write_text("{}", encoding="utf-8")
+    rows, notes = collect_har_rows(tmp_path, purpose="fare")
+    assert rows == []
+    assert any("mystery.har" in n for n in notes)
+
+    empty, why = collect_har_rows(tmp_path / "nope", purpose="fare")
+    assert empty == [] and why and "No .har files" in why[0]
+
+
+def test_har_only_selection_is_allowed():
+    """A teammate who cannot fetch live may run on captures alone."""
+    from desktop.market_api import MarketApiMixin
+
+    class _Api(MarketApiMixin):
+        pass
+
+    plan, err = _Api()._market_plan("fare", "DAC-CGP", "2026-10-01", "2026-10-07",
+                                    ["har"], "Economy")
+    assert err is None and plan.use_har is True and plan.source_keys == []
+
+
+def test_har_coverage_reports_actual_days(tmp_path):
+    from market_engine.har import coverage
+    rows = [_row(departure="2026-10-07T07:00:00"), _row(departure="2026-10-09T07:00:00")]
+    cov = coverage(rows)
+    assert cov["DAC-CGP"] == [date(2026, 10, 7), date(2026, 10, 9)]
 
 
 if __name__ == "__main__":

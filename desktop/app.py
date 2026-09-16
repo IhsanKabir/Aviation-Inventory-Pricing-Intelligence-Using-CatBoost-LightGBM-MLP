@@ -41,8 +41,9 @@ def _selftest() -> int:
         return "discount engine"
 
     def _market():
-        from market_engine import cache, collect, fares, render, rows, schedule, sources
-        return f"{len(sources.LIVE)} live sources"
+        from market_engine import cache, collect, fares, har, render, rows, schedule, sources
+        return (f"{len(sources.LIVE)} live sources, "
+                f"{len(har.PARSERS)} HAR parsers")
 
     def _sched_engine():
         from core import field_quality, flight_number      # noqa: F401

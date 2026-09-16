@@ -39,7 +39,7 @@ hiddenimports = ["keyring.backends.Windows"]
 hiddenimports += [
     "market_engine", "market_engine.rows", "market_engine.sources",
     "market_engine.cache", "market_engine.collect", "market_engine.schedule",
-    "market_engine.fares", "market_engine.render",
+    "market_engine.fares", "market_engine.render", "market_engine.har",
     "engines", "engines.schedule_view",
     "core", "core.field_quality", "core.flight_number",
     "modules.firsttrip", "modules.biman", "modules.amyweb",

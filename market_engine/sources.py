@@ -46,16 +46,20 @@ LIVE: dict[str, Source] = {
                   workers=1, sleep_s=1.5, note="Best-effort; skips when its token is stale."),
 }
 
-#: HAR channels. Capability is dictated by the fields each parser actually emits
-#: — verified against the parsers, not assumed.
+#: HAR channels. Capability here is VERIFIED against the parsers on real captures,
+#: not inferred: a channel whose rows carry no flight number cannot support a
+#: schedule, because the schedule engine drops those rows by design.
 HAR: dict[str, Source] = {
     "sharetrip": Source("sharetrip", "ShareTrip (HAR)", "har", True, True),
     "gozayaan": Source("gozayaan", "GoZayaan (HAR)", "har", True, True),
-    "amy": Source("amy", "Amy (HAR)", "har", True, True),
-    "bdfare": Source("bdfare", "BDFare (HAR)", "har", False, True,
-                     note="No flight number — fares only, cannot build a schedule."),
+    "firsttrip_b2c": Source("firsttrip_b2c", "FirstTrip B2C (HAR)", "har", True, True,
+                            note="Needs a SEARCH capture; a booking-page HAR has no offers."),
+    "amy": Source("amy", "Amy (HAR)", "har", False, True,
+                  note="Agent rows carry no flight number - fares only, no schedule."),
+    "bdfare": Source("bdfare", "BDFare (HAR)", "har", False, False,
+                     note="No flight-row parser - cannot feed these views."),
     "akij": Source("akij", "AKIJ (HAR)", "har", False, False,
-                   note="Carries neither flight number nor clock — unusable for these views."),
+                   note="No flight-row parser - cannot feed these views."),
 }
 
 

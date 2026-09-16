@@ -760,6 +760,9 @@ function marketNotes(r, extra) {
   const bits = [`${r.rows} rows · ${r.from_cache} from cache · ${r.fetched} fetched · ${r.seconds}s`];
   if (r.cancelled) bits.push("cancelled — showing partial results");
   for (const [s, why] of Object.entries(r.refused || {})) bits.push(`source refused: ${s} — ${why}`);
+  // A HAR covers the day it was captured, not the requested range — say which
+  // files contributed, which could not, and what days they actually brought.
+  for (const n of (r.har_notes || [])) bits.push(n);
   return bits.concat(extra || []).map(t => `<div class="muted">${esc(t)}</div>`).join("");
 }
 

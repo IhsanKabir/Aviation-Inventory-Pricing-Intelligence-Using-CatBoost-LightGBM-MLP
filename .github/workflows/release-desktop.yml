@@ -60,6 +60,23 @@ jobs:
       - name: Build (one-file exe)
         run: pyinstaller desktop/build.spec --noconfirm
 
+      # The Schedule/Fare tabs import their engine lazily, so a bundling gap shows
+      # up only when a user clicks Run -- after the release is published. This runs
+      # those imports inside the built exe and fails the release if any is missing.
+      # CI's environment differs from a developer's (it has shipped a crashing exe
+      # before), so the artifact must prove itself here, not on a laptop.
+      - name: Verify the bundle (selftest inside the exe)
+        shell: pwsh
+        run: |
+          Remove-Item $env:TEMP\ota_selftest.txt -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath dist\OTADiscountReport.exe -ArgumentList '--selftest' -PassThru -Wait
+          if (Test-Path $env:TEMP\ota_selftest.txt) { Get-Content $env:TEMP\ota_selftest.txt }
+          if ($p.ExitCode -ne 0) {
+            Write-Error "Bundle selftest FAILED (exit $($p.ExitCode)) - refusing to publish this exe."
+            exit 1
+          }
+          Write-Output "Bundle selftest passed."
+
       # --- Optional Authenticode signing (only if a cert secret is configured) ---
       - name: Code-sign
         if: ${{ env.WINDOWS_CERT_BASE64 != '' }}
