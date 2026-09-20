@@ -54,6 +54,8 @@ class ScheduleLeg:
     seats: int | None = None
     stops: int = 0
     via: str = ""
+    #: Operating carrier on a codeshare, when the source distinguishes it.
+    operated_by: str = ""
     sources: set = field(default_factory=set)
     #: Every distinct departure time the sources reported for this leg.
     reported_times: set = field(default_factory=set)
@@ -214,7 +216,8 @@ def build(rows, *, sources_requested=None, sources_refused=None,
                 arrival=str(r.get("arrival_time") or "").strip(),
                 aircraft=str(r.get("aircraft") or "").strip(),
                 seats=r.get("seats"), stops=stops,
-                via=str(r.get("via") or "").strip())
+                via=str(r.get("via") or "").strip(),
+                operated_by=str(r.get("operated_by") or "").strip())
         leg.sources.add(src)
         leg.reported_times.add(dep)
         # Keep the first time seen as the headline, but never overwrite it

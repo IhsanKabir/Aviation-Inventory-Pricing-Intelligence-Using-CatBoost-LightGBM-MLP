@@ -163,6 +163,7 @@ class MarketApiMixin:
         from market_engine.collect import collect
         from market_engine.fares import build_fares, cheapest_by_route
         from market_engine.schedule import build_schedule, weekly_pattern
+        from market_engine.timetable import build_timetable, coverage_gaps
 
         self._busy, self._market_cancel = True, False
         self._status = "Collecting..."
@@ -197,7 +198,15 @@ class MarketApiMixin:
             if kind == "schedule":
                 sched = build_schedule(result, date_from=first, date_to=last)
                 patterns = weekly_pattern(sched, date_from=first, date_to=last)
-                self._market_last = {"kind": kind, "sched": sched, "patterns": patterns}
+                # The timetable lists every SERVICE on sale, connections included:
+                # on a long-haul market nearly every offer carries a stop, so the
+                # nonstop-only view would leave the sheet virtually empty.
+                full = build_schedule(result, date_from=first, date_to=last,
+                                      include_itineraries=True)
+                timetable = build_timetable(full)
+                gaps = coverage_gaps(timetable)
+                self._market_last = {"kind": kind, "sched": sched, "patterns": patterns,
+                                     "timetable": timetable}
                 payload.update({
                     "patterns": [{"route": p.route, "airline": p.airline, "flight": p.flight,
                                   "operates": p.weekday_label, "departure": p.departure,
@@ -208,7 +217,12 @@ class MarketApiMixin:
                     "held_back": sched.itineraries,
                     "dropped_no_clock": sched.dropped_no_clock,
                     "dropped_no_flight": sched.dropped_no_flight,
-                    "refused": dict(sched.sources_refused or {})})
+                    "refused": dict(sched.sources_refused or {}),
+                    "timetable_rows": len(timetable),
+                    # Name what the reference sheet could not fill, so it is fixable
+                    # by editing config rather than silently blank forever.
+                    "missing_seat_capacity": ["{} {}".format(a, t) for a, t in gaps["seats"]],
+                    "missing_airline_names": gaps["names"]})
             else:
                 table = build_fares(result, direct_only=direct_only)
                 best = cheapest_by_route(table.cells)
@@ -261,7 +275,8 @@ class MarketApiMixin:
         try:
             written = write_workbook(path, patterns=last.get("patterns"),
                                      sched=last.get("sched"), table=last.get("table"),
-                                     best_by_route=last.get("best"))
+                                     best_by_route=last.get("best"),
+                                     timetable=last.get("timetable"))
         except OSError as exc:
             return {"ok": False, "error": "Could not write the file: {}".format(exc)}
         self._log_usage("market_export", target=last["kind"])

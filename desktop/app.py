@@ -41,9 +41,12 @@ def _selftest() -> int:
         return "discount engine"
 
     def _market():
-        from market_engine import cache, collect, fares, har, render, rows, schedule, sources
-        return (f"{len(sources.LIVE)} live sources, "
-                f"{len(har.PARSERS)} HAR parsers")
+        from market_engine import (cache, collect, fares, har, render, rows,
+                                    schedule, sources, timetable)
+        names = timetable._load("airline_names.json")
+        caps = timetable._load("seat_capacity.json")
+        return (f"{len(sources.LIVE)} live sources, {len(har.PARSERS)} HAR parsers, "
+                f"{len(names)} airline names, {len(caps)} fleets")
 
     def _sched_engine():
         from core import field_quality, flight_number      # noqa: F401

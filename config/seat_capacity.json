@@ -1,0 +1,219 @@
+{
+ "_comment": "Seat capacity by AIRLINE then AIRCRAFT (keys normalized: uppercase, spaces removed). The same type differs by operator - a 737-800 seats 162 at Biman and 189 at US-Bangla - so never key on aircraft alone. Values marked below are typical/reference configurations from general knowledge and vary by sub-fleet and refit; operator-confirmed numbers should replace them. An aircraft not listed here is left BLANK in the sheet rather than guessed.",
+ "_confirmed": "BG/VQ from published fleet pages; BS 737-800, TG A320 and TG A330 from the operator's own schedule sheet.",
+ "BG": {
+  "BOEING787-8": 271,
+  "BOEING787-9": 298,
+  "BOEING777-300ER": 419,
+  "BOEING777-300": 419,
+  "BOEING737-800": 162,
+  "DASH8-400": 74,
+  "BOMBARDIERDASH-8-Q400": 74,
+  "Q400": 74,
+  "DH8": 74,
+  "788": 271,
+  "789": 298,
+  "77W": 419,
+  "773": 419,
+  "737": 162,
+  "738": 162
+ },
+ "BS": {
+  "BOEING737-800": 189,
+  "737": 189,
+  "738": 189,
+  "ATR72-600": 70,
+  "ATR72": 70,
+  "ATR725": 70,
+  "AIRBUSA330-300": 436,
+  "A330-300": 436,
+  "333": 436
+ },
+ "VQ": {
+  "ATR725": 72,
+  "ATR72-500": 72,
+  "ATR72": 72,
+  "ATR72-600": 72
+ },
+ "2A": {
+  "ATR72": 72,
+  "ATR72-600": 72,
+  "ATR725": 72
+ },
+ "EK": {
+  "BOEING777-300ER": 354,
+  "BOEING777-300": 354,
+  "77W": 354,
+  "AIRBUSA380-800": 489,
+  "A380": 489,
+  "388": 489,
+  "BOEING737MAX8": 174,
+  "BOEING737-800": 174
+ },
+ "FZ": {
+  "BOEING737MAX8": 174,
+  "BOEING737-800": 174,
+  "737": 174,
+  "738": 174
+ },
+ "QR": {
+  "BOEING777-300ER": 354,
+  "BOEING777-300": 354,
+  "77W": 354,
+  "AIRBUSA350-900": 283,
+  "AIRBUSA350-1000": 327,
+  "AIRBUSA330-300": 305,
+  "BOEING787-8": 254,
+  "BOEING787-9": 311,
+  "AIRBUSA320": 144,
+  "AIRBUSA321": 177
+ },
+ "EY": {
+  "BOEING787-9": 299,
+  "BOEING787-10": 336,
+  "BOEING777-300ER": 328,
+  "AIRBUSA320": 158,
+  "AIRBUSA321": 199,
+  "AIRBUSA350-1000": 371
+ },
+ "GF": {
+  "AIRBUSA320NEO": 150,
+  "AIRBUSA320": 150,
+  "AIRBUSA321NEO": 166,
+  "BOEING787-9": 282,
+  "787": 282
+ },
+ "WY": {
+  "BOEING737-800": 162,
+  "BOEING737MAX8": 162,
+  "BOEING787-8": 288,
+  "BOEING787-9": 288
+ },
+ "SV": {
+  "BOEING777-300ER": 393,
+  "BOEING777-300": 393,
+  "77W": 393,
+  "AIRBUSA330-300": 298,
+  "AIRBUSA320": 162,
+  "AIRBUSA321": 195,
+  "BOEING787-9": 298,
+  "BOEING787-10": 339
+ },
+ "KU": {
+  "AIRBUSA320NEO": 174,
+  "AIRBUSA320": 174,
+  "AIRBUSA330-800": 235,
+  "BOEING777-300ER": 342
+ },
+ "J9": {
+  "AIRBUSA320NEO": 174,
+  "AIRBUSA320": 174
+ },
+ "G9": {
+  "AIRBUSA320": 174,
+  "AIRBUSA321NEO": 215,
+  "AIRBUSA320NEO": 174
+ },
+ "TG": {
+  "AIRBUSA320": 172,
+  "A320": 172,
+  "320": 172,
+  "AIRBUSA330-300": 294,
+  "A330": 294,
+  "330": 294,
+  "333": 294,
+  "BOEING777-300ER": 348,
+  "BOEING787-8": 264,
+  "BOEING787-9": 298
+ },
+ "MH": {
+  "BOEING737MAX8": 162,
+  "BOEING737-800": 162,
+  "737": 162,
+  "738": 162,
+  "AIRBUSA330-300": 290,
+  "AIRBUSA350-900": 286
+ },
+ "SQ": {
+  "BOEING737-800": 162,
+  "BOEING737MAX8": 154,
+  "AIRBUSA350-900": 253,
+  "BOEING787-10": 337,
+  "AIRBUSA380-800": 471
+ },
+ "UL": {
+  "AIRBUSA330-300": 297,
+  "AIRBUSA320NEO": 180,
+  "AIRBUSA320": 180,
+  "AIRBUSA321NEO": 214
+ },
+ "AI": {
+  "AIRBUSA320NEO": 180,
+  "AIRBUSA320": 180,
+  "AIRBUSA321NEO": 222,
+  "BOEING787-8": 256,
+  "BOEING777-300ER": 342
+ },
+ "6E": {
+  "AIRBUSA320NEO": 186,
+  "AIRBUSA320": 180,
+  "AIRBUSA321NEO": 232,
+  "AIRBUSA321": 232,
+  "ATR72-600": 78
+ },
+ "AK": {
+  "AIRBUSA320": 180,
+  "AIRBUSA320NEO": 186,
+  "AIRBUSA321NEO": 236
+ },
+ "OD": {
+  "BOEING737-800": 162,
+  "BOEING737MAX8": 162
+ },
+ "H9": {
+  "AIRBUSA320": 158,
+  "AIRBUSA320NEO": 158
+ },
+ "CZ": {
+  "AIRBUSA320": 180,
+  "AIRBUSA330-300": 284,
+  "BOEING787-9": 276
+ },
+ "CA": {
+  "AIRBUSA320": 158,
+  "BOEING787-9": 293
+ },
+ "MU": {
+  "AIRBUSA320": 158,
+  "AIRBUSA330-300": 292
+ },
+ "KE": {
+  "BOEING737-800": 162,
+  "AIRBUSA330-300": 276,
+  "BOEING787-9": 269
+ },
+ "TK": {
+  "AIRBUSA330-300": 289,
+  "A330": 289,
+  "333": 289,
+  "BOEING737MAX8": 151,
+  "BOEING737-800": 151,
+  "AIRBUSA321NEO": 182,
+  "AIRBUSA350-900": 329,
+  "BOEING787-9": 300
+ },
+ "ET": {
+  "BOEING787-8": 270,
+  "BOEING787-9": 315,
+  "BOEING-787": 270,
+  "BOEING777-300ER": 349,
+  "AIRBUSA350-900": 343,
+  "BOEING737-800": 154
+ },
+ "MS": {
+  "BOEING737-800": 154,
+  "BOEING787-9": 309,
+  "AIRBUSA330-300": 268,
+  "AIRBUSA320NEO": 142
+ }
+}

@@ -37,6 +37,10 @@ class FlightRow:
     arrival_date: Optional[date]
     stops: Optional[int]
     via: str
+    aircraft: str                # e.g. "Boeing 737-800"; "" when the source omits it
+    #: Carrier actually operating the flight. Differs from `airline` on a
+    #: codeshare (EK 2331 operated by FZ); "" when the source does not say.
+    operated_by: str
     cabin: str
     gross_bdt: float
     base_bdt: float              # 0.0 when the source hides it
@@ -59,6 +63,8 @@ class FlightRow:
         return {
             "airline": self.airline,
             "flight_number": self.flight_number,
+            "aircraft": self.aircraft,
+            "operated_by": self.operated_by,
             "departure_date": self.departure_date,
             "departure_time": self.departure_time,
             "arrival_time": self.arrival_time,
@@ -94,6 +100,16 @@ def _split_dt(value: Any) -> tuple[Optional[date], str]:
     return d, clock
 
 
+def _operator(raw: dict[str, Any], marketing: str) -> str:
+    """Operating carrier when it differs from the marketing one, else "".
+
+    Only a DIFFERENCE is worth carrying: recording that BG operates BG is noise,
+    while EK 2331 being flown by FZ is the fact a planner needs.
+    """
+    op = str(raw.get("operating_airline") or "").upper().strip()
+    return op if op and op != marketing.upper() else ""
+
+
 def from_connector(raw: dict[str, Any], *, source: str, cabin: str,
                    fetched_at: Optional[datetime] = None) -> Optional[FlightRow]:
     """Adapt one connector/HAR row (the repo-wide offer shape) to FlightRow.
@@ -127,6 +143,8 @@ def from_connector(raw: dict[str, Any], *, source: str, cabin: str,
         arrival_date=arr_d,
         stops=int(stops) if stops is not None else None,
         via=str(raw.get("via_airports") or raw.get("via") or ""),
+        aircraft=str(raw.get("aircraft") or raw.get("equipment") or "").strip(),
+        operated_by=_operator(raw, airline),
         cabin=cabin,
         gross_bdt=gross,
         base_bdt=base,

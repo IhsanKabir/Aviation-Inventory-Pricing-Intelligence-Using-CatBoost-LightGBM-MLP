@@ -29,6 +29,10 @@ datas = [
     (os.path.join(ROOT, "config", "discount_manual_overrides.json"), "config"),
     # Route groups offered by the Schedule/Fare tabs.
     (os.path.join(ROOT, "config", "route_presets.json"), "config"),
+    # Timetable lookups: airline names and per-operator seat capacity.
+    (os.path.join(ROOT, "config", "airline_names.json"), "config"),
+    (os.path.join(ROOT, "config", "seat_capacity.json"), "config"),
+    (os.path.join(ROOT, "config", "market_settings.json"), "config"),
 ]
 binaries = []
 hiddenimports = ["keyring.backends.Windows"]
@@ -39,7 +43,7 @@ hiddenimports = ["keyring.backends.Windows"]
 hiddenimports += [
     "market_engine", "market_engine.rows", "market_engine.sources",
     "market_engine.cache", "market_engine.collect", "market_engine.schedule",
-    "market_engine.fares", "market_engine.render", "market_engine.har",
+    "market_engine.fares", "market_engine.render", "market_engine.har", "market_engine.timetable",
     "engines", "engines.schedule_view",
     "core", "core.field_quality", "core.flight_number",
     "modules.firsttrip", "modules.biman", "modules.amyweb",

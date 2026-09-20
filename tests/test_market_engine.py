@@ -231,6 +231,165 @@ def test_har_coverage_reports_actual_days(tmp_path):
     assert cov["DAC-CGP"] == [date(2026, 10, 7), date(2026, 10, 9)]
 
 
+def test_seat_capacity_is_per_operator_not_per_aircraft():
+    """The same 737 seats 162 at Biman and 189 at US-Bangla."""
+    from market_engine.timetable import seat_capacity
+    assert seat_capacity("BG", "Boeing 737-800") == 162
+    assert seat_capacity("BS", "Boeing 737-800") == 189
+    # Unknown stays None so the sheet leaves it blank instead of guessing.
+    assert seat_capacity("ZZ", "Boeing 737-800") is None
+    assert seat_capacity("BG", "") is None
+
+
+def test_aircraft_spelling_is_normalized():
+    """Feeds place separators inconsistently, so they are dropped entirely."""
+    from market_engine.timetable import normalize_aircraft, seat_capacity
+    assert normalize_aircraft("ATR 72 - 600") == "ATR72600"
+    assert normalize_aircraft("Boeing 737-800") == "BOEING737800"
+    assert normalize_aircraft("Boeing-787") == "BOEING787"
+    # The same type arrives spelled three ways; all must resolve.
+    for spelling in ("ATR 72", "ATR725", "ATR 72 - 600"):
+        assert seat_capacity("VQ", spelling) == 72
+
+
+def test_ambiguous_family_is_left_blank_not_guessed():
+    """'Boeing-787' could be a -8, -9 or -10; those differ by 80+ seats."""
+    from market_engine.timetable import seat_capacity
+    table = {"XX": {"Boeing 787-9": 298, "Boeing 787-10": 339},
+             "YY": {"Boeing 777-300ER": 393, "Boeing 777-300": 393},
+             "ZZ": {"Boeing 787-10": 337}}
+    assert seat_capacity("XX", "Boeing-787", table) is None   # variants disagree
+    assert seat_capacity("YY", "Boeing-777", table) == 393     # variants agree
+    assert seat_capacity("ZZ", "Boeing-787", table) == 337     # only one variant
+
+
+def test_sector_groups_both_directions_of_a_market():
+    from market_engine.timetable import _sector
+    assert _sector("DAC", "BKK") == "BKK"
+    assert _sector("BKK", "DAC") == "BKK"        # same sector, other direction
+
+
+def test_hhmm_keeps_the_leading_zero():
+    from market_engine.timetable import _hhmm
+    assert _hhmm("07:45") == "0745" and _hhmm("00:25") == "0025"
+    assert _hhmm("23:50") == "2350" and _hhmm("") == ""
+
+
+def test_retimed_flight_gets_one_row_per_timing():
+    """A flight that retimes must not mix one day's departure with another's arrival."""
+    from market_engine.timetable import build_timetable
+    d0, d1 = date(2026, 10, 5), date(2026, 10, 11)
+    rows = [_row(airline="BG", flight_number="BG 121",
+                 departure="2026-10-06T07:30:00", arrival="2026-10-06T08:30:00"),
+            _row(airline="BG", flight_number="BG 121",
+                 departure="2026-10-08T15:00:00", arrival="2026-10-08T16:00:00")]
+    tt = build_timetable(_sched(rows, d0, d1))
+    assert len(tt) == 2                                   # two real timings
+    pairs = sorted((r.dep, r.arr) for r in tt)
+    assert pairs == [("0730", "0830"), ("1500", "1600")]  # never 0730 -> 1600
+
+
+def test_timetable_names_what_it_could_not_fill():
+    from market_engine.timetable import build_timetable, coverage_gaps
+    d0, d1 = date(2026, 10, 5), date(2026, 10, 11)
+    rows = [_row(airline="ZZ", flight_number="ZZ 1",
+                 departure="2026-10-06T07:30:00", arrival="2026-10-06T08:30:00",
+                 aircraft="Sopwith Camel")]
+    gaps = coverage_gaps(build_timetable(_sched(rows, d0, d1)))
+    assert ("ZZ", "Sopwith Camel") in gaps["seats"]
+    assert "ZZ" in gaps["names"]
+
+
+def test_hhmm_never_turns_a_date_into_a_time():
+    """A timestamp fed in by mistake used to yield '2026' -- a year posing as a clock."""
+    from market_engine.timetable import _hhmm
+    assert _hhmm("2026-10-07T07:45") == "0745"
+    assert _hhmm("2026-10-07T00:25:00") == "0025"
+    assert _hhmm("2026-10-07") == ""          # a date alone is not a time
+    assert _hhmm("") == ""
+
+
+def test_capacity_prefix_match_takes_the_longest_and_refuses_short_keys():
+    from market_engine.timetable import seat_capacity
+    table = {"XX": {"BOEING737": 100, "BOEING737-800": 189}}
+    assert seat_capacity("XX", "Boeing 737-800", table) == 189    # not the 100
+    # "78" cannot tell a 788 from a 789; guessing is a ~10% capacity error.
+    assert seat_capacity("YY", "78", {"YY": {"788": 271, "789": 298}}) is None
+
+
+def test_sector_handles_routes_that_do_not_touch_the_home_base():
+    """CGP-JED and ZYL-JED are in the shipped route presets."""
+    from market_engine.timetable import _sector
+    bases = {"DAC", "CGP", "ZYL", "CXB"}
+    assert _sector("CGP", "JED", "DAC", bases) == "JED"
+    assert _sector("ZYL", "JED", "DAC", bases) == "JED"
+    assert _sector("DAC", "BKK", "DAC", bases) == "BKK"
+    assert _sector("BKK", "DAC", "DAC", bases) == "BKK"   # same market, other way
+    assert _sector("DAC", "CGP", "DAC", bases) == "CGP"   # domestic pair
+
+
+def test_equipment_change_does_not_share_one_capacity():
+    """Same flight and timing, different aircraft on different days -> separate rows."""
+    from market_engine.timetable import build_timetable
+    d0, d1 = date(2026, 10, 5), date(2026, 10, 11)
+    rows = [_row(airline="BG", flight_number="BG 121", aircraft="Boeing 777-300",
+                 departure="2026-10-06T07:30:00", arrival="2026-10-06T08:30:00"),
+            _row(airline="BG", flight_number="BG 121", aircraft="Boeing 787-8",
+                 departure="2026-10-08T07:30:00", arrival="2026-10-08T08:30:00")]
+    tt = build_timetable(_sched(rows, d0, d1))
+    assert len(tt) == 2
+    assert sorted(r.seats for r in tt) == [271, 419]     # each row its own capacity
+
+
+def test_lookup_tables_resolve_without_a_cwd_config_folder(tmp_path, monkeypatch):
+    """The exe's working directory is wherever the user launched it from."""
+    from market_engine.timetable import seat_capacity, airline_name
+    monkeypatch.chdir(tmp_path)                   # no ./config here
+    assert seat_capacity("BG", "Boeing 737-800") == 162
+    assert airline_name("BG") == "Biman Bangladesh"
+
+
+def test_connecting_services_are_listed_with_their_via_point():
+    """A timetable lists what is on sale; on long-haul almost everything stops."""
+    from market_engine.timetable import build_timetable
+    d0, d1 = date(2026, 10, 5), date(2026, 10, 11)
+    rows = [_row(airline="GF", flight_number="GF 249", origin="DAC", destination="JED",
+                 departure="2026-10-06T07:00:00", arrival="2026-10-06T15:00:00",
+                 stops=1, via_airports="BAH")]
+    sched = sv.build((r.as_schedule_row() for r in rows), sources_requested=("FirstTrip",),
+                     date_from=d0, date_to=d1, include_itineraries=True)
+    tt = build_timetable(sched)
+    assert len(tt) == 1 and tt[0].stop == "BAH" and tt[0].sector == "JED"
+    # Excluding connections would have dropped it entirely.
+    nonstop = sv.build((r.as_schedule_row() for r in rows), sources_requested=("FirstTrip",),
+                       date_from=d0, date_to=d1)
+    assert len(nonstop.legs) == 0 and nonstop.itineraries == 1
+
+
+def test_multi_stop_is_not_reported_as_one_stop():
+    from market_engine.timetable import _vias
+    assert _vias("SIN|DOH") == "SIN/DOH"      # both stops kept
+    assert _vias("BAH") == "BAH"
+    assert _vias("") == ""
+
+
+def test_codeshare_names_the_operating_carrier_only_when_it_differs():
+    from market_engine.timetable import build_timetable
+    d0, d1 = date(2026, 10, 5), date(2026, 10, 11)
+    rows = [_row(airline="EK", flight_number="EK 2331", origin="DAC", destination="JED",
+                 departure="2026-10-06T08:10:00", arrival="2026-10-06T17:45:00",
+                 stops=1, via_airports="DXB", operating_airline="FZ"),
+            _row(airline="BG", flight_number="BG 139", origin="DAC", destination="JED",
+                 departure="2026-10-06T09:00:00", arrival="2026-10-06T14:00:00",
+                 stops=0, operating_airline="BG")]
+    sched = sv.build((r.as_schedule_row() for r in rows), sources_requested=("FirstTrip",),
+                     date_from=d0, date_to=d1, include_itineraries=True)
+    by_flight = {r.flight_no: r for r in build_timetable(sched)}
+    assert by_flight["EK2331"].operated_by == "FZ"
+    assert by_flight["EK2331"].operated_by_name == "Flydubai"
+    assert by_flight["BG139"].operated_by == ""     # own metal is not noise
+
+
 if __name__ == "__main__":
     import subprocess
     raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"]))

@@ -1,0 +1,15 @@
+{
+  "_comment": "Home base and the airports treated as home-side for the timetable's Sector column. A sector is the endpoint that is NOT home-side, so both directions of a market group together and an ex-CGP route still reads as its foreign point.",
+  "home": "DAC",
+  "bases": [
+    "DAC",
+    "CGP",
+    "ZYL",
+    "CXB",
+    "JSR",
+    "SPD",
+    "RJH",
+    "BZL",
+    "IRD"
+  ]
+}

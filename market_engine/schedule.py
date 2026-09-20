@@ -34,6 +34,8 @@ class Pattern:
     weekdays: tuple                 # ints, 0=Mon
     departure: str
     arrival: str
+    aircraft: str
+    via: str
     dates: int
     first: date
     last: date
@@ -69,6 +71,9 @@ def assess(result: CollectResult, requested: Optional[Iterable[str]] = None,
 def build_schedule(result: CollectResult, *, requested: Optional[Iterable[str]] = None,
                    date_from: Optional[date] = None, date_to: Optional[date] = None,
                    include_itineraries: bool = False) -> sv.ScheduleResult:
+    """`include_itineraries=True` keeps connecting services, which a timetable
+    needs: on a long-haul market nearly every offer carries a stop, so excluding
+    them empties the sheet."""
     quality, accepted, refused = assess(result, requested)
     ok = set(accepted)
     rows = (r.as_schedule_row() for r in result.rows if r.source in ok)
@@ -126,6 +131,8 @@ def weekly_pattern(sched: sv.ScheduleResult, *, date_from: Optional[date] = None
             weekdays=tuple(sorted(weekdays)),
             departure=sorted(times)[0] if times else "",
             arrival=next((l.arrival for l in legs if l.arrival), ""),
+            aircraft=next((l.aircraft for l in legs if l.aircraft), ""),
+            via=next((l.via for l in legs if getattr(l, "via", "")), ""),
             dates=len(legs), first=legs[0].flight_date, last=legs[-1].flight_date,
             varies=varies, time_varies=time_varies, disagreement=disagreement,
             sources=tuple(srcs)))
