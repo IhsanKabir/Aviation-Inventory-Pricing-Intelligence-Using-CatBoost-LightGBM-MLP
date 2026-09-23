@@ -157,17 +157,28 @@ def test_offline_grace_window(api, monkeypatch):
     assert api._require_access().get("auth_required")
 
 
-def test_pending_user_runs_locally_but_denial_blocks(api, monkeypatch):
-    _sign_in(api, monkeypatch, status="pending", allowed=False)
-    assert api._require_access() is None                       # identified + tracked
-    _sign_in(api, monkeypatch, status="rejected", allowed=False)
-    assert api._require_access().get("access_blocked")
+def test_only_approved_users_can_run(api, monkeypatch):
+    _sign_in(api, monkeypatch, status="approved", allowed=True)
+    assert api._require_access() is None
+    # Pending is blocked too: approval gates running, not just syncing.
+    for status in ("pending", "rejected", "expired", "payment_required", "none"):
+        _sign_in(api, monkeypatch, status=status, allowed=False)
+        assert api._require_access().get("access_blocked"), status
 
 
 def test_export_requires_sign_in(api):
     api._report = _report()
     result = api.export_xlsx()
     assert not result["ok"] and result.get("auth_required")
+
+
+def test_register_page_opens_signup_form_on_our_site(api, monkeypatch):
+    import webbrowser
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+    assert api.open_register_page()["ok"]
+    assert opened == [f"{backend_mod.DEFAULT_WEB_BASE}/login"
+                      "?mode=register&next=/discount-comparison"]
 
 
 def test_run_shares_engine_and_colors_against_prev(api, monkeypatch):

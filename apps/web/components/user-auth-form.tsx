@@ -11,7 +11,11 @@ type Mode = "login" | "register";
 export function UserAuthForm({ googleEnabled = false }: { googleEnabled?: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [mode, setMode] = useState<Mode>("login");
+  // ?mode=register lets the desktop app's "Create an account" button land a new
+  // user directly on the sign-up form instead of the sign-in one.
+  const [mode, setMode] = useState<Mode>(
+    searchParams.get("mode") === "register" ? "register" : "login"
+  );
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

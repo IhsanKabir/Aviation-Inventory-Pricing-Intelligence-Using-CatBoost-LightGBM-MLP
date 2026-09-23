@@ -274,6 +274,15 @@ class DesktopApi(MarketApiMixin):
         webbrowser.open(f"{web_base}/account")
         return {"ok": True}
 
+    def open_register_page(self) -> dict[str, Any]:
+        """Open the website's sign-up form for a brand-new user. Registration
+        lives on the website; afterwards they land on the discount page, where
+        the access-request panel is the next step, then sign in here."""
+        import webbrowser
+        web_base = str(self._config.get("web_base") or DEFAULT_WEB_BASE).rstrip("/")
+        webbrowser.open(f"{web_base}/login?mode=register&next=/discount-comparison")
+        return {"ok": True}
+
     def change_password(self, new_password: str) -> dict[str, Any]:
         """Change the signed-in user's password (min 8 chars)."""
         token = self._token()
@@ -402,9 +411,12 @@ class DesktopApi(MarketApiMixin):
                     "error": "Can't verify your access while offline — connect to "
                              "the internet once and try again."}
         if status == "pending":
-            # A logged-in user awaiting approval may run locally (sync stays
-            # gated server-side) — they are identified and tracked.
-            return None
+            # Admin approval gates RUNNING, not just syncing — otherwise anyone
+            # could register, click Request access, and use the full analysis
+            # while the request sits unreviewed.
+            return {"ok": False, "access_blocked": True,
+                    "error": "Your access request is awaiting admin approval — "
+                             "you can run reports once it is approved."}
         return {"ok": False, "access_blocked": True,
                 "error": access.get("detail")
                 or "Your access to the discount report is not active."}

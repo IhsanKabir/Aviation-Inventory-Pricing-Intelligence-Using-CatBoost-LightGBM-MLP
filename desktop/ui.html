@@ -111,9 +111,12 @@
       <label>Password <input id="password" type="password" autocomplete="current-password"></label>
       <button onclick="doLogin()">Sign in</button>
       <span class="muted">Sign in to use the app — runs, exports and syncs are tracked to your account.</span>
+      <button class="secondary" onclick="api().open_register_page()"
+              title="Opens the sign-up form on the website. Come back here and sign in with the same email and password.">
+        New here? Create an account</button>
       <button class="secondary" onclick="api().open_account_page()"
               title="Signed up with Google? The desktop app needs a password — create one on the website's Account page.">
-        No password yet? Create one on the website</button>
+        Signed up with Google? Set a password</button>
     </div>
     <div id="login-error" class="banner err" style="display:none;margin-top:8px"></div>
   </section>
