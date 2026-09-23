@@ -88,6 +88,11 @@ def main() -> int:
         if todo:
             all_done = False
             print(f"  STILL TO CLICK ({len(todo)}): {', '.join(todo)}")
+            if not cov.captured:
+                # Searches but zero coupon lists: the booking step never landed.
+                print("  ! No coupon list at all yet. Coupons load only on the PASSENGER-DETAILS page:")
+                print("    signed in to GoZayaan -> pick a flight -> pick a fare -> continue until")
+                print("    the passenger form opens. Then go back and do the next airline.")
         else:
             print("  complete - no more clicks needed for this market")
         if untracked:
@@ -98,6 +103,9 @@ def main() -> int:
         if len(cov.routes) > 1:
             print("  (more than one route searched - one route per market is enough)")
     print("\nAll markets complete - export the HAR." if all_done else "")
+    if len(hars) == 1:
+        print("Tip: save each market under its own name (gozayaan_dom.har, gozayaan_intl.har);"
+              " saving over one name replaces the earlier capture. This tool merges them all.")
     return 0
 
 
