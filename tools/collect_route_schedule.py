@@ -113,7 +113,12 @@ def main() -> int:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = date.today().isoformat()
+    # Stamped with the WINDOW, not the run date. Two pulls on one day
+    # for different windows share a run date, and the second silently
+    # overwrote the first -- which is how a fortnight of collected
+    # schedule went missing without anything reporting a problem.
+    last = start + timedelta(days=args.days - 1)
+    stamp = f"{start.isoformat()}_{last.isoformat()}"
     try:
         import pandas as pd
         path = out_dir / f"firsttrip_{stamp}.parquet"
