@@ -72,6 +72,21 @@ def main() -> int:
           f"sleep {args.sleep}s")
     result = pull_to_har(routes, day, args.out, sleep_s=max(3.0, args.sleep))
 
+    if result.get("cooldown"):
+        # Not a failure: nothing was sent, on purpose. Say so plainly, in local time.
+        from datetime import datetime
+        state = result["cooldown"]
+        try:
+            until = datetime.fromisoformat(str(state.get("cooldown_until_utc"))).astimezone()
+            when = until.strftime("%H:%M")
+        except ValueError:
+            when = "shortly"
+        mins = int(state.get("remaining_cooldown_sec") or 0) // 60 + 1
+        print(f"\nNOTHING SENT - GoZayaan's rate-limit cooldown is still running "
+              f"(about {mins} min left).")
+        print(f"Run this same command again after {when} your time.")
+        return 2
+
     print("\n--- summary ---")
     for route, info in result["routes"].items():
         status = "ok" if info["ok"] else f"NO ({info['reason'] or 'no coupons'})"

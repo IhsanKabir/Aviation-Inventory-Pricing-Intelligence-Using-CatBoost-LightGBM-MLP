@@ -133,9 +133,6 @@ def fetch_many(routes: List[tuple], date: str, *, cabin: str = "Economy",
     per_route: Dict[str, Any] = {}
     active = gz._active_rate_limit_state()
     if active:
-        minutes = int(active.get("remaining_cooldown_sec") or 0) // 60 + 1
-        log(f"  ! GoZayaan cooldown still active (~{minutes} min left, recorded "
-            f"{active.get('recorded_at_utc')}); not sending anything. Retry after it expires.")
         return {"rows": [], "calls": [], "routes": {}, "cooldown": active}
     for origin, destination in routes:
         res = fetch_route_discounts(origin, destination, date, cabin=cabin,

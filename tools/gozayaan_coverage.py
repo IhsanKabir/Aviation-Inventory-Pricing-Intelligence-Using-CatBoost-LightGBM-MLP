@@ -60,8 +60,12 @@ def main() -> int:
 
     hars = _gozayaan_hars(args.paths)
     if not hars:
-        print("No GoZayaan HAR found. Pass a folder or .har path, or set the "
-              "capture folder in the desktop app.")
+        folder = ", ".join(args.paths) or str(_default_folder() or "(capture folder not set)")
+        print(f"Nothing to check yet - no GoZayaan capture in: {folder}")
+        print("This checks a session you are capturing NOW (finished days are in archive\\):")
+        print("  1. On gozayaan.com search ONE domestic route, open one airline's booking page.")
+        print("  2. DevTools > Network > Save all as HAR, into the folder above.")
+        print("  3. Run this again - it lists the airlines still to click.")
         return 1
     print("Reading: " + ", ".join(p.name for p in hars))
     coverage = coverage_for_hars(hars)
