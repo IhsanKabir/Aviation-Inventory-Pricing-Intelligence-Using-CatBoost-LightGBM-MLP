@@ -230,57 +230,78 @@ def parse_discounts(path: str | Path, *, har: Dict[str, Any] | None = None) -> L
         except json.JSONDecodeError:
             continue
 
-        airline = _alias(str(body.get("plating_carrier") or "").upper())
-        flight_type = str(body.get("flight_type") or "").upper()
-        product_price = float(body.get("product_price") or 0)
-        if not airline or product_price <= 0:
-            continue
-
-        items = data.get("result") or data.get("data") or []
-        if isinstance(items, dict):
-            items = items.get("results") or items.get("discounts") or []
-        if not isinstance(items, list):
-            continue
-
-        for it in items:
-            if not isinstance(it, dict):
-                continue
-            markup = it.get("discount_markup") or {}
-            if str(markup.get("markup_type") or "").upper() != "PERCENTAGE":
-                continue  # only percentage campaigns map to a comparable rate
-            code = (it.get("discount_promo_code")
-                    or (it.get("discount_campaign") or {}).get("campaign_code") or "")
-            pct = float(markup.get("markup_amount") or 0)
-            if pct <= 0:
-                continue
-            cap = float(markup.get("markup_max_amount") or 0)
-            realized_amt = pct / 100.0 * product_price
-            if cap:
-                realized_amt = min(realized_amt, cap)
-            realized_pct = round(realized_amt / product_price * 100.0, 2) if product_price else pct
-
-            sig = (airline, flight_type, code)
-            if sig in seen:
-                continue
-            seen.add(sig)
-            scope, eligibility = _classify_eligibility(it)
-            out.append({
-                "channel": "gozayaan",
-                "persona": "B2C",
-                "airline": airline,
-                "flight_type": flight_type,
-                "product_price": round(product_price),
-                "coupon_code": code,
-                "discount_pct": pct,
-                "cap_bdt": round(cap) if cap else None,
-                "realized_discount_bdt": round(realized_amt),
-                "realized_pct": realized_pct,
-                "apply_on": markup.get("apply_on"),
-                "eligibility_scope": scope,        # "common" | "specific"
-                "eligibility": eligibility,        # human label, e.g. "EBL Visa", "Any online payment"
-                "name": it.get("discount_name") or it.get("discount_description") or "",
-            })
+        out.extend(rows_from_discount_list(
+            plating_carrier=body.get("plating_carrier"),
+            flight_type=body.get("flight_type"),
+            product_price=body.get("product_price"),
+            data=data, seen=seen))
     return out
+
+
+def rows_from_discount_list(*, plating_carrier: Any, flight_type: Any,
+                            product_price: Any, data: Any,
+                            seen: Optional[set] = None) -> List[Dict[str, Any]]:
+    """One get_discount_list response (request context + response body) -> rows.
+
+    Factored out of parse_discounts so the HAR path and a LIVE collector produce
+    byte-identical rows: the request context (plating_carrier / flight_type /
+    product_price) comes from the captured request in a HAR, or from the live
+    request we sent; `data` is the response's `result` envelope either way.
+    """
+    airline = _alias(str(plating_carrier or "").upper())
+    ftype = str(flight_type or "").upper()
+    price = float(product_price or 0)
+    rows: List[Dict[str, Any]] = []
+    if not airline or price <= 0:
+        return rows
+    if seen is None:
+        seen = set()
+
+    items = data.get("result") or data.get("data") or []
+    if isinstance(items, dict):
+        items = items.get("results") or items.get("discounts") or []
+    if not isinstance(items, list):
+        return rows
+
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        markup = it.get("discount_markup") or {}
+        if str(markup.get("markup_type") or "").upper() != "PERCENTAGE":
+            continue  # only percentage campaigns map to a comparable rate
+        code = (it.get("discount_promo_code")
+                or (it.get("discount_campaign") or {}).get("campaign_code") or "")
+        pct = float(markup.get("markup_amount") or 0)
+        if pct <= 0:
+            continue
+        cap = float(markup.get("markup_max_amount") or 0)
+        realized_amt = pct / 100.0 * price
+        if cap:
+            realized_amt = min(realized_amt, cap)
+        realized_pct = round(realized_amt / price * 100.0, 2) if price else pct
+
+        sig = (airline, ftype, code)
+        if sig in seen:
+            continue
+        seen.add(sig)
+        scope, eligibility = _classify_eligibility(it)
+        rows.append({
+            "channel": "gozayaan",
+            "persona": "B2C",
+            "airline": airline,
+            "flight_type": ftype,
+            "product_price": round(price),
+            "coupon_code": code,
+            "discount_pct": pct,
+            "cap_bdt": round(cap) if cap else None,
+            "realized_discount_bdt": round(realized_amt),
+            "realized_pct": realized_pct,
+            "apply_on": markup.get("apply_on"),
+            "eligibility_scope": scope,        # "common" | "specific"
+            "eligibility": eligibility,        # human label
+            "name": it.get("discount_name") or it.get("discount_description") or "",
+        })
+    return rows
 
 
 def _classify_eligibility(campaign: Dict[str, Any]) -> tuple[str, str]:
