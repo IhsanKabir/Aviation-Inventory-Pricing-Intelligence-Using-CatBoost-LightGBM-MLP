@@ -219,6 +219,55 @@ def parse_discounts(path: str | Path, *, har: Dict[str, Any] | None = None) -> L
     return rows
 
 
+def _legs_route(legs: Any) -> tuple[str, str]:
+    """(origin, destination) of an itinerary from its legs: first leg's origin to the
+    last leg's destination. ('', '') when the payload doesn't carry them."""
+    legs = legs if isinstance(legs, list) else []
+    if not legs:
+        return "", ""
+
+    def _code(v: Any) -> str:
+        return str((v.get("code") if isinstance(v, dict) else v) or "").upper()
+
+    return _code(legs[0].get("origin")), _code(legs[-1].get("destination"))
+
+
+def _routed(row: Dict[str, Any], legs: Any) -> Dict[str, Any]:
+    origin, destination = _legs_route(legs)
+    return {**row, "origin": origin, "destination": destination}
+
+
+def parse_discounts_routed(path: str | Path, *,
+                           har: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+    """parse_discounts, but every row carries its route and de-duplication is PER
+    ROUTE. The plain parser de-duplicates across the whole file, so an airline seen
+    on two routes keeps only the first — right for the market summary, wrong for a
+    per-route view. Kept separate so the summary's input never changes."""
+    if har is None:
+        har = _load_har(path)
+    rows: List[Dict[str, Any]] = []
+    seen: set = set()
+    for e in har.get("log", {}).get("entries", []):
+        if "available-flights" not in e.get("request", {}).get("url", ""):
+            continue
+        try:
+            data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
+        except json.JSONDecodeError:
+            continue
+        for fl in (data.get("response") or {}).get("matchedFlights") or []:
+            row = _discount_row(fl)
+            if not row:
+                continue
+            row = _routed(row, fl.get("legs"))
+            sig = (row["origin"], row["destination"], row["airline"], row["flight_type"],
+                   row["coupon_code"], row["discount_pct"], row["base_fare_bdt"])
+            if sig in seen:
+                continue
+            seen.add(sig)
+            rows.append(row)
+    return rows
+
+
 def summarize_discounts(rows: List[Dict[str, Any]]) -> Dict[tuple[str, str], Dict[str, Any]]:
     """One cell per (airline, flight_type): the best automatic discount % (+ coupon).
 
@@ -504,6 +553,44 @@ def parse_details_discounts(path: str | Path, *, har: Dict[str, Any] | None = No
         if not row:
             continue
         sig = (row["airline"], row["flight_type"], row["common_pct"], row["special_pct"])
+        if sig in seen:
+            continue
+        seen.add(sig)
+        rows.append(row)
+    return rows
+
+
+def parse_details_discounts_routed(path: str | Path, *,
+                                   har: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+    """parse_details_discounts with each row's route attached (from the booking
+    response's legs) and de-duplication per route, for the per-route view."""
+    if har is None:
+        har = _load_har(path)
+    entries = har.get("log", {}).get("entries", [])
+    gateways: Dict[str, Dict[str, Any]] = {}
+    for e in entries:
+        if "/api/v1/payment/gateway" in e.get("request", {}).get("url", ""):
+            try:
+                data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
+            except json.JSONDecodeError:
+                continue
+            _collect_gateways(data, gateways)
+    rows: List[Dict[str, Any]] = []
+    seen: set = set()
+    for e in entries:
+        if "/api/v2/flight/search/details" not in e.get("request", {}).get("url", ""):
+            continue
+        try:
+            data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
+        except json.JSONDecodeError:
+            continue
+        resp = data.get("response") or {}
+        row = _details_row(resp, gateways or None)
+        if not row:
+            continue
+        row = _routed(row, resp.get("legs"))
+        sig = (row["origin"], row["destination"], row["airline"], row["flight_type"],
+               row["common_pct"], row["special_pct"])
         if sig in seen:
             continue
         seen.add(sig)

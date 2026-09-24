@@ -35,6 +35,8 @@ jobs:
             tests/test_discount_reports_api.py tests/test_desktop_backend.py \
             tests/test_audit_fixes.py tests/test_monitoring.py tests/test_sharetrip_combine.py \
             tests/test_sharetrip_judge.py tests/test_bdfare_commission.py \
+            tests/test_by_route.py tests/test_gozayaan_discounts_core.py \
+            tests/test_gozayaan_coverage.py \
             -q
 
   web:

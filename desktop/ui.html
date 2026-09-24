@@ -174,6 +174,13 @@
     <div class="row" style="justify-content:space-between">
       <div id="report-meta" class="muted"></div>
       <div>
+        <span id="view-switch" style="display:none;margin-right:8px">
+          <button id="view-summary" onclick="setDiscountView('summary')"
+                  title="Domestic and international summary (all routes combined)">Summary</button>
+          <button id="view-route" class="secondary" onclick="setDiscountView('route')"
+                  title="Which OTA gives which discount on each route you captured">By route</button>
+          <select id="route-filter" onchange="drawDiscounts()" style="display:none"></select>
+        </span>
         <button class="secondary" onclick="exportXlsx()">Export xlsx</button>
         <button onclick="syncNow()">Sync to dashboard</button>
         <span class="legend">
@@ -599,16 +606,61 @@ function renderReport(report, prevAvailable) {
   if (report.normalized === false) {
     addBanner("warn", "NOT NORMALIZED: no exact-base source (FirstTrip B2B HAR / live route) — BDFare & AKIJ are on their own base. Capture a FirstTrip B2B HAR to fix.");
   }
+  shownReport = report;
+  const routes = report.by_route || [];
+  document.getElementById("view-switch").style.display = routes.length ? "" : "none";
+  const filter = document.getElementById("route-filter");
+  const keep = filter.value;
+  filter.innerHTML = `<option value="">All routes (${routes.length})</option>` +
+    routes.map(b => `<option value="${esc(b.route)}">${esc(b.route)}</option>`).join("");
+  if (routes.some(b => b.route === keep)) filter.value = keep;
+  if (!routes.length) discountView = "summary";
+  drawDiscounts();
+}
+
+// ---- Summary vs By-route view -------------------------------------------------
+let discountView = "summary";
+let shownReport = null;
+
+function setDiscountView(view) {
+  discountView = view;
+  drawDiscounts();
+}
+
+function drawDiscounts() {
+  const report = shownReport;
+  if (!report) return;
+  const byRoute = discountView === "route";
+  document.getElementById("view-summary").className = byRoute ? "secondary" : "";
+  document.getElementById("view-route").className = byRoute ? "" : "secondary";
+  document.getElementById("route-filter").style.display = byRoute ? "" : "none";
   const grids = document.getElementById("grids");
-  grids.innerHTML = "";
-  for (const [rt, label] of [["INTL", "INTERNATIONAL"], ["DOM", "DOMESTIC"]]) {
-    const block = (report.grids || {})[rt];
-    if (block && block.columns.length) {
-      grids.innerHTML += gridTable(
-        `${report.report_date} (${label}) / ${report.report_time}hrs`,
-        block, report.channel_status || {});
+  let html = "";
+  if (!byRoute) {
+    for (const [rt, label] of [["INTL", "INTERNATIONAL"], ["DOM", "DOMESTIC"]]) {
+      const block = (report.grids || {})[rt];
+      if (block && block.columns.length) {
+        html += gridTable(`${report.report_date} (${label}) / ${report.report_time}hrs`,
+                          block, report.channel_status || {});
+      }
     }
+  } else {
+    const blocks = report.by_route || [];
+    const pick = document.getElementById("route-filter").value;
+    // Only OTAs captured somewhere this run; never-captured rows would be noise.
+    const used = new Set(blocks.flatMap(b => b.coverage.with_data));
+    for (const b of blocks) {
+      if (pick && b.route !== pick) continue;
+      const market = b.market === "DOM" ? "DOMESTIC" : "INTERNATIONAL";
+      html += gridTable(`${b.route} (${market}) / ${report.report_time}hrs`, b, {});
+      const missing = b.coverage.without.filter(l => used.has(l));
+      if (missing.length) {
+        html += `<div class="muted" style="margin:-4px 0 14px">No data on this route: ${esc(missing.join(", "))} — capture this route on those sites to compare them here.</div>`;
+      }
+    }
+    if (!html) html = '<p class="muted">No route in this run.</p>';
   }
+  grids.innerHTML = html;
 }
 
 async function exportXlsx() {

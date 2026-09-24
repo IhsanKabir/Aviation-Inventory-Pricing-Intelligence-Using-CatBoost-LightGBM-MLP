@@ -38,7 +38,9 @@ def _selftest() -> int:
 
     def _engine():
         from discount_engine import build_report          # noqa: F401
-        return "discount engine"
+        from discount_engine import by_route              # imported lazily by build_report
+        blocks = by_route.route_blocks({("DAC", "CXB"): {"Amy": {"BS": "6"}}})
+        return f"discount engine + by-route ({len(blocks)} block)"
 
     def _market():
         from market_engine import (cache, collect, fares, har, render, rows,

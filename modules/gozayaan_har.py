@@ -238,6 +238,53 @@ def parse_discounts(path: str | Path, *, har: Dict[str, Any] | None = None) -> L
     return out
 
 
+def parse_discounts_routed(path: str | Path, *,
+                           har: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+    """parse_discounts with each coupon row tagged with its ROUTE.
+
+    The coupon request carries no route, only the search_id; the route comes from
+    the matching search request (trips[0] origin/destination). De-duplication is
+    per route: the plain parser de-duplicates across the file, which is right for
+    the market summary but would drop a coupon from every route after the first.
+    Rows whose search wasn't captured get origin/destination ''.
+    """
+    if har is None:
+        har = _load_har(path)
+    entries = har.get("log", {}).get("entries", [])
+    route_of: Dict[str, tuple[str, str]] = {}
+    for e in entries:
+        if not e.get("request", {}).get("url", "").split("?")[0].endswith("/flight/v4.0/search/"):
+            continue
+        try:
+            body = json.loads((e["request"].get("postData") or {}).get("text", "") or "{}")
+            resp = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
+        except (json.JSONDecodeError, KeyError):
+            continue
+        result = resp.get("result") if isinstance(resp, dict) else None
+        sid = result.get("search_id") if isinstance(result, dict) else None
+        trip = ((body.get("trips") or [{}])[0] or {}) if isinstance(body, dict) else {}
+        if sid and trip.get("origin") and trip.get("destination"):
+            route_of[str(sid)] = (str(trip["origin"]).upper(), str(trip["destination"]).upper())
+
+    out: List[Dict[str, Any]] = []
+    seen_by_route: Dict[tuple[str, str], set] = {}
+    for e in entries:
+        if not e.get("request", {}).get("url", "").endswith("/api/business_rules/get_discount_list/"):
+            continue
+        try:
+            body = json.loads((e["request"].get("postData") or {}).get("text", "") or "{}")
+            data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
+        except json.JSONDecodeError:
+            continue
+        route = route_of.get(str(body.get("search_id")), ("", ""))
+        rows = rows_from_discount_list(
+            plating_carrier=body.get("plating_carrier"), flight_type=body.get("flight_type"),
+            product_price=body.get("product_price"), data=data,
+            seen=seen_by_route.setdefault(route, set()))
+        out += [{**r, "origin": route[0], "destination": route[1]} for r in rows]
+    return out
+
+
 def rows_from_discount_list(*, plating_carrier: Any, flight_type: Any,
                             product_price: Any, data: Any,
                             seen: Optional[set] = None) -> List[Dict[str, Any]]:

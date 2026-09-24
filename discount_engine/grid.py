@@ -70,6 +70,35 @@ def _fmt(value: float) -> str:
     return f"{value:g}"
 
 
+# Parsed rows are remembered for the length of ONE build_report run, so the per-route
+# view can re-cut the same rows without re-reading multi-MB HARs. Outside a run it is
+# None and every call parses directly (standalone collector use and tests unchanged).
+_PARSE_MEMO: Optional[dict] = None
+
+
+def _parsed(fn, path: str, **kw):
+    """fn(path, **kw), memoized per (parser, path) while a report is being built.
+    The parser is resolved by the CALLER at call time, so test stubs still apply."""
+    if _PARSE_MEMO is None:
+        return fn(path, **kw)
+    key = (getattr(fn, "__module__", ""), getattr(fn, "__qualname__", repr(fn)), str(path))
+    if key not in _PARSE_MEMO:
+        _PARSE_MEMO[key] = fn(path, **kw)
+    return _PARSE_MEMO[key]
+
+
+def _remember(tag: str, path: str, value: Any) -> None:
+    """Stash a derived value (e.g. route-tagged rows) for the per-route pass."""
+    if _PARSE_MEMO is not None:
+        _PARSE_MEMO[("remember", tag, str(path))] = value
+
+
+def _recall(tag: str, path: str, default: Any = None) -> Any:
+    if _PARSE_MEMO is None:
+        return default
+    return _PARSE_MEMO.get(("remember", tag, str(path)), default)
+
+
 # --- per-channel collectors: return cell dicts keyed by (route_type, airline) -----------
 
 def _fetch_firsttrip_b2c(routes: list[tuple[str, str, Optional[str]]],
@@ -136,15 +165,23 @@ def collect_firsttrip_b2c(routes: list[tuple[str, str, Optional[str]]],
 
 
 def collect_gozayaan(har_path: str) -> dict[tuple[str, str], str]:
-    cells: dict[tuple[str, str], str] = {}
     # Load the (large) GoZayaan HAR once; both the discount list and the surcharge
     # endpoint live in the same file, so don't read it twice.
     har = gozayaan_har._load_har(har_path)
     rows = gozayaan_har.parse_discounts(har_path, har=har)
-    summary = gozayaan_har.summarize_discounts(rows)  # keyed (airline, flight_type)
     # GoZayaan adds a flat convenience surcharge at payment — annotate it like the
     # ShareTrip gateway fee so channels are compared on the same footing.
     surcharge = gozayaan_har.parse_surcharge(har_path, har=har)
+    if _PARSE_MEMO is not None:     # route-tagged rows for the per-route view, same load
+        _remember("gozayaan_routed", har_path,
+                  (gozayaan_har.parse_discounts_routed(har_path, har=har), surcharge))
+    return _gozayaan_cells(rows, surcharge)
+
+
+def _gozayaan_cells(rows: list[dict[str, Any]],
+                    surcharge: dict[str, float]) -> dict[tuple[str, str], str]:
+    cells: dict[tuple[str, str], str] = {}
+    summary = gozayaan_har.summarize_discounts(rows)  # keyed (airline, flight_type)
     for (airline, flight_type), cell in summary.items():
         rt = "DOM" if flight_type == "DOM" else "INTL"
         common = cell.get("common_pct")
@@ -231,6 +268,17 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
         except Exception as exc:  # noqa: BLE001 — surfaced in the run log
             print(f"  ! ShareTrip HAR {Path(har_path).name} skipped: {exc}")
 
+    # Route-tagged rows for the per-route view, from the SAME loaded HARs (no extra
+    # read); only while a report is being built.
+    if _PARSE_MEMO is not None:
+        for har_path, har in loaded:
+            try:
+                _remember("sharetrip_routed", har_path, (
+                    sharetrip_har.parse_details_discounts_routed(har_path, har=har),
+                    sharetrip_har.parse_discounts_routed(har_path, har=har)))
+            except Exception as exc:  # noqa: BLE001 — per-route view just lacks this file
+                print(f"  ! ShareTrip HAR {Path(har_path).name} route split skipped: {exc}")
+
     def _safe(fn, har_path, har, default):
         """Isolate a per-file parse: a structurally-odd payload is skipped with a
         warning instead of aborting the whole run (matches the other channels)."""
@@ -254,18 +302,24 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
         shared_gateways.update(_safe(sharetrip_har.parse_payment_gateways, har_path, har, {}))
         search_rows += _safe(sharetrip_har.parse_discounts, har_path, har, [])
 
+    _remember("sharetrip_gateways", "all", shared_gateways)
     return _assemble_sharetrip_cells(all_rows, search_rows, shared_gateways)
 
 
 def _assemble_sharetrip_cells(details_rows: list[dict[str, Any]], search_rows: list[dict[str, Any]],
-                              gateways: dict[str, dict[str, Any]]) -> dict[tuple[str, str], str]:
+                              gateways: dict[str, dict[str, Any]],
+                              terms_rows: Optional[list[dict[str, Any]]] = None,
+                              ) -> dict[tuple[str, str], str]:
     """Judge ShareTrip cells from parsed inputs — shared by the HAR and LIVE collectors so
     both render identically. details_rows = booking-flow judged rows (exact per airline +
     market-uniform coupon_terms); search_rows = automatic-discount rows (fill airlines with
-    no booking capture at their own base); gateways = convenience-fee catalog."""
+    no booking capture at their own base); gateways = convenience-fee catalog.
+    terms_rows = where the market coupon terms come from (default details_rows); the
+    per-route view passes ALL routes' booking rows, since the live pull fetches each
+    airline's booking once per market, not once per route."""
     details = sharetrip_har.summarize_details(details_rows)
     shared_terms: dict[str, list[dict[str, Any]]] = {}
-    for r in details_rows:
+    for r in (details_rows if terms_rows is None else terms_rows):
         rt = "DOM" if r["flight_type"] == "DOM" else "INTL"
         if r.get("coupon_terms"):
             shared_terms.setdefault(rt, r["coupon_terms"])
@@ -291,7 +345,12 @@ def _assemble_sharetrip_cells(details_rows: list[dict[str, Any]], search_rows: l
 
 
 def collect_akij(har_path: str, field: str, true_base=None) -> dict[tuple[str, str], str]:
-    rows = [dict(r) for r in akijair_har.parse_commissions(har_path)]  # copy: we may rewrite %
+    return _akij_cells(_parsed(akijair_har.parse_commissions, har_path), field, true_base)
+
+
+def _akij_cells(parsed_rows: list[dict[str, Any]], field: str,
+                true_base=None) -> dict[tuple[str, str], str]:
+    rows = [dict(r) for r in parsed_rows]  # copy: we may rewrite %
     if true_base is not None and field == "realized_discount_pct":
         # Unified model: discount = (actual market gross - AKIJ net total) / actual base.
         # true_base.discount() trusts AKIJ's own gross when it shows a real markdown, and
@@ -346,7 +405,13 @@ def _market_base_index(row_lists: list[tuple[str, list[dict[str, Any]]]]) -> dic
 
 def collect_bdfare(har_path: str, true_base=None,
                    base_index: Optional[dict[tuple, tuple]] = None) -> dict[tuple[str, str], str]:
-    rows = [dict(r) for r in bdfare_har.parse_commissions(har_path, base_index=base_index)]
+    return _bdfare_cells(_parsed(bdfare_har.parse_commissions, har_path, base_index=base_index),
+                         true_base)
+
+
+def _bdfare_cells(parsed_rows: list[dict[str, Any]], true_base=None,
+                  verbose: bool = True) -> dict[tuple[str, str], str]:
+    rows = [dict(r) for r in parsed_rows]
     if true_base is not None:
         # Unified model: agent discount = (actual market gross - agentAmount) / actual base
         # (the agent's discount off the public price, consistent with every other channel).
@@ -365,7 +430,8 @@ def collect_bdfare(har_path: str, true_base=None,
             kept.append(r)
         rows = kept
     summary = bdfare_har.summarize_commissions(rows)
-    for (rt, airline), cell in sorted(summary.items()):
+    # Provenance lines belong to the summary run log once, not once per route.
+    for (rt, airline), cell in (sorted(summary.items()) if verbose else []):
         if cell.get("n_offers", 1) > 1 and cell.get("pct_max") != cell.get("value"):
             # Provenance for the run log: which fare the cell reflects, and the
             # spread across the other (usually premium) offers in the capture.
@@ -490,15 +556,28 @@ def _apply_manual_overrides(channel_cells: dict[str, dict[tuple[str, str], str]]
 
 
 def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]]],
-                 gozayaan_hars: Optional[list[str]] = None, amy_hars: Optional[list[str]] = None,
-                 firsttrip_b2b_hars: Optional[list[str]] = None,
-                 sharetrip_hars: Optional[list[str]] = None,
-                 akij_hars: Optional[list[str]] = None,
-                 bdfare_hars: Optional[list[str]] = None,
-                 firsttrip_b2c_hars: Optional[list[str]] = None,
-                 manual_overrides: Optional[dict[str, Any]] = None,
-                 use_true_base: bool = True,
-                 run_dt: Optional[datetime] = None) -> dict[str, Any]:
+                 *args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Build the report (summary grids + per-route blocks). Parsed HAR rows are
+    memoized for THIS run only, so the per-route view re-cuts them without re-reading
+    any file; the memo is always cleared, even when a run fails."""
+    global _PARSE_MEMO
+    _PARSE_MEMO = {}
+    try:
+        return _build_report(date, routes, *args, **kwargs)
+    finally:
+        _PARSE_MEMO = None
+
+
+def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]]],
+                  gozayaan_hars: Optional[list[str]] = None, amy_hars: Optional[list[str]] = None,
+                  firsttrip_b2b_hars: Optional[list[str]] = None,
+                  sharetrip_hars: Optional[list[str]] = None,
+                  akij_hars: Optional[list[str]] = None,
+                  bdfare_hars: Optional[list[str]] = None,
+                  firsttrip_b2c_hars: Optional[list[str]] = None,
+                  manual_overrides: Optional[dict[str, Any]] = None,
+                  use_true_base: bool = True,
+                  run_dt: Optional[datetime] = None) -> dict[str, Any]:
     channel_cells: dict[str, dict[tuple[str, str], str]] = {}
     sources: dict[str, str] = {}
 
@@ -623,6 +702,7 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
         lambda h: _collect_amy_rows(amy_rows_by_path[h])
         if h in amy_rows_by_path else collect_amy(h), "HAR")
 
+    b2c_fees: dict[str, Any] = {}
     if routes or b2c_rows_by_route:
         # FT B2C convenience fee (payment-step, gateway-dependent) from the captured FT
         # booking HAR — search page's GetActivePaymentGateway OR booking page's
@@ -631,6 +711,7 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
         for h in (firsttrip_b2b_hars or []) + (firsttrip_b2c_hars or []):
             gws += firsttrip.parse_b2c_gateways(h)
         fees = firsttrip.b2c_gateway_fees(gws)
+        b2c_fees = fees
         channel_cells["Firsttrip-B2C"] = _collect_firsttrip_b2c_rows(
             b2c_rows_by_route, fees.get("common"), fees.get("card"))
         parts = []
@@ -677,6 +758,18 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
             })
         grids[rt] = {"columns": cols, "rows": rows}
 
+    # Per-route view: the same cell rules on each route's rows (see by_route.py).
+    # Built after the summary so it can never alter it. Manual overrides are keyed
+    # by market, not route, so they stay summary-only.
+    from . import by_route
+    route_blocks = by_route.highlighted(by_route.route_blocks(by_route.route_table(
+        true_base=true_base, base_index=base_index,
+        akij_hars=akij_hars, bdfare_hars=bdfare_hars,
+        ft_b2b_rows_per_har=ft_b2b_rows_per_har,
+        sharetrip_hars=sharetrip_hars, gozayaan_hars=gozayaan_hars,
+        amy_rows=[r for rows in amy_rows_by_path.values() for r in rows],
+        b2c_rows_by_route=b2c_rows_by_route, b2c_fees=b2c_fees)))
+
     now = run_dt or datetime.now()
     return {
         "generated_at": now.isoformat(),
@@ -689,6 +782,7 @@ def build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str]
         "normalized": true_base is not None,        # False => BDFare/AKIJ on their own base
         "channel_status": channel_status,           # ok|captured_but_empty|manual|not_attempted
         "grids": grids,
+        "by_route": route_blocks,                   # per-route blocks (local view only)
     }
 
 
@@ -866,7 +960,9 @@ def _best_cell_text(b: Optional[dict[str, Any]]) -> Optional[str]:
 
 
 def _render_report_sheet(ws, report: dict[str, Any],
-                         prev_lookup: dict[tuple[str, str, str], float]) -> None:
+                         prev_lookup: dict[tuple[str, str, str], float],
+                         blocks: Optional[list[tuple[str, str]]] = None,
+                         title_extra: Optional[dict[str, str]] = None) -> None:
     """Render the colored grid into a worksheet, coloring from compute_highlights().
 
     Layout matches the manual Commission.xlsx colored sheets: OTA names as ROWS,
@@ -905,7 +1001,9 @@ def _render_report_sheet(ws, report: dict[str, Any],
     max_cols = 1
 
     r = 1
-    for rt, name in (("INTL", "INTERNATIONAL"), ("DOM", "DOMESTIC")):
+    # Default: the summary's two market blocks. The by-route sheet passes one block
+    # per route (keyed by route) so it shares this exact styling and Best row.
+    for rt, name in (blocks or (("INTL", "INTERNATIONAL"), ("DOM", "DOMESTIC"))):
         grid = report.get("grids", {}).get(rt)   # tolerate single-block reports
         if not grid:
             continue
@@ -918,12 +1016,14 @@ def _render_report_sheet(ws, report: dict[str, Any],
         flags, best = hl[rt]["flags"], hl[rt]["best"]
 
         # Title row (merged across the block) with the legend.
-        tcell = ws.cell(r, 1, f"{date_label} ({name})/ {time_label}\n{LEGEND}")
+        extra = (title_extra or {}).get(rt)
+        tcell = ws.cell(r, 1, f"{date_label} ({name})/ {time_label}\n{LEGEND}"
+                              + (f"\n{extra}" if extra else ""))
         tcell.font, tcell.alignment = title_font, center
         for ci in range(1, ncol + 1):
             ws.cell(r, ci).border = border
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=ncol)
-        ws.row_dimensions[r].height = 30
+        ws.row_dimensions[r].height = 45 if extra else 30
         r += 1
 
         # Header row (navy band): OTA + airline codes.
@@ -1209,7 +1309,34 @@ def write_single_sheet_xlsx(report: dict[str, Any],
     _render_transposed_sheet(
         wb.create_sheet(title=f"{_sheet_name(report)} (by airline)"), report, prev_lookup)
     _render_detailed_sheet(wb.create_sheet(title=f"{_sheet_name(report)} (detailed)"), report)
+    if report.get("by_route"):      # local runs only; synced/stored reports carry no routes
+        _render_route_sheet(wb.create_sheet(title=f"{_sheet_name(report)} (by route)"), report)
     return _save_workbook(wb, xlsx_path)
+
+
+def _route_sheet_inputs(report: dict[str, Any]):
+    """(pseudo-report keyed by route, block titles, per-route 'no data' notes)."""
+    blocks = report.get("by_route") or []
+    used = {lab for b in blocks for lab in b["coverage"]["with_data"]}
+    grids = {b["route"]: b for b in blocks}
+    titles = [(b["route"], f"{b['route']} · "
+               + ("DOMESTIC" if b["market"] == "DOM" else "INTERNATIONAL")) for b in blocks]
+    # Only OTAs captured somewhere in this run; never-captured rows would be noise.
+    notes = {}
+    for b in blocks:
+        missing = [lab for lab in b["coverage"]["without"] if lab in used]
+        if missing:
+            notes[b["route"]] = "No data on this route: " + ", ".join(missing)
+    pseudo = {"report_date": report["report_date"], "report_time": report["report_time"],
+              "grids": grids}
+    return pseudo, titles, notes
+
+
+def _render_route_sheet(ws, report: dict[str, Any]) -> None:
+    """One colored block per route, same styling as the daily sheet. Highlights rank
+    OTAs within a route; there is no red change-diff here (that stays on the summary)."""
+    pseudo, titles, notes = _route_sheet_inputs(report)
+    _render_report_sheet(ws, pseudo, {}, blocks=titles, title_extra=notes)
 
 
 # Substrings that identify which channel a HAR belongs to (first match wins).
