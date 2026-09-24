@@ -1327,6 +1327,12 @@ def _route_sheet_inputs(report: dict[str, Any]):
         missing = [lab for lab in b["coverage"]["without"] if lab in used]
         if missing:
             notes[b["route"]] = "No data on this route: " + ", ".join(missing)
+    # Preferred routes nobody captured have no grid to show; name them on the first
+    # block so the gap is visible in the file rather than silently absent.
+    if blocks and report.get("preferred_missing"):
+        first = blocks[0]["route"]
+        gap = "Preferred routes not captured yet: " + ", ".join(report["preferred_missing"])
+        notes[first] = f"{notes[first]}\n{gap}" if first in notes else gap
     pseudo = {"report_date": report["report_date"], "report_time": report["report_time"],
               "grids": grids}
     return pseudo, titles, notes

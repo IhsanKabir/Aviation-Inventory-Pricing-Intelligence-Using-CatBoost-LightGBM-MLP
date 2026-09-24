@@ -29,6 +29,7 @@ from . import APP_ID, __version__
 from .live_plugins import load_live_plugins, write_live_hars
 from .market_api import MarketApiMixin
 from .outbox import Outbox
+from .routes_api import RoutesApiMixin
 
 DEFAULT_API_BASE = "https://aero-pulse-api-591603094460.asia-south1.run.app"
 DEFAULT_WEB_BASE = "https://aviation-inventory-pricing-intellig.vercel.app"
@@ -74,7 +75,7 @@ def _sync_id_for(payload: dict[str, Any]) -> str:
     return hashlib.sha256(blob).hexdigest()[:32]
 
 
-class DesktopApi(MarketApiMixin):
+class DesktopApi(MarketApiMixin, RoutesApiMixin):
     """Methods exposed to the webview UI via the pywebview JS bridge."""
 
     def __init__(self) -> None:
@@ -216,6 +217,7 @@ class DesktopApi(MarketApiMixin):
             "live_channels": [{"channel": c, "label": p["label"]}
                               for c, p in self._live_plugins.items()],
             "live_routes": self._config.get("live_routes") or {},
+            "preferred_routes": self._config.get("preferred_routes") or [],
         }
 
     # Sentinel: set_config leaves a field untouched unless a value is passed. The
@@ -818,7 +820,9 @@ class DesktopApi(MarketApiMixin):
         target_path = Path(str(target))
         if target_path.suffix.lower() != ".xlsx":
             target_path = target_path.with_suffix(".xlsx")
-        path = write_single_sheet_xlsx(self._report, self._prev_payload, target_path)
+        from discount_engine.by_route import with_preferred
+        report = with_preferred(self._report, self._config.get("preferred_routes"))
+        path = write_single_sheet_xlsx(report, self._prev_payload, target_path)
         self._log_usage("export_xlsx", count=1)
         try:    # open Explorer with the file selected, so it's impossible to miss
             import subprocess

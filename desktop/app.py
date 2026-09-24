@@ -61,7 +61,13 @@ def _selftest() -> int:
         if not path:
             raise FileNotFoundError("route_presets.json not bundled")
         import json
-        return f"{len(json.loads(path.read_text(encoding='utf-8'))) - 1} preset groups"
+        catalog = _bundled("config/route_catalog.json")
+        if not catalog:
+            raise FileNotFoundError("route_catalog.json not bundled")
+        routes = [r for k, v in json.loads(catalog.read_text(encoding="utf-8")).items()
+                  if not k.startswith("_") for r in v]
+        return (f"{len(json.loads(path.read_text(encoding='utf-8'))) - 1} preset groups, "
+                f"{len(routes)} catalogue routes")
 
     def _ui():
         page = _resource_path("ui.html")

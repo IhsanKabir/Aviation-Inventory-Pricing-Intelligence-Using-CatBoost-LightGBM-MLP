@@ -1,0 +1,28 @@
+{
+  "_comment": "Every route offered in the Preferred routes picker, by region, busiest first. Built 2026-09-24 from the scraping database (flight_offers: 60 routes with real service out of Bangladesh, reverse directions folded in) plus the Schedule/Fare presets not yet seen there. Edit freely; a copy in the app's settings folder overrides this one. Any route can also be typed in the picker.",
+  "Domestic": [
+    "DAC-CGP", "DAC-CXB", "DAC-ZYL", "DAC-SPD", "DAC-RJH", "DAC-BZL", "DAC-JSR",
+    "CXB-SPD"
+  ],
+  "Saudi (KSA)": [
+    "DAC-JED", "DAC-MED", "DAC-RUH", "DAC-DMM",
+    "CGP-JED", "CGP-MED", "CGP-RUH", "CGP-DMM",
+    "ZYL-JED", "ZYL-RUH", "ZYL-DMM", "ZYL-MED",
+    "CXB-JED", "CXB-RUH", "CXB-DMM", "CXB-MED"
+  ],
+  "Gulf": [
+    "DAC-DXB", "DAC-MCT", "DAC-DOH", "DAC-AUH", "DAC-SHJ", "DAC-KWI", "DAC-BAH",
+    "CGP-MCT", "CGP-AUH", "CGP-DOH", "CGP-DXB", "CGP-SHJ",
+    "ZYL-DXB", "ZYL-SHJ", "ZYL-DOH", "ZYL-AUH",
+    "CXB-DXB", "CXB-MCT", "CXB-SHJ", "CXB-BAH", "CXB-KWI"
+  ],
+  "Asia": [
+    "DAC-BKK", "DAC-MAA", "DAC-KUL", "DAC-SIN", "DAC-CAN", "DAC-CCU", "DAC-MLE",
+    "DAC-DEL", "DAC-KTM", "DAC-NRT",
+    "CGP-KUL", "CGP-SIN", "CGP-CCU"
+  ],
+  "Europe & long haul": [
+    "DAC-LHR", "DAC-FCO", "DAC-MAN", "DAC-IST", "DAC-YYZ",
+    "ZYL-LHR", "ZYL-MAN"
+  ]
+}

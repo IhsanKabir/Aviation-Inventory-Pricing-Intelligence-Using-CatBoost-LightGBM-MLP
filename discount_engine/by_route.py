@@ -173,6 +173,20 @@ def route_blocks(table: RouteTable) -> list[dict[str, Any]]:
     return blocks
 
 
+def with_preferred(report: dict[str, Any], preferred: Optional[list[str]]) -> dict[str, Any]:
+    """A copy of `report` whose route blocks put the user's preferred routes first,
+    in the user's order, flagged `preferred: True`; other routes follow unchanged.
+    `preferred_missing` names preferred routes no OTA had data for, so they can be
+    shown as "not captured yet" instead of silently vanishing."""
+    preferred = [str(r).upper() for r in (preferred or [])]
+    blocks = list(report.get("by_route") or [])
+    by_name = {b["route"]: b for b in blocks}
+    first = [{**by_name[r], "preferred": True} for r in preferred if r in by_name]
+    rest = [b for b in blocks if b["route"] not in set(preferred)]
+    return {**report, "by_route": first + rest,
+            "preferred_missing": [r for r in preferred if r not in by_name]}
+
+
 def highlighted(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Best / runner-up flags and a Best row per route block, via the summary's own
     highlighter (no previous-report diff: change tracking stays on the summary)."""

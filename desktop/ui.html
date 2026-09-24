@@ -56,6 +56,15 @@
   .grid-title { display: flex; justify-content: space-between; align-items: baseline; margin: 4px 0 8px; }
   .grid-title h2 { font-size: 14px; margin: 0; }
   .table-wrap { overflow-x: auto; }
+  .route-chip { display: inline-block; background: #eef2f7; border: 1px solid var(--line); border-radius: 999px;
+    padding: 2px 10px; font-size: 12px; margin: 2px 4px 2px 0; }
+  .route-chip button { background: none; color: var(--muted); padding: 0 0 0 6px; font-size: 12px; }
+  .route-group { border-top: 1px solid var(--line); padding: 8px 0; }
+  .route-group h3 { font-size: 13px; margin: 0 0 6px; display: flex; gap: 10px; align-items: center; }
+  .route-group label { display: inline-flex; flex-direction: row; align-items: center; gap: 4px;
+    color: #111827; font-size: 12.5px; margin: 0 12px 6px 0; }
+  .route-group input[type=checkbox] { min-width: 0; }
+  .route-group h3 label { color: var(--muted); font-weight: 400; margin: 0; }
 </style>
 </head>
 <body>
@@ -101,6 +110,31 @@
     </div>
     <div id="admin-error" class="banner err" style="display:none;margin-bottom:8px"></div>
     <div id="admin-body" class="muted">Save the admin token to load requests.</div>
+  </div>
+</div>
+
+<div id="routes-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto">
+  <div class="card" style="max-width:820px;width:100%">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <strong>Preferred routes</strong>
+      <button class="secondary" style="padding:4px 12px" onclick="closeRoutes()">Close</button>
+    </div>
+    <p class="muted" style="margin:0 0 8px">Tick the routes you compare. They are saved on this computer and
+      open first in the <b>By route</b> view and Excel sheet, in the order below. Edit them any time.</p>
+    <div style="margin-bottom:8px"><span class="muted">Your routes, in order:</span>
+      <div id="routes-picked" style="margin-top:4px"></div></div>
+    <div class="row" style="margin-bottom:6px">
+      <label>Add another route <input id="routes-custom" placeholder="e.g. DAC-HKG, CGP-DXB"
+        onkeydown="if (event.key === 'Enter') addCustomRoutes()"></label>
+      <button class="secondary" onclick="addCustomRoutes()">Add</button>
+    </div>
+    <div id="routes-groups"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px">
+      <button class="secondary" onclick="clearPickedRoutes()">Clear all</button>
+      <button class="secondary" onclick="savePreferredRoutes(false)">Save</button>
+      <button onclick="savePreferredRoutes(true)"
+        title="Also put these routes in the FirstTrip B2C and ShareTrip live-search boxes">Save &amp; use for live searches</button>
+    </div>
   </div>
 </div>
 
@@ -153,6 +187,11 @@
       <label>Travel date (YYYY-MM-DD) <input id="travel_date" placeholder="2026-07-30"></label>
       <button class="secondary" onclick="saveConfig()">Save</button>
       <button class="big" id="run-btn" onclick="runReport()">Run report</button>
+    </div>
+    <div id="pref-row" style="margin-top:10px">
+      <span class="muted">Preferred routes:</span>
+      <span id="pref-chips"></span>
+      <button class="secondary" style="padding:3px 10px;font-size:12px" onclick="openRoutes()">Edit preferred routes</button>
     </div>
     <div id="access-row" style="display:none;margin-top:8px;align-items:center;gap:8px">
       <span id="access-line" class="muted"></span>
@@ -270,6 +309,7 @@ async function refreshState() {
   document.getElementById("routes").value = state.routes;
   document.getElementById("travel_date").value = state.travel_date;
   renderLivePluginRoutes(state.live_channels || [], state.live_routes || {});
+  renderPreferredChips();
   if (state.insecure_token_store) {
     addBanner("warn", "No OS keyring available — the session token is stored in the config file. Prefer a machine with Windows Credential Manager.");
   }
@@ -607,15 +647,116 @@ function renderReport(report, prevAvailable) {
     addBanner("warn", "NOT NORMALIZED: no exact-base source (FirstTrip B2B HAR / live route) — BDFare & AKIJ are on their own base. Capture a FirstTrip B2B HAR to fix.");
   }
   shownReport = report;
+  lastPrevAvailable = prevAvailable;
   const routes = report.by_route || [];
-  document.getElementById("view-switch").style.display = routes.length ? "" : "none";
+  const pref = (state && state.preferred_routes) || [];
+  document.getElementById("view-switch").style.display = (routes.length || pref.length) ? "" : "none";
   const filter = document.getElementById("route-filter");
   const keep = filter.value;
-  filter.innerHTML = `<option value="">All routes (${routes.length})</option>` +
+  filter.innerHTML =
+    (pref.length ? `<option value="__preferred__">My preferred routes (${pref.length})</option>` : "") +
+    `<option value="">All routes (${routes.length})</option>` +
     routes.map(b => `<option value="${esc(b.route)}">${esc(b.route)}</option>`).join("");
-  if (routes.some(b => b.route === keep)) filter.value = keep;
-  if (!routes.length) discountView = "summary";
+  const options = [...filter.options].map(o => o.value);
+  filter.value = options.includes(keep) && keep !== "" ? keep : (pref.length ? "__preferred__" : "");
+  if (!routes.length && !pref.length) discountView = "summary";
   drawDiscounts();
+}
+
+let lastPrevAvailable = false;
+
+/** Route blocks to draw for the picker's choice. "My preferred routes" keeps the
+ *  saved order and includes preferred routes nobody captured, as placeholders. */
+function routeBlocksFor(report, pick) {
+  const blocks = report.by_route || [];
+  if (pick !== "__preferred__") return blocks.filter(b => !pick || b.route === pick);
+  const byName = Object.fromEntries(blocks.map(b => [b.route, b]));
+  return ((state && state.preferred_routes) || []).map(r => byName[r] || { route: r, placeholder: true });
+}
+
+// ---- Preferred routes (saved in the app's config; editable any time) ------------
+let routeCatalog = {};
+let pickedRoutes = [];              // working copy while the picker is open, in order
+
+function renderPreferredChips() {
+  const pref = (state && state.preferred_routes) || [];
+  document.getElementById("pref-chips").innerHTML = pref.length
+    ? pref.map(r => `<span class="route-chip">${esc(r)}</span>`).join("")
+    : '<span class="muted">none yet — pick the routes you compare</span> ';
+}
+
+async function openRoutes() {
+  const rs = await api().routes_state();
+  routeCatalog = rs.catalog || {};
+  pickedRoutes = [...(rs.preferred || [])];
+  document.getElementById("routes-custom").value = "";
+  drawRoutePicker();
+  document.getElementById("routes-modal").style.display = "flex";
+}
+
+function closeRoutes() { document.getElementById("routes-modal").style.display = "none"; }
+
+function drawRoutePicker() {
+  const known = new Set(Object.values(routeCatalog).flat());
+  const own = pickedRoutes.filter(r => !known.has(r));
+  const groups = Object.entries(routeCatalog);
+  if (own.length) groups.push(["Your own routes", own]);
+  document.getElementById("routes-groups").innerHTML = groups.map(([name, routes], gi) => {
+    const allOn = routes.length && routes.every(r => pickedRoutes.includes(r));
+    return `<div class="route-group"><h3>${esc(name)}
+        <label><input type="checkbox" ${allOn ? "checked" : ""} onchange="toggleRouteGroup(${gi}, this.checked)"> all</label></h3>
+      ${routes.map(r => `<label><input type="checkbox" value="${esc(r)}" ${pickedRoutes.includes(r) ? "checked" : ""}
+          onchange="toggleRoute(this.value, this.checked)">${esc(r)}</label>`).join("")}</div>`;
+  }).join("");
+  document.getElementById("routes-picked").innerHTML = pickedRoutes.length
+    ? pickedRoutes.map(r => `<span class="route-chip">${esc(r)}<button title="Remove"
+        onclick="toggleRoute('${esc(r)}', false)">✕</button></span>`).join("")
+    : '<span class="muted">none selected</span>';
+  drawRoutePicker.groups = groups;
+}
+
+function toggleRoute(route, on) {
+  pickedRoutes = pickedRoutes.filter(r => r !== route);
+  if (on) pickedRoutes.push(route);          // newly ticked routes go to the end
+  drawRoutePicker();
+}
+
+function toggleRouteGroup(gi, on) {
+  const routes = (drawRoutePicker.groups[gi] || [])[1] || [];
+  pickedRoutes = pickedRoutes.filter(r => !routes.includes(r));
+  if (on) pickedRoutes.push(...routes);
+  drawRoutePicker();
+}
+
+function addCustomRoutes() {
+  const box = document.getElementById("routes-custom");
+  const bad = [];
+  for (const raw of box.value.toUpperCase().split(/[\s,;]+/).filter(Boolean)) {
+    const m = raw.match(/^([A-Z]{3})-([A-Z]{3})$/);
+    if (!m || m[1] === m[2]) { bad.push(raw); continue; }
+    if (!pickedRoutes.includes(raw)) pickedRoutes.push(raw);
+  }
+  box.value = bad.join(", ");
+  if (bad.length) addBanner("warn", `Not a route (use ORIGIN-DEST, e.g. DAC-HKG): ${bad.join(", ")}`);
+  drawRoutePicker();
+}
+
+function clearPickedRoutes() { pickedRoutes = []; drawRoutePicker(); }
+
+async function savePreferredRoutes(useForLive) {
+  // A route typed but not yet "Add"-ed must not be silently dropped on Save.
+  if (document.getElementById("routes-custom").value.trim()) {
+    addCustomRoutes();
+    if (document.getElementById("routes-custom").value.trim()) return;   // invalid text: fix first
+  }
+  const r = await api().save_preferred_routes(pickedRoutes, useForLive);
+  if (!r.ok) { addBanner("err", r.error); return; }
+  closeRoutes();
+  await refreshState();                       // chips + live boxes show the saved values
+  if (shownReport) renderReport(shownReport, lastPrevAvailable);
+  addBanner("ok", r.preferred.length
+    ? `Saved ${r.preferred.length} preferred route(s)` + (r.used_for_live ? " and put them in the live-search boxes." : ".")
+    : "Preferred routes cleared.");
 }
 
 // ---- Summary vs By-route view -------------------------------------------------
@@ -645,12 +786,17 @@ function drawDiscounts() {
       }
     }
   } else {
-    const blocks = report.by_route || [];
     const pick = document.getElementById("route-filter").value;
     // Only OTAs captured somewhere this run; never-captured rows would be noise.
-    const used = new Set(blocks.flatMap(b => b.coverage.with_data));
-    for (const b of blocks) {
-      if (pick && b.route !== pick) continue;
+    const used = new Set((report.by_route || []).flatMap(b => b.coverage.with_data));
+    for (const b of routeBlocksFor(report, pick)) {
+      if (b.placeholder) {
+        html += `<div class="grid-title"><h2>${esc(b.route)}</h2></div>
+          <div class="banner warn" style="margin-bottom:14px">Not captured on any OTA in this run —
+          search ${esc(b.route)} on the sites (or click <b>Edit preferred routes → Save &amp; use for live searches</b>)
+          and run again.</div>`;
+        continue;
+      }
       const market = b.market === "DOM" ? "DOMESTIC" : "INTERNATIONAL";
       html += gridTable(`${b.route} (${market}) / ${report.report_time}hrs`, b, {});
       const missing = b.coverage.without.filter(l => used.has(l));
