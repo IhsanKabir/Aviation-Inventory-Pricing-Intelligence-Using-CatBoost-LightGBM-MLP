@@ -158,7 +158,7 @@
     <div class="row" style="justify-content:flex-end;margin-top:10px">
       <button class="secondary" onclick="clearPickedRoutes()">Clear all</button>
       <button class="secondary" onclick="savePreferredRoutes(false)">Save</button>
-      <button onclick="savePreferredRoutes(true)"
+      <button id="save-live-btn" onclick="savePreferredRoutes(true)"
         title="Also put these routes in the FirstTrip B2C and ShareTrip live-search boxes">Save &amp; use for live searches</button>
     </div>
   </div>
@@ -208,9 +208,12 @@
       </label>
       <button class="secondary" onclick="pickFolder()">Browse…</button>
       <button class="secondary" onclick="archiveHars()" title="Move all .har files into archive/YYYY-MM-DD/ so today's captures start clean">Archive old HARs</button>
-      <label>Live routes (FirstTrip B2C) <input id="routes"></label>
-      <span id="live-plugin-routes"></span>
-      <label>Travel date (YYYY-MM-DD) <input id="travel_date" placeholder="2026-07-30"></label>
+      <label class="live-only">Live routes (FirstTrip B2C) <input id="routes"></label>
+      <span id="live-plugin-routes" class="live-only"></span>
+      <span id="live-admin-note" class="muted" style="display:none;align-self:center">
+        Live search is for the administrator only — this app reads your HAR captures
+        (FirstTrip, ShareTrip and the rest; see <b>Guide</b>).</span>
+      <label class="live-only">Travel date (YYYY-MM-DD) <input id="travel_date" placeholder="2026-07-30"></label>
       <button class="secondary" onclick="saveConfig()">Save</button>
       <button class="big" id="run-btn" onclick="runReport()">Run report</button>
     </div>
@@ -342,6 +345,7 @@ async function refreshState() {
   document.getElementById("travel_date").value = state.travel_date;
   renderLivePluginRoutes(state.live_channels || [], state.live_routes || {});
   renderPreferredChips();
+  applyLiveAccess();
   if (state.insecure_token_store) {
     addBanner("warn", "No OS keyring available — the session token is stored in the config file. Prefer a machine with Windows Credential Manager.");
   }
@@ -442,6 +446,10 @@ async function refreshAccess() {
   const row = document.getElementById("access-row");
   if (!state || !state.logged_in) { row.style.display = "none"; return; }
   const a = await api().check_access();
+  if (a.is_admin !== undefined) {       // the server's word on admin-only live search
+    state.live_allowed = !!a.is_admin && state.logged_in;
+    applyLiveAccess();
+  }
   const line = document.getElementById("access-line");
   const btn = document.getElementById("access-request-btn");
   const st = a.status || "unknown";
@@ -601,6 +609,16 @@ function renderScan(scan) {
 }
 
 function setStatus(text) { document.getElementById("status").textContent = text; }
+
+/** Live search is admin-only: everyone else sees HAR-only controls. The backend
+ *  enforces the same rule, so this is presentation, not the gate. */
+function applyLiveAccess() {
+  const ok = !!(state && state.live_allowed);
+  document.querySelectorAll(".live-only").forEach(el => { el.style.display = ok ? "" : "none"; });
+  document.getElementById("live-admin-note").style.display = ok ? "none" : "";
+  const saveLive = document.getElementById("save-live-btn");
+  if (saveLive) saveLive.style.display = ok ? "" : "none";
+}
 
 // ---- Progress bars (Discounts / Schedule / Fare) -------------------------------
 const PROG_ICON = { complete: "✓ ", warning: "⚠ ", failed: "✗ ", cancelled: "⏹ " };
@@ -894,8 +912,9 @@ function drawDiscounts() {
       if (b.placeholder) {
         html += `<div class="grid-title"><h2>${esc(b.route)}</h2></div>
           <div class="banner warn" style="margin-bottom:14px">Not captured on any OTA in this run —
-          search ${esc(b.route)} on the sites (or click <b>Edit preferred routes → Save &amp; use for live searches</b>)
-          and run again.</div>`;
+          search ${esc(b.route)} on the sites and save the HAR files${state && state.live_allowed
+            ? " (or click <b>Edit preferred routes → Save &amp; use for live searches</b>)" : ""},
+          then run again.</div>`;
         continue;
       }
       const market = b.market === "DOM" ? "DOMESTIC" : "INTERNATIONAL";
@@ -991,13 +1010,18 @@ async function initMarket() {
     // A source that cannot answer THIS view is disabled with the reason, rather
     // than silently returning nothing after a long run.
     const want = p === "sch" ? "can_schedule" : "can_fare";
+    // Live sources are admin-only; for everyone else the HAR source is the default.
+    const liveOk = !!(state && state.live_allowed);
+    const defaultKey = liveOk ? "firsttrip" : "har";
     document.getElementById(p + "_sources").innerHTML = marketSources.map(s => {
-      const why = !s.available ? "not installed on this machine"
+      const adminOnly = !liveOk && s.key !== "har";
+      const why = adminOnly ? "administrator only - use Manual HAR captures"
+                : !s.available ? (s.note || "not installed on this machine")
                 : (!s[want] ? "cannot answer this view" : (s.note || ""));
-      const off = !s.available || !s[want];
+      const off = adminOnly || !s.available || !s[want];
       return `<label style="font-size:12px;margin-right:12px" title="${esc(why)}">
         <input type="checkbox" class="${p}-src" value="${esc(s.key)}"
-          ${off ? "disabled" : (s.key === "firsttrip" ? "checked" : "")}>
+          ${off ? "disabled" : (s.key === defaultKey ? "checked" : "")}>
         ${esc(s.label)}${off ? ` <span class="muted">(${esc(why)})</span>` : ""}</label>`;
     }).join("");
     if (!document.getElementById(p + "_from").value) document.getElementById(p + "_from").value = iso(1);

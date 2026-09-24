@@ -223,6 +223,7 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                               for c, p in self._live_plugins.items()],
             "live_routes": self._config.get("live_routes") or {},
             "preferred_routes": self._config.get("preferred_routes") or [],
+            "live_allowed": self._live_allowed(),
         }
 
     # Sentinel: set_config leaves a field untouched unless a value is passed. The
@@ -367,6 +368,10 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                              headers={"X-User-Session": token}, timeout=15)
             if r.status_code == 200:
                 result = r.json()
+                # Live searches are admin-only; the server decides who is admin.
+                # Remembered for offline stretches like the access grace window.
+                self._config["is_admin"] = bool(result.get("is_admin"))
+                self._save_config()
                 if result.get("allowed"):
                     self._config["last_access_ok_utc"] = datetime.now(timezone.utc).isoformat()
                     self._save_config()
@@ -606,8 +611,15 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                 pass
         self._clear_token()
         self._config.pop("last_access_ok_utc", None)   # signing out ends offline grace
+        self._config.pop("is_admin", None)             # ...and admin-only live search
         self._save_config()
         return self.get_state()
+
+    def _live_allowed(self) -> bool:
+        """Live searches (FirstTrip B2C, live plugins, Schedule/Fare live sources) are
+        for the administrator only; everyone else works from HAR captures. The flag
+        comes from the server's access check and is cleared on sign-out."""
+        return bool(self._token()) and bool(self._config.get("is_admin"))
 
     def get_progress(self, task: str = "") -> dict[str, Any]:
         """The progress bar's readout (polled by the UI while a task runs)."""
@@ -738,10 +750,20 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
         if blocked:
             return blocked
 
+        # Live searches are admin-only (enforced here, not just hidden in the UI):
+        # a non-admin run reads HAR captures only, whatever the saved boxes say.
+        live_notes: list[str] = []
+        live_routes = self._config.get("live_routes") or {}
+        if not self._live_allowed():
+            if routes or any((v or "").strip() for v in live_routes.values()):
+                live_notes.append("Live searches are available to the administrator only - "
+                                  "this run used your HAR captures. Capture FirstTrip and "
+                                  "ShareTrip as HAR files (see the Guide) to include them.")
+            routes, live_routes = [], {}
+
         self._busy, self._status = True, "Parsing HAR captures…"
         # Progress: every live route, every FirstTrip route and every HAR file is one
         # unit, plus the final build; the HAR count is added once files are known.
-        live_routes = self._config.get("live_routes") or {}
         live_n = live_route_count(self._live_plugins, live_routes) if self._live_plugins else 0
         self._progress.start("discount", total=live_n + len(routes) + 1,
                              label="Starting the run…")
@@ -798,7 +820,7 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                             count=sum(len(v) for v in hars.values()),
                             target=report.get("report_date"))
 
-            warnings: list[str] = []
+            warnings: list[str] = list(live_notes)
             for c in live_failed:
                 label = self._live_plugins[c]["label"]
                 warnings.append(

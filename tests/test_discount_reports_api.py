@@ -226,6 +226,23 @@ def test_access_endpoint_reports_status(client, monkeypatch):
     assert "Not this cycle." in body["detail"]
 
 
+def test_access_endpoint_says_who_may_run_live_searches(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setattr(dr_router.access_requests, "count_usage", lambda db, rid, action: 0)
+    monkeypatch.setattr(dr_router.access_requests, "find_approved_request_for_email",
+                        lambda db, *, page_key, email: {"request_id": "r-1"})
+    from apps.api.app import authz
+    monkeypatch.setattr(authz, "ADMIN_EMAILS", {"boss@x.com"})
+    monkeypatch.setattr(dr_router.user_accounts, "get_session_user",
+                        lambda db, token, touch=True: {**USER, "email": "Boss@X.com"})
+    assert c.get("/api/v1/discount-reports/access",
+                 headers={"X-User-Session": "good"}).json()["is_admin"] is True
+    monkeypatch.setattr(dr_router.user_accounts, "get_session_user",
+                        lambda db, token, touch=True: {**USER, "email": "teammate@x.com"})
+    assert c.get("/api/v1/discount-reports/access",
+                 headers={"X-User-Session": "good"}).json()["is_admin"] is False
+
+
 def test_rejected_user_sync_gets_rejected_message(client, monkeypatch):
     c, _ = client
     monkeypatch.setattr(dr_router.access_requests, "find_approved_request_for_email",

@@ -30,6 +30,7 @@ from starlette.background import BackgroundTask
 from discount_engine.highlight import apply_highlights
 from discount_engine.sanitize import sanitize_report_for_sync
 
+from ..authz import is_admin_email
 from ..db import get_optional_db
 from ..repositories import access_requests, discount_reports, user_accounts
 
@@ -225,6 +226,9 @@ def access_status(
     result: dict[str, Any] = {
         "status": access["status"], "allowed": access["allowed"],
         "detail": access["detail"], "email": user.get("email"),
+        # Live searches (FirstTrip/ShareTrip/...) are admin-only in the desktop app;
+        # everyone else works from HAR captures.
+        "is_admin": is_admin_email(user.get("email")),
     }
     req = access.get("request")
     if req:

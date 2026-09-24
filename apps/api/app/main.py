@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from . import ratelimit
+from .authz import is_admin_email
 from .db import SessionLocal, engine, get_optional_db
 from .repositories import (
     access_requests,
@@ -644,17 +645,9 @@ def logout_user(
 # ---------------------------------------------------------------------------
 
 
-_ADMIN_EMAILS = {
-    e.strip().lower()
-    for e in os.environ.get("USAGE_ADMIN_EMAILS", "ihsankabir999@gmail.com").split(",")
-    if e.strip()
-}
-
-
 def _require_admin_user(db: Session | None, x_user_session: str | None) -> dict:
     user = _require_user_session(db, x_user_session)
-    email = (user.get("email") or "").strip().lower()
-    if email not in _ADMIN_EMAILS:
+    if not is_admin_email(user.get("email")):
         raise HTTPException(
             status_code=403,
             detail="This endpoint is restricted to administrators.",

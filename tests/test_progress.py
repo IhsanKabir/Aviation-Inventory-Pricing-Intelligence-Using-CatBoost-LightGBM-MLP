@@ -69,7 +69,7 @@ def test_run_ticks_every_unit_and_flags_a_silent_live_channel(api, monkeypatch, 
     folder = Path(tempfile.mkdtemp())
     (folder / "a.har").write_text("{}", encoding="utf-8")
     api._config.update(har_dir=str(folder), routes="DAC-CGP,DAC-CXB",
-                       live_routes={"sharetrip": "DAC-DXB"})
+                       live_routes={"sharetrip": "DAC-DXB"}, is_admin=True)   # live = admin
     api._live_plugins = _live_plugin(writes)
     _sign_in(api, monkeypatch)
     monkeypatch.setattr(backend_mod, "auto_detect_hars", lambda d: {"bdfare": [str(folder / "a.har")]})

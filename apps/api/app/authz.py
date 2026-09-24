@@ -3,10 +3,24 @@
 from __future__ import annotations
 
 import hmac
+import os
 
 from fastapi import HTTPException
 
 from .config import settings
+
+#: Administrator accounts (by sign-in email). Gates the /usage dashboard and the
+#: desktop app's LIVE searches (everyone else works from HAR captures). Set
+#: USAGE_ADMIN_EMAILS on the API to change it - no app release needed.
+ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in os.environ.get("USAGE_ADMIN_EMAILS", "ihsankabir999@gmail.com").split(",")
+    if e.strip()
+}
+
+
+def is_admin_email(email: str | None) -> bool:
+    return bool(email) and str(email).strip().lower() in ADMIN_EMAILS
 
 
 def require_admin_token(x_admin_token: str | None) -> None:
