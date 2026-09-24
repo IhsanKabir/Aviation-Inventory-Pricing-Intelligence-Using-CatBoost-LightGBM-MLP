@@ -95,10 +95,17 @@ def load_live_plugins(config_dir: Path) -> Dict[str, Dict[str, Any]]:
     return found
 
 
+def live_route_count(plugins: Dict[str, Dict[str, Any]], live_routes: Dict[str, str]) -> int:
+    """How many live searches a run will make (for the progress bar's total)."""
+    return sum(len([r for r in (live_routes.get(c) or "").split(",") if r.strip()])
+               for c in plugins)
+
+
 def write_live_hars(plugins: Dict[str, Dict[str, Any]], live_routes: Dict[str, str],
-                    har_dir: Path, date: str, log=print) -> List[str]:
+                    har_dir: Path, date: str, log=print, progress=None) -> List[str]:
     """For each plugin channel with routes entered, fetch live and write a channel HAR
-    into ``har_dir``. Returns the list of written HAR paths. Failures are logged, not raised."""
+    into ``har_dir``. Returns the list of written HAR paths. Failures are logged, not raised.
+    progress(label, units) ticks once per route searched."""
     written: List[str] = []
     for channel, spec in plugins.items():
         rstr = (live_routes.get(channel) or "").strip()
@@ -109,9 +116,15 @@ def write_live_hars(plugins: Dict[str, Dict[str, Any]], live_routes: Dict[str, s
             continue
         out = har_dir / f"{channel}_live_{date or 'latest'}.har"
         write_har: Callable = spec["write_har"]
+        ticked = [0]
         try:
             def _on_route(route, n, reason, _c=channel):
                 log(f"  {_c} live {route}: {n}" + (f" ({reason})" if reason else ""))
+                if progress:
+                    ticked[0] += 1
+                    progress(f"{spec['label']} live: {route} ({ticked[0]}/{len(routes)})", 1)
+            if progress:
+                progress(f"{spec['label']} live: searching {len(routes)} route(s)…", 0)
             if _accepts_on_route(write_har):
                 n = write_har(routes, date, str(out), on_route=_on_route)
             else:
@@ -121,7 +134,16 @@ def write_live_hars(plugins: Dict[str, Dict[str, Any]], live_routes: Dict[str, s
                 _prune_stale_live_hars(har_dir, channel, keep=out)
                 log(f"  {channel} live: wrote {out.name} ({n} entries)")
             else:
-                log(f"  {channel} live: no data (key rotated? see the plugin's --recover-key)")
+                # The per-route lines above say why. Only "mint_failed" points at a
+                # rotated key; "no_searchId" means the token worked and the search
+                # itself was refused (usually throttling) - the old blanket hint
+                # sent people to --recover-key for that too.
+                log(f"  {channel} live: no data - see the route line(s) above "
+                    f"(mint_failed = key rotated, run --recover-key; "
+                    f"no_searchId = search refused, usually throttling: wait, then re-run)")
         except Exception as exc:  # noqa: BLE001
             log(f"  {channel} live FAILED: {exc}")
+        finally:
+            if progress and ticked[0] < len(routes):   # plugin stopped early / no callbacks
+                progress(f"{spec['label']} live: done", len(routes) - ticked[0])
     return written

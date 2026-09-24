@@ -167,9 +167,14 @@ class MarketApiMixin:
 
         self._busy, self._market_cancel = True, False
         self._status = "Collecting..."
+        tracker = getattr(self, "_progress", None)
+        if tracker:
+            tracker.start(kind, label="Collecting…")
         try:
             def progress(message: str, done: int, total: int) -> None:
                 self._status = "{}  ({}/{})".format(message, done, total)
+                if tracker:
+                    tracker.step(self._status, done, total)
 
             result = collect(plan, self._market_cache(), progress=progress,
                              should_cancel=lambda: getattr(self, "_market_cancel", False))
@@ -243,8 +248,17 @@ class MarketApiMixin:
 
             self._log_usage("market_" + kind, count=len(result.rows),
                             target="{}..{}".format(first, last))
+            if tracker:
+                if result.cancelled:
+                    tracker.finish("cancelled", "Stopped — showing the {} rows collected so far"
+                                   .format(len(result.rows)))
+                else:
+                    tracker.finish("complete", "Complete — {} rows ({} fetched, {} from cache)"
+                                   .format(len(result.rows), result.fetched, result.from_cache))
             return payload
         except Exception as exc:                  # noqa: BLE001 — surface, never crash the UI
+            if tracker:
+                tracker.finish("failed", "Failed — {}: {}".format(type(exc).__name__, exc))
             return {"ok": False, "error": "{}: {}".format(type(exc).__name__, exc)}
         finally:
             self._busy, self._status = False, ""

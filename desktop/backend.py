@@ -26,7 +26,8 @@ from discount_engine.highlight import apply_highlights
 from discount_engine.sanitize import sanitize_report_for_sync
 
 from . import APP_ID, __version__
-from .live_plugins import load_live_plugins, write_live_hars
+from .live_plugins import live_route_count, load_live_plugins, write_live_hars
+from .progress import ProgressTracker
 from .market_api import MarketApiMixin
 from .outbox import Outbox
 from .routes_api import RoutesApiMixin
@@ -87,6 +88,7 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
         self._prev_payload: Optional[dict[str, Any]] = None  # this machine's last run (red-diff baseline)
         self._busy = False
         self._status = ""
+        self._progress = ProgressTracker()     # one bar readout for every long task
         # Optional local live-search extensions (absent on standard installs -> HAR-only).
         self._live_plugins = load_live_plugins(config_dir())
         # Every launch shows up on the /usage dashboard (no-op when signed out —
@@ -206,7 +208,10 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
             "logged_in": bool(self._token()),
             "insecure_token_store": bool(self._config.get("token_fallback")),
             "har_dir": self._config.get("har_dir") or "",
-            "routes": self._config.get("routes") or "DAC-CGP,DAC-DXB,DAC-SIN",
+            # Starter routes only for a brand-new install. Once the box has been
+            # saved - even EMPTY - that choice stands: an emptied box used to fall
+            # back to these three and quietly run FirstTrip searches nobody asked for.
+            "routes": self._config.get("routes", "DAC-CGP,DAC-DXB,DAC-SIN"),
             "travel_date": self._config.get("travel_date") or "",
             "outbox_count": self._outbox.count(),
             "busy": self._busy,
@@ -604,6 +609,10 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
         self._save_config()
         return self.get_state()
 
+    def get_progress(self, task: str = "") -> dict[str, Any]:
+        """The progress bar's readout (polled by the UI while a task runs)."""
+        return self._progress.snapshot(task or None)
+
     # -------------------------------------------------------------------- scan
     def pick_folder(self) -> dict[str, Any]:
         import webview  # local import: only available inside the app shell
@@ -730,24 +739,41 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
             return blocked
 
         self._busy, self._status = True, "Parsing HAR captures…"
+        # Progress: every live route, every FirstTrip route and every HAR file is one
+        # unit, plus the final build; the HAR count is added once files are known.
+        live_routes = self._config.get("live_routes") or {}
+        live_n = live_route_count(self._live_plugins, live_routes) if self._live_plugins else 0
+        self._progress.start("discount", total=live_n + len(routes) + 1,
+                             label="Starting the run…")
+
+        def _tick(label: str, units: int = 1) -> None:
+            self._status = label
+            self._progress.tick(label, units)
+
         # The engine reports per-channel problems via print(); a windowed exe has no
         # console, so capture the output and hand the log to the UI — a dead live
         # fetch must be VISIBLE, not silent.
         log_buffer = io.StringIO()
+        live_failed: list[str] = []
         try:
             skips = set(skip_paths or [])
             with contextlib.redirect_stdout(log_buffer):
                 # Live-search plugins (if installed + routes entered) fetch live and drop a
                 # channel HAR into the folder, which auto-detect then picks up like any HAR.
-                live_routes = self._config.get("live_routes") or {}
-                if self._live_plugins and any((live_routes.get(c) or "").strip()
-                                              for c in self._live_plugins):
+                wanted = [c for c in self._live_plugins if (live_routes.get(c) or "").strip()]
+                if wanted:
                     self._status = "Live search…"
-                    write_live_hars(self._live_plugins, live_routes, Path(har_dir),
-                                    travel_date or _default_live_date(), log=print)
+                    written = write_live_hars(self._live_plugins, live_routes, Path(har_dir),
+                                              travel_date or _default_live_date(), log=print,
+                                              progress=_tick)
+                    # A channel that was asked for but wrote nothing must say so, not
+                    # disappear into a quiet "Done." (field report, 2026-09-24).
+                    got = {Path(p).name.split("_live_")[0] for p in written}
+                    live_failed = [c for c in wanted if c not in got]
             detected = auto_detect_hars(Path(har_dir))
             hars = {ch: [p for p in paths if p not in skips]
                     for ch, paths in detected.items()}
+            self._progress.add_total(sum(len(v) for v in hars.values()))
             with contextlib.redirect_stdout(log_buffer):
                 report = build_report(
                     travel_date or None, routes,
@@ -756,7 +782,7 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                     sharetrip_hars=hars.get("sharetrip"),
                     akij_hars=hars.get("akij"), bdfare_hars=hars.get("bdfare"),
                     firsttrip_b2c_hars=hars.get("firsttrip_b2c"),
-                    use_true_base=True,
+                    use_true_base=True, progress=_tick,
                 )
             # Change detection is vs THIS machine's previous run (local), not the
             # team's last synced report — each analyst sees what changed since they
@@ -773,6 +799,14 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                             target=report.get("report_date"))
 
             warnings: list[str] = []
+            for c in live_failed:
+                label = self._live_plugins[c]["label"]
+                warnings.append(
+                    f"{label} live returned NO data for {live_routes.get(c)}, so {label} "
+                    f"is missing from this report. The Run log says why: 'no_searchId' = "
+                    f"{label} refused the search, usually throttling after many searches "
+                    f"(wait an hour, then re-run); 'mint_failed' = its token key changed "
+                    f"(run: python tools/test_{c}_live.py --recover-key).")
             if routes and not travel_date and not any(rd for _o, _d, rd in routes):
                 warnings.append("No future travel date — the live FirstTrip B2C "
                                 "fetch was SKIPPED (a past date is cleared "
@@ -782,17 +816,26 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                 warnings.append("The live FirstTrip B2C fetch returned no data — "
                                 "see the run log (network block, Cloudflare "
                                 "challenge, or no fares for that date).")
+            with_data = [lab for lab, st in (report.get("channel_status") or {}).items()
+                         if st == "ok"]
+            self._progress.finish(
+                "complete",
+                f"Complete — {len(report.get('by_route') or [])} route(s), "
+                f"{len(with_data)} OTA(s) with data"
+                + (f" · {len(live_failed)} live channel(s) returned nothing" if live_failed else ""))
             return {"ok": True, "report": colored,
                     "prev_available": self._prev_payload is not None,
                     "warnings": warnings,
                     "log": log_buffer.getvalue()[-8000:]}
         except MemoryError:
             self._status = "Out of memory."
+            self._progress.finish("failed", "Failed — ran out of memory parsing a HAR")
             return {"ok": False, "log": log_buffer.getvalue()[-8000:],
                     "error": "Ran out of memory parsing a HAR. Re-scan and skip the "
                              "largest capture, or free RAM and retry."}
         except Exception as exc:    # noqa: BLE001 — surfaced in the UI, never crash
             self._status = "Failed."
+            self._progress.finish("failed", f"Failed — {exc}")
             return {"ok": False, "error": f"Run failed: {exc}",
                     "log": log_buffer.getvalue()[-8000:]}
         finally:

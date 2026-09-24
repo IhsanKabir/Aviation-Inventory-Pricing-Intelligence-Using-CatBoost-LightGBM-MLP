@@ -102,12 +102,15 @@ def _recall(tag: str, path: str, default: Any = None) -> Any:
 # --- per-channel collectors: return cell dicts keyed by (route_type, airline) -----------
 
 def _fetch_firsttrip_b2c(routes: list[tuple[str, str, Optional[str]]],
-                         default_date: Optional[str],
+                         default_date: Optional[str], progress=None,
                          ) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
     """Live-fetch FirstTrip B2C rows ONCE per route: {(origin, dest, date): rows}.
     Shared by the true-base oracle and the B2C collector — no double fetch."""
     rows_by_route: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
-    for origin, destination, route_date in (routes or []):
+    routes = routes or []
+    for i, (origin, destination, route_date) in enumerate(routes, start=1):
+        if progress:
+            progress(f"FirstTrip B2C live: {origin}-{destination} ({i}/{len(routes)})")
         date = route_date or default_date
         if not date:
             print(f"  ! FirstTrip B2C {origin}-{destination}: no date "
@@ -577,7 +580,18 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
                   firsttrip_b2c_hars: Optional[list[str]] = None,
                   manual_overrides: Optional[dict[str, Any]] = None,
                   use_true_base: bool = True,
-                  run_dt: Optional[datetime] = None) -> dict[str, Any]:
+                  run_dt: Optional[datetime] = None,
+                  progress=None) -> dict[str, Any]:
+    """progress(label, units=1) is called once per FirstTrip route and once per HAR
+    file read (ShareTrip: once per file, after its combined parse), then once for the
+    route view - so a caller that counts those up front gets an exact bar."""
+    def _tick(label: str, units: int = 1) -> None:
+        if progress:
+            try:
+                progress(label, units)
+            except Exception:  # noqa: BLE001 — a display hook must never break a run
+                pass
+
     channel_cells: dict[str, dict[tuple[str, str], str]] = {}
     sources: dict[str, str] = {}
 
@@ -587,11 +601,13 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
     # A truncated/corrupt FT B2B HAR is skipped with a warning, never fatal.
     ft_b2b_rows_per_har = []
     for h in (firsttrip_b2b_hars or []):
+        _tick(f"Reading {Path(h).name}")
         try:
             ft_b2b_rows_per_har.append(firsttrip.parse_b2b_commissions(h))
         except Exception as exc:  # noqa: BLE001 — surfaced in the run log
             print(f"  ! FT B2B HAR {Path(h).name} skipped: {exc}")
-    b2c_rows_by_route = _fetch_firsttrip_b2c(routes, date) if routes else {}
+    b2c_rows_by_route = (_fetch_firsttrip_b2c(routes, date, progress=_tick)
+                         if routes else {})
 
     # Amy rows parsed once too: they feed the Amy cells AND the market base index
     # BDFare borrows exact base fares from (same flight+date+time+gross).
@@ -612,6 +628,7 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
     if firsttrip_b2c_hars:
         live_covered = {(o, d) for (o, d, _dt), rws in b2c_rows_by_route.items() if rws}
         for h in firsttrip_b2c_hars:
+            _tick(f"Reading {Path(h).name}")
             try:
                 har_rows = firsttrip.parse_b2c_har(h)
             except Exception as exc:  # noqa: BLE001
@@ -662,6 +679,7 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
         # merge, and the failure is surfaced via channel_status + the run log.
         parsed, failed = [], []
         for h in hars:
+            _tick(f"Reading {Path(h).name}")
             try:
                 parsed.append(collector(h))
             except Exception as exc:  # noqa: BLE001
@@ -693,7 +711,9 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
     if sharetrip_hars:
         # Whole-list (not per-file) so a booking capture's uniform card special can
         # enrich a separate search capture's airlines — search + one booking covers all.
+        _tick(f"Reading ShareTrip ({len(sharetrip_hars)} file(s))", 0)
         channel_cells["ShareTrip-B2C"] = collect_sharetrip_b2c(sharetrip_hars)
+        _tick(f"Read ShareTrip ({len(sharetrip_hars)} file(s))", len(sharetrip_hars))
         sources["ShareTrip-B2C"] = "HAR: " + ", ".join(Path(h).name for h in sharetrip_hars)
         channel_status["ShareTrip-B2C"] = ("ok" if channel_cells["ShareTrip-B2C"]
                                            else "captured_but_empty")
@@ -761,6 +781,7 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
     # Per-route view: the same cell rules on each route's rows (see by_route.py).
     # Built after the summary so it can never alter it. Manual overrides are keyed
     # by market, not route, so they stay summary-only.
+    _tick("Building the per-route view")
     from . import by_route
     route_blocks = by_route.highlighted(by_route.route_blocks(by_route.route_table(
         true_base=true_base, base_index=base_index,

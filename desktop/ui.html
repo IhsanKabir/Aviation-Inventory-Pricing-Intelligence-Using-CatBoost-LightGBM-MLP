@@ -68,6 +68,20 @@
   .route-pair { display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
     padding: 3px 2px 0 8px; margin: 0 8px 6px 0; }
   .route-pair label { margin-right: 8px; }
+  /* Progress bar - one component on every tab (see watchProgress). */
+  .prog { margin-top: 10px; max-width: 760px; }
+  .prog-track { height: 10px; background: #e5e7eb; border-radius: 999px; overflow: hidden; }
+  .prog-fill { height: 100%; width: 0; background: var(--navy); border-radius: 999px; transition: width .4s ease; }
+  .prog-fill.indeterminate { width: 30%; animation: prog-slide 1.2s infinite linear; }
+  @keyframes prog-slide { from { margin-left: -30%; } to { margin-left: 100%; } }
+  .prog.complete .prog-fill { background: #2e7d32; }
+  .prog.failed .prog-fill { background: #c62828; width: 100%; }
+  .prog.cancelled .prog-fill { background: #b7791f; }
+  .prog-label { display: flex; justify-content: space-between; gap: 12px; font-size: 12px;
+    margin-top: 4px; color: var(--muted); }
+  .prog.complete .prog-text { color: #2e7d32; font-weight: 700; }
+  .prog.failed .prog-text { color: #c62828; font-weight: 700; }
+  .prog.cancelled .prog-text { color: #8a6100; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -209,6 +223,8 @@
       <button class="secondary" id="access-request-btn" style="display:none;padding:4px 12px"
               onclick="requestAccess()">Request access</button>
     </div>
+    <div class="prog" id="prog-discount" style="display:none"><div class="prog-track"><div class="prog-fill"></div></div>
+      <div class="prog-label"><span class="prog-text"></span><span class="prog-time"></span></div></div>
     <div id="status" style="margin-top:8px"></div>
     <div class="table-wrap" id="scan-wrap" style="display:none;margin-top:10px">
       <table id="scan-table">
@@ -256,6 +272,8 @@
     </div>
     <div class="row" style="margin-top:8px"><span class="muted">Sources</span><span id="sch_sources"></span></div>
     <div class="estimate" id="sch_estimate"></div>
+    <div class="prog" id="prog-schedule" style="display:none"><div class="prog-track"><div class="prog-fill"></div></div>
+      <div class="prog-label"><span class="prog-text"></span><span class="prog-time"></span></div></div>
     <div id="sch_notes" style="margin-top:8px"></div>
     <div class="table-wrap" id="sch_result" style="margin-top:10px"></div>
   </section>
@@ -274,6 +292,8 @@
     </div>
     <div class="row" style="margin-top:8px"><span class="muted">Sources</span><span id="far_sources"></span></div>
     <div class="estimate" id="far_estimate"></div>
+    <div class="prog" id="prog-fare" style="display:none"><div class="prog-track"><div class="prog-fill"></div></div>
+      <div class="prog-label"><span class="prog-text"></span><span class="prog-time"></span></div></div>
     <div id="far_notes" style="margin-top:8px"></div>
     <div class="table-wrap" id="far_result" style="margin-top:10px"></div>
   </section>
@@ -581,6 +601,45 @@ function renderScan(scan) {
 
 function setStatus(text) { document.getElementById("status").textContent = text; }
 
+// ---- Progress bars (Discounts / Schedule / Fare) -------------------------------
+const PROG_ICON = { complete: "✓ ", failed: "✗ ", cancelled: "⏹ " };
+
+function fmtElapsed(s) { s = Math.max(0, s | 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+
+function renderProgress(id, p) {
+  const box = document.getElementById("prog-" + id);
+  if (!box || !p || p.state === "idle") return;
+  box.style.display = "";
+  box.className = "prog " + (p.state === "running" ? "" : p.state);
+  const fill = box.querySelector(".prog-fill");
+  const unknown = p.state === "running" && (p.percent === null || p.percent === undefined);
+  fill.classList.toggle("indeterminate", unknown);
+  if (!unknown && p.state !== "failed") fill.style.width = (p.percent || 0) + "%";
+  const pct = p.state === "running" && !unknown ? `${p.percent}% · ` : "";
+  box.querySelector(".prog-text").textContent = (PROG_ICON[p.state] || "") + pct + (p.label || "");
+  box.querySelector(".prog-time").textContent =
+    (p.total && p.state === "running" ? `${p.done}/${p.total} · ` : "") + fmtElapsed(p.elapsed_s);
+}
+
+/** Poll the backend while a task runs; returns finish(result) which paints the
+ *  final state - from the backend, or "Failed" when the task never started. */
+function watchProgress(id, task) {
+  renderProgress(id, { state: "running", percent: null, label: "Starting…", elapsed_s: 0 });
+  const t = setInterval(async () => {
+    try { renderProgress(id, await api().get_progress(task)); } catch (e) { /* next tick */ }
+  }, 600);
+  return async (result) => {
+    clearInterval(t);
+    const p = await api().get_progress(task);
+    if (result && !result.ok && p.state !== "failed") {
+      renderProgress(id, { state: "failed", label: "Failed — " + (result.error || "see message above"),
+                           elapsed_s: p.elapsed_s || 0 });
+    } else {
+      renderProgress(id, p);
+    }
+  };
+}
+
 async function runReport() {
   // Auto-save the CURRENT inputs first — running with a typed-but-unsaved travel
   // date silently skipped the live FT B2C fetch (real field bug, 2026-07-03).
@@ -591,22 +650,19 @@ async function runReport() {
     .filter((f, i) => { const cb = document.querySelector(`input[data-idx="${i}"]`); return cb && !cb.checked; })
     .map(f => f.path);
   document.getElementById("run-btn").disabled = true;
-  setStatus("Running — parsing HAR captures locally (this can take a few minutes)…");
-  const poll = setInterval(async () => {
-    const s = await api().get_state();
-    if (s.status) setStatus(s.status);
-  }, 1500);
+  setStatus("");
+  const finish = watchProgress("discount", "discount");
+  let result = null;
   try {
-    const result = await api().run(skips);
+    result = await api().run(skips);
     showRunLog(result.log);
     if (await handleAuthRequired(result)) { setStatus("Sign in required."); return; }
-    if (!result.ok) { addBanner("err", result.error); setStatus("Failed."); return; }
+    if (!result.ok) { addBanner("err", result.error); return; }
     lastReport = result.report;
     renderReport(result.report, result.prev_available);
     for (const w of result.warnings || []) addBanner("warn", w);
-    setStatus("Done.");
   } finally {
-    clearInterval(poll);
+    await finish(result || { ok: false, error: "the run stopped unexpectedly" });
     document.getElementById("run-btn").disabled = false;
   }
 }
@@ -981,9 +1037,15 @@ async function runMarket(kind) {
   document.getElementById(p + "-run").disabled = true;
   document.getElementById(p + "-cancel").style.display = "";
   const a = marketArgs(kind);
-  const r = await api().run_market(a[0], a[1], a[2], a[3], a[4], a[5], a[6]);
-  document.getElementById(p + "-run").disabled = false;
-  document.getElementById(p + "-cancel").style.display = "none";
+  const finish = watchProgress(kind, kind);          // bar ids: prog-schedule / prog-fare
+  let r = null;
+  try {
+    r = await api().run_market(a[0], a[1], a[2], a[3], a[4], a[5], a[6]);
+  } finally {
+    await finish(r || { ok: false, error: "the run stopped unexpectedly" });
+    document.getElementById(p + "-run").disabled = false;
+    document.getElementById(p + "-cancel").style.display = "none";
+  }
   setStatus("");
   if (await handleAuthRequired(r)) return;
   if (!r.ok) { addBanner("err", r.error); return; }

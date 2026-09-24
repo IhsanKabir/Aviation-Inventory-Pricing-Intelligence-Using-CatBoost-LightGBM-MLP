@@ -37,7 +37,7 @@ jobs:
             tests/test_sharetrip_judge.py tests/test_bdfare_commission.py \
             tests/test_by_route.py tests/test_gozayaan_discounts_core.py \
             tests/test_gozayaan_coverage.py tests/test_preferred_routes.py \
-            tests/test_route_xlsx.py \
+            tests/test_route_xlsx.py tests/test_progress.py \
             -q
 
   web:
