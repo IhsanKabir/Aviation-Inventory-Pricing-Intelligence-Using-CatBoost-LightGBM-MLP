@@ -51,13 +51,17 @@ class ProgressTracker:
             if self._s["state"] == "running":
                 self._s["label"] = label
 
+    #: Finished, but something asked for came back empty - so the bar must not be
+    #: green ("Complete" over a run with 0 OTAs was the field complaint).
+    FINISHED = ("complete", "warning")
+
     def finish(self, state: str, label: str) -> None:
-        """state: complete | failed | cancelled."""
+        """state: complete | warning (finished with gaps) | failed | cancelled."""
         with self._lock:
             if self._s["state"] == "idle":
                 return
             self._s.update(state=state, label=label, ended=time.time())
-            if state == "complete":
+            if state in self.FINISHED:
                 self._s["done"] = max(self._s["done"], self._s["total"])
 
     def snapshot(self, task: Optional[str] = None) -> dict[str, Any]:
@@ -66,7 +70,7 @@ class ProgressTracker:
         if task and s["task"] != task:
             return {"task": task, "state": "idle", "percent": 0, "label": "", "elapsed_s": 0}
         total, done = s["total"], s["done"]
-        if s["state"] == "complete":
+        if s["state"] in self.FINISHED:
             percent: Optional[int] = 100
         elif total:
             # Never show 100% until the run has actually finished.

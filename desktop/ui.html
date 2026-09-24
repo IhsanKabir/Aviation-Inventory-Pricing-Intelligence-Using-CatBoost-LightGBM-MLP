@@ -76,7 +76,8 @@
   @keyframes prog-slide { from { margin-left: -30%; } to { margin-left: 100%; } }
   .prog.complete .prog-fill { background: #2e7d32; }
   .prog.failed .prog-fill { background: #c62828; width: 100%; }
-  .prog.cancelled .prog-fill { background: #b7791f; }
+  .prog.cancelled .prog-fill, .prog.warning .prog-fill { background: #b7791f; }
+  .prog.warning .prog-text { color: #8a6100; font-weight: 700; }
   .prog-label { display: flex; justify-content: space-between; gap: 12px; font-size: 12px;
     margin-top: 4px; color: var(--muted); }
   .prog.complete .prog-text { color: #2e7d32; font-weight: 700; }
@@ -602,7 +603,7 @@ function renderScan(scan) {
 function setStatus(text) { document.getElementById("status").textContent = text; }
 
 // ---- Progress bars (Discounts / Schedule / Fare) -------------------------------
-const PROG_ICON = { complete: "✓ ", failed: "✗ ", cancelled: "⏹ " };
+const PROG_ICON = { complete: "✓ ", warning: "⚠ ", failed: "✗ ", cancelled: "⏹ " };
 
 function fmtElapsed(s) { s = Math.max(0, s | 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
 

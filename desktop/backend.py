@@ -818,11 +818,16 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                                 "challenge, or no fares for that date).")
             with_data = [lab for lab, st in (report.get("channel_status") or {}).items()
                          if st == "ok"]
-            self._progress.finish(
-                "complete",
-                f"Complete — {len(report.get('by_route') or [])} route(s), "
-                f"{len(with_data)} OTA(s) with data"
-                + (f" · {len(live_failed)} live channel(s) returned nothing" if live_failed else ""))
+            summary = (f"{len(report.get('by_route') or [])} route(s), "
+                       f"{len(with_data)} OTA(s) with data")
+            if live_failed or not with_data:
+                # Finished, but not everything asked for came back: amber, never green.
+                gaps = [f"{self._live_plugins[c]['label']} live returned nothing"
+                        for c in live_failed] or ["no OTA had data"]
+                self._progress.finish("warning", f"Finished with gaps — {summary} · "
+                                      + "; ".join(gaps) + " (see warnings above)")
+            else:
+                self._progress.finish("complete", f"Complete — {summary}")
             return {"ok": True, "report": colored,
                     "prev_available": self._prev_payload is not None,
                     "warnings": warnings,
