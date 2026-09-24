@@ -65,6 +65,9 @@
     color: #111827; font-size: 12.5px; margin: 0 12px 6px 0; }
   .route-group input[type=checkbox] { min-width: 0; }
   .route-group h3 label { color: var(--muted); font-weight: 400; margin: 0; }
+  .route-pair { display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
+    padding: 3px 2px 0 8px; margin: 0 8px 6px 0; }
+  .route-pair label { margin-right: 8px; }
 </style>
 </head>
 <body>
@@ -127,6 +130,14 @@
       <label>Add another route <input id="routes-custom" placeholder="e.g. DAC-HKG, CGP-DXB"
         onkeydown="if (event.key === 'Enter') addCustomRoutes()"></label>
       <button class="secondary" onclick="addCustomRoutes()">Add</button>
+    </div>
+    <div class="row" style="margin-bottom:6px;align-items:center">
+      <span class="muted">Direction:</span>
+      <button id="dir-both" onclick="setRouteDirection('both')" style="padding:4px 12px">Both ways</button>
+      <button id="dir-out" class="secondary" onclick="setRouteDirection('out')" style="padding:4px 12px"
+              title="e.g. DAC-DXB, DAC-CGP">From Bangladesh</button>
+      <button id="dir-in" class="secondary" onclick="setRouteDirection('in')" style="padding:4px 12px"
+              title="e.g. DXB-DAC, CGP-DAC">To Bangladesh</button>
     </div>
     <div id="routes-groups"></div>
     <div class="row" style="justify-content:flex-end;margin-top:10px">
@@ -690,29 +701,59 @@ async function openRoutes() {
   routeCatalog = rs.catalog || {};
   pickedRoutes = [...(rs.preferred || [])];
   document.getElementById("routes-custom").value = "";
-  drawRoutePicker();
+  setRouteDirection(routeDirection);          // draws the picker in the current direction
   document.getElementById("routes-modal").style.display = "flex";
 }
 
 function closeRoutes() { document.getElementById("routes-modal").style.display = "none"; }
 
+// The catalogue lists each route once, from Bangladesh; the return direction
+// (CGP-DAC, DXB-DAC) is derived here so both ways can be picked.
+let routeDirection = "both";
+const reverseRoute = r => r.split("-").reverse().join("-");
+
+function setRouteDirection(dir) {
+  routeDirection = dir;
+  for (const [id, d] of [["dir-both", "both"], ["dir-out", "out"], ["dir-in", "in"]]) {
+    document.getElementById(id).className = d === dir ? "" : "secondary";
+  }
+  drawRoutePicker();
+}
+
+function inDirection(routes) {
+  if (routeDirection === "out") return routes;
+  if (routeDirection === "in") return routes.map(reverseRoute);
+  return routes.flatMap(r => [r, reverseRoute(r)]);      // each route next to its return
+}
+
 function drawRoutePicker() {
-  const known = new Set(Object.values(routeCatalog).flat());
+  const catalogued = Object.values(routeCatalog).flat();
+  const known = new Set([...catalogued, ...catalogued.map(reverseRoute)]);
   const own = pickedRoutes.filter(r => !known.has(r));
-  const groups = Object.entries(routeCatalog);
+  const groups = Object.entries(routeCatalog).map(([name, routes]) => [name, inDirection(routes)]);
   if (own.length) groups.push(["Your own routes", own]);
   document.getElementById("routes-groups").innerHTML = groups.map(([name, routes], gi) => {
     const allOn = routes.length && routes.every(r => pickedRoutes.includes(r));
     return `<div class="route-group"><h3>${esc(name)}
         <label><input type="checkbox" ${allOn ? "checked" : ""} onchange="toggleRouteGroup(${gi}, this.checked)"> all</label></h3>
-      ${routes.map(r => `<label><input type="checkbox" value="${esc(r)}" ${pickedRoutes.includes(r) ? "checked" : ""}
-          onchange="toggleRoute(this.value, this.checked)">${esc(r)}</label>`).join("")}</div>`;
+      ${routeLabels(routes, name === "Your own routes")}</div>`;
   }).join("");
   document.getElementById("routes-picked").innerHTML = pickedRoutes.length
     ? pickedRoutes.map(r => `<span class="route-chip">${esc(r)}<button title="Remove"
         onclick="toggleRoute('${esc(r)}', false)">✕</button></span>`).join("")
     : '<span class="muted">none selected</span>';
   drawRoutePicker.groups = groups;
+}
+
+function routeLabels(routes, ownGroup) {
+  const box = r => `<label><input type="checkbox" value="${esc(r)}" ${pickedRoutes.includes(r) ? "checked" : ""}
+      onchange="toggleRoute(this.value, this.checked)">${esc(r)}</label>`;
+  if (routeDirection !== "both" || ownGroup) return routes.map(box).join("");
+  const pairs = [];
+  for (let i = 0; i < routes.length; i += 2) {
+    pairs.push(`<span class="route-pair">${box(routes[i])}${routes[i + 1] ? box(routes[i + 1]) : ""}</span>`);
+  }
+  return pairs.join("");
 }
 
 function toggleRoute(route, on) {
