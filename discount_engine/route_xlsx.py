@@ -3,7 +3,7 @@
   * <day> routes       - the answer at a glance: per route and airline, the best
                          customer discount (B2C) and the best agent commission (B2B),
                          each with its OTA; then which OTAs covered which route.
-  * <day> route detail - one block per route (OTA rows x airline columns), blank OTA
+  * <day> route grids  - one block per route (OTA rows x airline columns), blank OTA
                          rows dropped, coupon tiers on their own lines, sized so no
                          text is clipped, a page break before every block.
   * <day> route data   - one row per route x OTA x airline, filterable.
@@ -214,7 +214,7 @@ def render_detail(ws, report: dict[str, Any], overview_title: str) -> dict[str, 
         ws.column_dimensions[get_column_letter(ci)].width = w
     span = max([1] + list(widths))
 
-    ws.cell(1, 1, f"Discounts by route — detail · {_stamp(report)}").font = st["title"]
+    ws.cell(1, 1, f"Discounts by route — grids · {_stamp(report)}").font = st["title"]
     ws.cell(2, 1, LEGEND).font = st["note"]
     back = ws.cell(3, 1, "↑ Back to the routes overview")
     back.hyperlink, back.font = f"#'{overview_title}'!A1", st["note"]
@@ -478,7 +478,7 @@ def add_route_sheets(wb, report: dict[str, Any], day: str) -> None:
     """Overview, detail and data sheets, in that order, when the report has routes."""
     if not report.get("by_route"):
         return
-    overview_title, detail_title = f"{day} routes", f"{day} route detail"
+    overview_title, detail_title = f"{day} routes", f"{day} route grids"
     overview = wb.create_sheet(title=overview_title)
     detail = wb.create_sheet(title=detail_title)
     anchors = render_detail(detail, report, overview_title)

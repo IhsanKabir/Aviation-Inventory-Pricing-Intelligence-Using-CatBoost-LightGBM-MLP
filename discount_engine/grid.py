@@ -1166,28 +1166,91 @@ def _render_transposed_sheet(ws, report: dict[str, Any],
     ws.freeze_panes = "B1"
 
 
+DETAIL_HEADERS = ["Airline", "OTA", "Common %", "Offer / method", "Conv. fee",
+                  "Card %", "Card / loyalty", "Card fee", "Capped", "Best net %"]
+DETAIL_WIDTHS = [9, 15, 10, 18, 9, 9, 18, 9, 9, 11]
+
+
+def _detail_styles() -> dict[str, Any]:
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    cal = "Calibri"
+    thin = Side(style="thin", color="BFBFBF")
+    return {"border": Border(left=thin, right=thin, top=thin, bottom=thin),
+            "hdr_fill": PatternFill("solid", fgColor=HDR_BG),
+            "band_fill": PatternFill("solid", fgColor=HL_BLUE),
+            "head": Font(name=cal, bold=True, size=11, color=HDR_TX),
+            "title": Font(name=cal, bold=True, size=11),
+            "band": Font(name=cal, bold=True, size=11, color=HL_BLUE_TX),
+            "section": Font(name=cal, bold=True, size=12, color=HDR_BG),
+            "note": Font(name=cal, italic=True, size=10, color="7F7F7F"),
+            "label": Font(name=cal, bold=True, size=11),
+            "data": Font(name=cal, size=11),
+            "center": Alignment(horizontal="center", vertical="center", wrap_text=True),
+            "left": Alignment(horizontal="left", vertical="center")}
+
+
+def _detail_header(ws, r: int, st: dict[str, Any]) -> int:
+    for ci, h in enumerate(DETAIL_HEADERS, start=1):
+        c = ws.cell(r, ci, h)
+        c.font, c.fill, c.alignment, c.border = st["head"], st["hdr_fill"], st["center"], st["border"]
+    return r + 1
+
+
+def _detail_airline_rows(ws, r: int, airlines: list[str],
+                         rows_by_label: dict[str, dict[str, Any]],
+                         st: dict[str, Any]) -> int:
+    """One row per airline x OTA with data: common rate + method + fee, the best
+    card/loyalty special, and the best net. Shared by the daily detailed sheet and
+    the per-route one, so both always show identical numbers. Returns the next row."""
+    from .highlight import parse_cell_tiers
+
+    channels = [lbl for lbl, kind in ROW_ORDER if kind != "sep" and lbl in rows_by_label]
+    for airline in airlines:
+        first = True
+        for ch in channels:
+            raw_cell = str(rows_by_label[ch].get(airline) or "").strip()
+            tiers = parse_cell_tiers(raw_cell)
+            if not tiers:
+                continue
+            common = tiers[0]
+            special = max(tiers[1:], key=lambda x: x["net"]) if len(tiers) > 1 else None
+            best_net = max(t["net"] for t in tiers)
+            # base-derived discount %s inherit the main grid's '~' estimate marker
+            # (BDFare/AKIJ estimated base) — never present an estimate as a solid number.
+            is_est = raw_cell.startswith("~")
+            def _pctv(p: float) -> Any:
+                return f"~{p:g}%" if is_est else p / 100.0
+            vals = [airline if first else "", ch,
+                    _pctv(common["pct"]), common["label"] or "auto",
+                    (common["fee_pct"] / 100.0) if common["fee_pct"] else "",
+                    _pctv(special["pct"]) if special else "",
+                    special["label"] if special else "",
+                    (special["fee_pct"] / 100.0) if special and special["fee_pct"] else "",
+                    "capped" if (special and special["capped"]) else "",
+                    _pctv(best_net)]
+            for ci, v in enumerate(vals, start=1):
+                cell = ws.cell(r, ci, v if v != "" else None)
+                cell.font = st["label"] if ci == 1 else st["data"]
+                cell.alignment = st["left"] if ci in (1, 2, 4, 7) else st["center"]
+                cell.border = st["border"]
+                if isinstance(v, float):
+                    cell.number_format = "0.00%"
+            first = False
+            r += 1
+    return r
+
+
+def _detail_widths(ws) -> None:
+    from openpyxl.utils import get_column_letter
+    for ci, w in enumerate(DETAIL_WIDTHS, start=1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+
 def _render_detailed_sheet(ws, report: dict[str, Any]) -> None:
     """Detailed breakdown: one row per airline x OTA, with the common discount, its
     coupon/method, the convenience fee, and the card/loyalty special split into their own
     columns (instead of the dense combined cell) — plus the net value used for ranking."""
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-    from openpyxl.utils import get_column_letter
-    from .highlight import parse_cell_tiers
-
-    cal = "Calibri"
-    thin = Side(style="thin", color="BFBFBF")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    hdr_fill = PatternFill("solid", fgColor=HDR_BG)
-    head_font = Font(name=cal, bold=True, size=11, color=HDR_TX)
-    title_font = Font(name=cal, bold=True, size=11)
-    label_font = Font(name=cal, bold=True, size=11)
-    data_font = Font(name=cal, size=11)
-    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    left = Alignment(horizontal="left", vertical="center")
-    pct = "0.00%"
-
-    HEADERS = ["Airline", "OTA", "Common %", "Offer / method", "Conv. fee",
-               "Card %", "Card / loyalty", "Card fee", "Capped", "Best net %"]
+    st = _detail_styles()
     date_label, time_label = report["report_date"], f"{report['report_time']}hrs"
     r = 1
     for rt, name in (("INTL", "INTERNATIONAL"), ("DOM", "DOMESTIC")):
@@ -1195,55 +1258,52 @@ def _render_detailed_sheet(ws, report: dict[str, Any]) -> None:
         if not grid or not grid["columns"]:
             continue
         rows_by_label = {row["label"]: row.get("cells", {}) for row in grid["rows"]}
-        channels = [lbl for lbl, kind in ROW_ORDER if kind != "sep" and lbl in rows_by_label]
-
         t = ws.cell(r, 1, f"{date_label} ({name}) / {time_label} — detailed")
-        t.font, t.alignment = title_font, left
-        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=len(HEADERS))
-        r += 1
-        for ci, h in enumerate(HEADERS, start=1):
-            c = ws.cell(r, ci, h)
-            c.font, c.fill, c.alignment, c.border = head_font, hdr_fill, center, border
-        r += 1
-
-        for airline in grid["columns"]:
-            first = True
-            for ch in channels:
-                raw_cell = str(rows_by_label[ch].get(airline) or "").strip()
-                tiers = parse_cell_tiers(raw_cell)
-                if not tiers:
-                    continue
-                common = tiers[0]
-                special = max(tiers[1:], key=lambda x: x["net"]) if len(tiers) > 1 else None
-                best_net = max(t["net"] for t in tiers)
-                # base-derived discount %s inherit the main grid's '~' estimate marker
-                # (BDFare/AKIJ estimated base) — never present an estimate as a solid number.
-                is_est = raw_cell.startswith("~")
-                def _pctv(p: float) -> Any:
-                    return f"~{p:g}%" if is_est else p / 100.0
-                vals = [airline if first else "", ch,
-                        _pctv(common["pct"]), common["label"] or "auto",
-                        (common["fee_pct"] / 100.0) if common["fee_pct"] else "",
-                        _pctv(special["pct"]) if special else "",
-                        special["label"] if special else "",
-                        (special["fee_pct"] / 100.0) if special and special["fee_pct"] else "",
-                        "capped" if (special and special["capped"]) else "",
-                        _pctv(best_net)]
-                for ci, v in enumerate(vals, start=1):
-                    cell = ws.cell(r, ci, v if v != "" else None)
-                    cell.font = label_font if ci == 1 else data_font
-                    cell.alignment = left if ci in (1, 2, 4, 7) else center
-                    cell.border = border
-                    if isinstance(v, float):
-                        cell.number_format = pct
-                first = False
-                r += 1
-        r += 1
-
-    widths = [9, 15, 10, 18, 9, 9, 18, 9, 9, 11]
-    for ci, w in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(ci)].width = w
+        t.font, t.alignment = st["title"], st["left"]
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=len(DETAIL_HEADERS))
+        r = _detail_header(ws, r + 1, st)
+        r = _detail_airline_rows(ws, r, grid["columns"], rows_by_label, st) + 1
+    _detail_widths(ws)
     ws.freeze_panes = "A3"
+
+
+def _render_detailed_by_route_sheet(ws, report: dict[str, Any]) -> None:
+    """The detailed layout, grouped ROUTE first: a band per route (preferred routes
+    first, ★), then that route's airlines with one row per OTA - same columns and
+    numbers as the daily detailed sheet."""
+    from .route_xlsx import _sections
+    st = _detail_styles()
+    ncol = len(DETAIL_HEADERS)
+    t = ws.cell(1, 1, f"{report['report_date']} / {report['report_time']}hrs — detailed by route")
+    t.font, t.alignment = st["title"], st["left"]
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncol)
+    r = _detail_header(ws, 2, st) + 1
+    for heading, section in _sections(report):
+        if heading:
+            ws.cell(r, 1, heading).font = st["section"]
+            r += 1
+            if heading.startswith("★") and report.get("preferred_missing"):
+                ws.cell(r, 1, "Not captured yet: " + ", ".join(report["preferred_missing"])).font = st["note"]
+                r += 1
+        for b in section:
+            market = "Domestic" if b["market"] == "DOM" else "International"
+            band = ws.cell(r, 1, f"{b['route']} · {market}" + ("  ★" if b.get("preferred") else ""))
+            band.font, band.alignment = st["band"], st["left"]
+            for ci in range(1, ncol + 1):
+                ws.cell(r, ci).fill = st["band_fill"]
+                ws.cell(r, ci).border = st["border"]
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=ncol)
+            rows_by_label = {row["label"]: row.get("cells", {})
+                             for row in b["rows"] if row.get("kind") != "sep"}
+            r = _detail_airline_rows(ws, r + 1, b["columns"], rows_by_label, st) + 1
+    _detail_widths(ws)
+    ws.freeze_panes = "A3"          # title + column headers stay visible
+    # Printed: a long route (DXB: 18 airlines) runs over pages, so the column
+    # headers repeat on each page; landscape, one page wide.
+    ws.print_title_rows = "2:2"
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
 
 
 def _save_workbook(wb, xlsx_path: Path) -> Path:
@@ -1323,6 +1383,14 @@ def write_single_sheet_xlsx(report: dict[str, Any],
     _render_transposed_sheet(
         wb.create_sheet(title=f"{_sheet_name(report)} (by airline)"), report, prev_lookup)
     _render_detailed_sheet(wb.create_sheet(title=f"{_sheet_name(report)} (detailed)"), report)
+    if report.get("by_route"):
+        # Excel caps sheet names at 31 characters; "30 September (detail by route)"
+        # is the longest this can be (the earlier "(detailed by route)" was 32).
+        _render_detailed_by_route_sheet(
+            wb.create_sheet(title=f"{_sheet_name(report)} (detail by route)"), report)
+    too_long = [n for n in wb.sheetnames if len(n) > 31]
+    if too_long:
+        raise ValueError(f"Excel sheet name over 31 characters: {too_long}")
     # Local runs only: synced/stored reports carry no routes, so the website's
     # download keeps its three sheets.
     from .route_xlsx import add_route_sheets

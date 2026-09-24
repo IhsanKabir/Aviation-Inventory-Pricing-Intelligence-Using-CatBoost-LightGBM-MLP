@@ -75,7 +75,25 @@ def test_route_links_point_at_their_detail_block():
     wb = _write(_report())
     link = next(c for c in wb["20 September routes"]["A"] if c.value == "DAC-DXB").hyperlink
     target_row = int(link.location.split("!A")[1]) if link.location else int(link.target.split("!A")[1])
-    assert wb["20 September route detail"].cell(target_row, 1).value.startswith("DAC-DXB")
+    assert wb["20 September route grids"].cell(target_row, 1).value.startswith("DAC-DXB")
+
+
+def test_detail_by_route_groups_airlines_under_each_route():
+    report = by_route.with_preferred(_report(), ["DAC-DXB", "DAC-JED"])
+    ws = _write(report)["20 September (detail by route)"]
+    col_a = [c.value for c in ws["A"] if c.value]
+    assert col_a[:2] == ["20/09/2026 / 1800hrs — detailed by route", "Airline"]
+    order = ["★ Your preferred routes", "Not captured yet: DAC-JED",
+             "DAC-DXB · International  ★", "EK",
+             "Other routes found in this run", "DAC-CGP · Domestic", "BS", "VQ"]
+    assert [v for v in col_a if v in order] == order          # route band, then its airlines
+    bs_otas = [r[1] for r in ws.iter_rows(values_only=True) if r[1] in ("BDFare", "Amy")]
+    assert bs_otas[:2] == ["BDFare", "Amy"]                   # BS on CGP: both OTAs, one row each
+
+
+def test_every_sheet_name_fits_excels_limit_even_in_september():
+    wb = _write(by_route.with_preferred(_report(), ["DAC-CGP"]))
+    assert all(len(n) <= 31 for n in wb.sheetnames)
 
 
 def test_data_sheet_has_one_filterable_row_per_rate():

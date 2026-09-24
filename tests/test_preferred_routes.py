@@ -85,7 +85,7 @@ def test_excel_names_preferred_routes_nobody_captured():
     from openpyxl import load_workbook
     report = by_route.with_preferred(_report(), ["DAC-DXB", "DAC-JED"])
     wb = load_workbook(grid.write_single_sheet_xlsx(report, None, Path(tempfile.mkdtemp()) / "p.xlsx"))
-    detail = [c.value for c in wb["20 September route detail"]["A"] if c.value]
+    detail = [c.value for c in wb["20 September route grids"]["A"] if c.value]
     assert detail.index("★ Your preferred routes") < detail.index("DAC-DXB · International  ★") \
         < detail.index("Other routes found in this run") < detail.index("DAC-CXB · Domestic")
     assert "Not captured yet: DAC-JED" in detail
