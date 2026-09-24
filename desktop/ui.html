@@ -1020,8 +1020,16 @@ async function initMarket() {
           ${off ? "disabled" : (s.key === defaultKey ? "checked" : "")}>
         ${esc(s.label)}${off ? ` <span class="muted">(${esc(why)})</span>` : ""}</label>`;
     }).join("");
-    if (!document.getElementById(p + "_from").value) document.getElementById(p + "_from").value = iso(1);
-    if (!document.getElementById(p + "_to").value) document.getElementById(p + "_to").value = iso(30);
+    if (liveOk) {
+      if (!document.getElementById(p + "_from").value) document.getElementById(p + "_from").value = iso(1);
+      if (!document.getElementById(p + "_to").value) document.getElementById(p + "_to").value = iso(30);
+    } else {
+      // HAR captures: a teammate can't know which days they hold, so blank = all of
+      // them (pre-filled dates silently hid captures outside the next 30 days).
+      document.getElementById(p + "_routes").placeholder = "blank = all routes in your HAR files";
+      document.getElementById(p + "_from").placeholder = "blank = all dates";
+      document.getElementById(p + "_to").placeholder = "blank = all dates";
+    }
   }
 }
 
@@ -1047,6 +1055,12 @@ async function estimateMarket(kind) {
   const r = await api().market_estimate(a[0], a[1], a[2], a[3], a[4], a[5]);
   const box = document.getElementById(p + "_estimate");
   if (!r.ok) { box.textContent = r.error; return false; }
+  if (r.har_only) {
+    const a2 = marketArgs(kind);
+    box.textContent = "Reads your HAR captures: " + (a2[1].trim() || "all routes") + " · "
+      + (a2[2].trim() ? `${a2[2]} to ${a2[3]}` : "all dates");
+    return true;
+  }
   box.textContent = `${r.queries} queries · ${r.cached} cached · ${r.to_fetch} to fetch`
     + ` · about ${Math.max(1, Math.round(r.est_seconds / 60))} min`;
   return true;
@@ -1085,7 +1099,10 @@ async function exportMarket() {
 }
 
 function marketNotes(r, extra) {
-  const bits = [`${r.rows} rows · ${r.from_cache} from cache · ${r.fetched} fetched · ${r.seconds}s`];
+  // Cache/fetch counts only mean something for live searches.
+  const bits = [r.fetched || r.from_cache
+    ? `${r.rows} rows · ${r.from_cache} from cache · ${r.fetched} fetched · ${r.seconds}s`
+    : `${r.rows} rows from your HAR files · ${r.seconds}s`];
   if (r.cancelled) bits.push("cancelled — showing partial results");
   for (const [s, why] of Object.entries(r.refused || {})) bits.push(`source refused: ${s} — ${why}`);
   // A HAR covers the day it was captured, not the requested range — say which

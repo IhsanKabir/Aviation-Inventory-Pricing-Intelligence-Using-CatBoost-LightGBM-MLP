@@ -40,6 +40,12 @@ class MarketApiMixin:
     MARKET_MAX_DAYS = 62
 
     # ------------------------------------------------------------------ helpers
+    def _live_ok(self) -> bool:
+        """The host app's admin check (DesktopApi._live_allowed). A bare host
+        without one - the engine used on its own - keeps the old behaviour."""
+        check = getattr(self, "_live_allowed", None)
+        return bool(check()) if callable(check) else True
+
     def _market_cache(self):
         from desktop.backend import config_dir
         from market_engine.cache import CacheStore
@@ -68,7 +74,7 @@ class MarketApiMixin:
         from market_engine import sources as S
         from market_engine.har import find_hars
         # Live sources are admin-only and not listed at all for anyone else.
-        available = S.live_available() if self._live_allowed() else {}
+        available = S.live_available() if self._live_ok() else {}
         entries = [{"key": k, "label": s.label, "available": bool(available.get(k)),
                     "can_schedule": s.can_schedule, "can_fare": s.can_fare,
                     "note": s.note} for k, s in S.LIVE.items() if k in available]
@@ -86,10 +92,15 @@ class MarketApiMixin:
 
     def _market_plan(self, kind: str, routes: str, date_from: str, date_to: str,
                      sources: list, cabin: str):
-        """-> (plan, error_payload). Everything is validated before any network work."""
+        """-> (plan, error_payload). Everything is validated before any network work.
+
+        A HAR-only run (no live source) may leave routes and dates blank: it then
+        answers for everything the captures cover. A teammate cannot know in
+        advance which days their captures hold, and a live search needs them."""
         from market_engine import sources as S
         from market_engine.collect import CollectPlan
 
+        har_only = "har" in (sources or []) and not any(k in S.LIVE for k in (sources or []))
         pairs = []
         for chunk in str(routes or "").replace(";", ",").split(","):
             chunk = chunk.strip().upper()
@@ -100,17 +111,23 @@ class MarketApiMixin:
                 return None, {"ok": False,
                               "error": "Route must look like DAC-CGP (got {}).".format(chunk)}
             pairs.append((origin, dest))
-        if not pairs:
+        if not pairs and not har_only:
             return None, {"ok": False, "error": "Enter at least one route, e.g. DAC-CGP."}
 
-        try:
-            start = datetime.strptime(date_from, "%Y-%m-%d").date()
-            end = datetime.strptime(date_to, "%Y-%m-%d").date()
-        except (TypeError, ValueError):
-            return None, {"ok": False, "error": "Dates must be YYYY-MM-DD."}
-        if end < start:
-            return None, {"ok": False, "error": "The end date is before the start date."}
-        span = (end - start).days + 1
+        blank_dates = not str(date_from or "").strip() and not str(date_to or "").strip()
+        if har_only and blank_dates:
+            start = end = None                    # every date the captures cover
+        else:
+            try:
+                start = datetime.strptime(date_from, "%Y-%m-%d").date()
+                end = datetime.strptime(date_to, "%Y-%m-%d").date()
+            except (TypeError, ValueError):
+                return None, {"ok": False, "error": "Dates must be YYYY-MM-DD"
+                              + (" (or leave both blank for every date in your captures)."
+                                 if har_only else ".")}
+            if end < start:
+                return None, {"ok": False, "error": "The end date is before the start date."}
+        span = (end - start).days + 1 if start else 0
         if span > self.MARKET_MAX_DAYS:
             return None, {"ok": False,
                           "error": "{} days is beyond the {}-day limit.".format(
@@ -122,7 +139,7 @@ class MarketApiMixin:
         picked = [k for k in chosen if k in S.LIVE]
         if not picked and not use_har:
             return None, {"ok": False, "error": "Pick at least one source."}
-        if picked and not self._live_allowed():
+        if picked and not self._live_ok():
             # Enforced here, not only greyed out in the page.
             return None, {"ok": False,
                           "error": "Tick 'Manual HAR captures' to use your HAR files."}
@@ -132,7 +149,7 @@ class MarketApiMixin:
             return None, {"ok": False,
                           "error": "None of the chosen sources can answer a {}.".format(want)}
 
-        dates = [start + timedelta(days=i) for i in range(span)]
+        dates = [start + timedelta(days=i) for i in range(span)] if start else []
         return CollectPlan(routes=pairs, dates=dates, source_keys=picked,
                            cabin=cabin or "Economy", purpose=want, use_har=use_har), None
 
@@ -146,6 +163,7 @@ class MarketApiMixin:
             return err
         out = estimate(plan, self._market_cache())
         out["ok"] = True
+        out["har_only"] = plan.use_har and not plan.source_keys
         return out
 
     def cancel_market(self) -> dict:
@@ -185,25 +203,39 @@ class MarketApiMixin:
                              should_cancel=lambda: getattr(self, "_market_cancel", False))
             har_notes: list = []
             if plan.use_har:
-                from market_engine.har import collect_har_rows, coverage
+                from market_engine.har import (collect_har_rows, describe_coverage,
+                                               select_rows)
                 self._status = "Reading manual HAR captures..."
                 har_rows, har_notes = collect_har_rows(
                     Path(self._config.get("har_dir") or "."), purpose=plan.purpose,
                     progress=progress)
+                # Captures hold whatever their author searched: keep only the routes
+                # and dates asked for (blank = everything they cover).
+                har_rows, cut_note = select_rows(
+                    har_rows, routes=plan.routes,
+                    date_from=plan.dates[0] if plan.dates else None,
+                    date_to=plan.dates[-1] if plan.dates else None)
+                if cut_note:
+                    har_notes.insert(0, cut_note)
                 result.rows.extend(har_rows)
                 # A capture covers the day it was taken, not the requested range;
                 # say which days it actually brought so no one assumes otherwise.
-                cov = coverage(har_rows)
-                if cov:
-                    har_notes.append("HAR coverage: " + "; ".join(
-                        "{} {}".format(rt, len(days)) for rt, days in sorted(cov.items())))
-            first, last = plan.dates[0], plan.dates[-1]
+                if har_rows:
+                    har_notes.insert(0, "Your HAR files cover: " + describe_coverage(har_rows))
+            if plan.dates:
+                first, last = plan.dates[0], plan.dates[-1]
+            else:                                   # blank dates: what the captures cover
+                days = sorted(r.departure_date for r in result.rows if r.departure_date)
+                first, last = (days[0], days[-1]) if days else (datetime.now().date(),) * 2
             payload: dict[str, Any] = {
                 "ok": True, "kind": kind, "cancelled": result.cancelled,
                 "rows": len(result.rows), "fetched": result.fetched,
                 "from_cache": result.from_cache,
                 "seconds": round(result.seconds, 1), "errors": result.errors[:20],
-                "date_from": first.isoformat(), "date_to": last.isoformat()}
+                "date_from": first.isoformat(), "date_to": last.isoformat(),
+                # The page has always rendered these; they were never sent, so a
+                # skipped capture or an empty HAR answer went unexplained.
+                "har_notes": har_notes}
 
             if kind == "schedule":
                 sched = build_schedule(result, date_from=first, date_to=last)

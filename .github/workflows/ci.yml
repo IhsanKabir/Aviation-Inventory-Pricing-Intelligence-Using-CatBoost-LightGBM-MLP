@@ -38,6 +38,7 @@ jobs:
             tests/test_by_route.py tests/test_gozayaan_discounts_core.py \
             tests/test_gozayaan_coverage.py tests/test_preferred_routes.py \
             tests/test_route_xlsx.py tests/test_progress.py tests/test_live_admin_only.py \
+            tests/test_market_engine.py tests/test_market_har_only.py \
             -q
 
   web:

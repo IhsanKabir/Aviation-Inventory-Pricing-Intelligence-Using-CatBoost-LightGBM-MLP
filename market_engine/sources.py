@@ -55,7 +55,8 @@ HAR: dict[str, Source] = {
     "firsttrip_b2c": Source("firsttrip_b2c", "FirstTrip B2C (HAR)", "har", True, True,
                             note="Needs a SEARCH capture; a booking-page HAR has no offers."),
     "amy": Source("amy", "Amy (HAR)", "har", False, True,
-                  note="Agent rows carry no flight number - fares only, no schedule."),
+                  note="Amy captures have fares but no flight numbers, so they count for "
+                       "Fare Comparison only."),
     "bdfare": Source("bdfare", "BDFare (HAR)", "har", False, False,
                      note="No flight-row parser - cannot feed these views."),
     "akij": Source("akij", "AKIJ (HAR)", "har", False, False,

@@ -75,14 +75,16 @@ def collect_har_rows(har_dir: Path, *, purpose: str = "fare",
             continue
         source = HAR.get(channel)
         if source is None or channel not in PARSERS:
-            notes.append("{}: {} has no flight-row parser".format(path.name, channel))
+            label = source.label.replace(" (HAR)", "") if source else channel
+            notes.append("{}: {} captures carry discounts, not flight details, so they are "
+                         "used on the Discounts tab only".format(path.name, label))
             continue
         if wanted is not None and channel not in wanted:
             continue
         can = source.can_schedule if purpose == "schedule" else source.can_fare
         if not can:
-            notes.append("{}: {} cannot answer a {} ({})".format(
-                path.name, source.label, purpose, source.note or "unsupported"))
+            notes.append("{}: not used for the {} - {}".format(
+                path.name, purpose, source.note or "this capture cannot answer it"))
             continue
 
         module_name, func_name = PARSERS[channel]
@@ -103,6 +105,48 @@ def collect_har_rows(har_dir: Path, *, purpose: str = "fare",
         if len(rows) == before:
             notes.append("{}: parsed but produced no usable rows".format(path.name))
     return rows, notes
+
+
+def select_rows(rows: list, *, routes: Optional[Iterable[tuple]] = None,
+                date_from=None, date_to=None) -> tuple:
+    """-> (rows asked for, note or None).
+
+    A capture holds whatever its author searched, so HAR rows must be cut to the
+    routes and dates the user asked for - otherwise "DAC-DXB, 1-7 Oct" answered
+    with every route in the folder, on whatever day it was captured. Blank routes
+    or dates mean "everything the captures cover". When the cut leaves nothing,
+    the note says what the captures DO cover, so an empty table explains itself.
+    """
+    wanted = {(o.upper(), d.upper()) for o, d in (routes or [])}
+    kept = []
+    for r in rows:
+        if wanted and (r.origin, r.destination) not in wanted:
+            continue
+        if date_from and date_to and (r.departure_date is None
+                                      or not date_from <= r.departure_date <= date_to):
+            continue
+        kept.append(r)
+    if kept or not rows:
+        return kept, None
+    cov = coverage([r for r in rows if not wanted or (r.origin, r.destination) in wanted])
+    if not cov:
+        return kept, ("Your HAR captures have none of the routes asked for. They cover: "
+                      + _describe(coverage(rows)))
+    return kept, "Your HAR captures have no flights in those dates. They cover: " + _describe(cov)
+
+
+def describe_coverage(rows: Iterable[FlightRow]) -> str:
+    """'DAC-DXB (31 Oct); DAC-CXB (30 Sep)' - what a set of HAR rows covers."""
+    return _describe(coverage(rows))
+
+
+def _describe(cov: dict, limit: int = 8) -> str:
+    parts = []
+    for route, days in sorted(cov.items())[:limit]:
+        shown = ", ".join(d.strftime("%d %b") for d in days[:3]) + (" …" if len(days) > 3 else "")
+        parts.append(f"{route} ({shown})")
+    more = len(cov) - limit
+    return "; ".join(parts) + (f"; and {more} more route(s)" if more > 0 else "")
 
 
 def coverage(rows: Iterable[FlightRow]) -> dict:
