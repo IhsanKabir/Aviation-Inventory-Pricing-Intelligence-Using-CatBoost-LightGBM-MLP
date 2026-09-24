@@ -67,12 +67,11 @@ class MarketApiMixin:
         """
         from market_engine import sources as S
         from market_engine.har import find_hars
-        available = S.live_available()
-        admin = self._live_allowed()
-        entries = [{"key": k, "label": s.label, "available": admin and bool(available.get(k)),
+        # Live sources are admin-only and not listed at all for anyone else.
+        available = S.live_available() if self._live_allowed() else {}
+        entries = [{"key": k, "label": s.label, "available": bool(available.get(k)),
                     "can_schedule": s.can_schedule, "can_fare": s.can_fare,
-                    "note": s.note if admin else "Administrator only - use Manual HAR captures"}
-                   for k, s in S.LIVE.items()]
+                    "note": s.note} for k, s in S.LIVE.items() if k in available]
         # Manual captures are one pseudo-source over the capture folder; which
         # channels inside it can answer is decided per file, and reported.
         har_dir = (self._config.get("har_dir") or "") if hasattr(self, "_config") else ""
@@ -126,8 +125,7 @@ class MarketApiMixin:
         if picked and not self._live_allowed():
             # Enforced here, not only greyed out in the page.
             return None, {"ok": False,
-                          "error": "Live sources are available to the administrator only - "
-                                   "tick 'Manual HAR captures' to use your HAR files."}
+                          "error": "Tick 'Manual HAR captures' to use your HAR files."}
         picked = [k for k in picked
                   if (S.LIVE[k].can_schedule if want == "schedule" else S.LIVE[k].can_fare)]
         if not picked and not use_har:

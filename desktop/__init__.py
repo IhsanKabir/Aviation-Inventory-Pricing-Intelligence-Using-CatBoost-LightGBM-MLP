@@ -8,6 +8,6 @@ Copyright (c) 2026 Ihsan Kabir. All Rights Reserved. Proprietary software;
 see the LICENSE file at the repository root. Not for copying or redistribution.
 """
 
-__version__ = "0.2.11"
+__version__ = "0.2.12"
 
 APP_ID = "ota-discount-report"

@@ -751,14 +751,10 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
             return blocked
 
         # Live searches are admin-only (enforced here, not just hidden in the UI):
-        # a non-admin run reads HAR captures only, whatever the saved boxes say.
-        live_notes: list[str] = []
+        # a non-admin run reads HAR captures only, whatever the saved boxes say -
+        # silently, since non-admins are never shown live search at all.
         live_routes = self._config.get("live_routes") or {}
         if not self._live_allowed():
-            if routes or any((v or "").strip() for v in live_routes.values()):
-                live_notes.append("Live searches are available to the administrator only - "
-                                  "this run used your HAR captures. Capture FirstTrip and "
-                                  "ShareTrip as HAR files (see the Guide) to include them.")
             routes, live_routes = [], {}
 
         self._busy, self._status = True, "Parsing HAR captures…"
@@ -820,7 +816,7 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                             count=sum(len(v) for v in hars.values()),
                             target=report.get("report_date"))
 
-            warnings: list[str] = list(live_notes)
+            warnings: list[str] = []
             for c in live_failed:
                 label = self._live_plugins[c]["label"]
                 warnings.append(

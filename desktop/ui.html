@@ -210,9 +210,6 @@
       <button class="secondary" onclick="archiveHars()" title="Move all .har files into archive/YYYY-MM-DD/ so today's captures start clean">Archive old HARs</button>
       <label class="live-only">Live routes (FirstTrip B2C) <input id="routes"></label>
       <span id="live-plugin-routes" class="live-only"></span>
-      <span id="live-admin-note" class="muted" style="display:none;align-self:center">
-        Live search is for the administrator only — this app reads your HAR captures
-        (FirstTrip, ShareTrip and the rest; see <b>Guide</b>).</span>
       <label class="live-only">Travel date (YYYY-MM-DD) <input id="travel_date" placeholder="2026-07-30"></label>
       <button class="secondary" onclick="saveConfig()">Save</button>
       <button class="big" id="run-btn" onclick="runReport()">Run report</button>
@@ -304,7 +301,7 @@
 
   <footer class="muted" style="margin-top:18px;padding:10px 2px;font-size:11px;border-top:1px solid var(--line)">
     OTA Discount Comparison &middot; &copy; 2026 Ihsan Kabir. All Rights Reserved.
-    Proprietary software &mdash; not for copying or redistribution.
+    Proprietary software. Not for copying or redistribution.
   </footer>
 </main>
 
@@ -610,12 +607,11 @@ function renderScan(scan) {
 
 function setStatus(text) { document.getElementById("status").textContent = text; }
 
-/** Live search is admin-only: everyone else sees HAR-only controls. The backend
- *  enforces the same rule, so this is presentation, not the gate. */
+/** Live search is admin-only: everyone else simply sees HAR-only controls, with no
+ *  mention of it. The backend enforces the same rule, so this is presentation. */
 function applyLiveAccess() {
   const ok = !!(state && state.live_allowed);
   document.querySelectorAll(".live-only").forEach(el => { el.style.display = ok ? "" : "none"; });
-  document.getElementById("live-admin-note").style.display = ok ? "none" : "";
   const saveLive = document.getElementById("save-live-btn");
   if (saveLive) saveLive.style.display = ok ? "" : "none";
 }
@@ -1010,15 +1006,15 @@ async function initMarket() {
     // A source that cannot answer THIS view is disabled with the reason, rather
     // than silently returning nothing after a long run.
     const want = p === "sch" ? "can_schedule" : "can_fare";
-    // Live sources are admin-only; for everyone else the HAR source is the default.
+    // Live sources are admin-only and simply not listed for anyone else, where the
+    // HAR source is the default.
     const liveOk = !!(state && state.live_allowed);
     const defaultKey = liveOk ? "firsttrip" : "har";
-    document.getElementById(p + "_sources").innerHTML = marketSources.map(s => {
-      const adminOnly = !liveOk && s.key !== "har";
-      const why = adminOnly ? "administrator only - use Manual HAR captures"
-                : !s.available ? (s.note || "not installed on this machine")
+    document.getElementById(p + "_sources").innerHTML = marketSources
+      .filter(s => liveOk || s.key === "har").map(s => {
+      const why = !s.available ? (s.note || "not installed on this machine")
                 : (!s[want] ? "cannot answer this view" : (s.note || ""));
-      const off = adminOnly || !s.available || !s[want];
+      const off = !s.available || !s[want];
       return `<label style="font-size:12px;margin-right:12px" title="${esc(why)}">
         <input type="checkbox" class="${p}-src" value="${esc(s.key)}"
           ${off ? "disabled" : (s.key === defaultKey ? "checked" : "")}>

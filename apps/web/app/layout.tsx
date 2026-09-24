@@ -49,8 +49,7 @@ export default async function RootLayout({
             textAlign: "center",
           }}
         >
-          &copy; 2026 Ihsan Kabir. All Rights Reserved. Proprietary software —
-          see the{" "}
+          &copy; 2026 Ihsan Kabir. All Rights Reserved. Proprietary software. See the{" "}
           <a
             href="https://github.com/IhsanKabir/Aviation-Inventory-Pricing-Intelligence-Using-CatBoost-LightGBM-MLP/blob/master/LICENSE"
             style={{ color: "inherit", textDecoration: "underline" }}

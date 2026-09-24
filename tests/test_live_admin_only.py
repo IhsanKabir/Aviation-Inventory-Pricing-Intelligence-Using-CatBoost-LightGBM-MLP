@@ -47,7 +47,8 @@ def test_a_non_admin_run_makes_no_live_search_whatever_the_boxes_say(api, monkey
     result = api.run()
     assert result["ok"]
     assert calls["plugin"] == 0 and calls["routes"] == []      # no ShareTrip, no FirstTrip live
-    assert any("administrator only" in w for w in result["warnings"])
+    # ...and silently: non-admins are never told about live search at all
+    assert not any("administrator" in w.lower() or "live" in w.lower() for w in result["warnings"])
     assert api.get_state()["live_allowed"] is False
 
 
@@ -89,13 +90,13 @@ def test_schedule_and_fare_refuse_live_sources_for_non_admins(api):
     api._config["is_admin"] = False
     plan, err = api._market_plan("fare", "DAC-DXB", "2026-10-01", "2026-10-02",
                                  ["firsttrip"], "Economy")
-    assert plan is None and "administrator only" in err["error"]
+    assert plan is None and "administrator" not in err["error"].lower()
     plan, err = api._market_plan("fare", "DAC-DXB", "2026-10-01", "2026-10-02",
                                  ["har"], "Economy")
     assert err is None and plan.use_har and plan.source_keys == []
-    live = [s for s in api.market_state()["sources"] if s["key"] != "har"]
-    assert live and all(not s["available"] and "Administrator only" in s["note"] for s in live)
+    assert [s["key"] for s in api.market_state()["sources"]] == ["har"]   # live not even listed
     api._config["is_admin"] = True
+    assert "firsttrip" in [s["key"] for s in api.market_state()["sources"]]
     plan, err = api._market_plan("fare", "DAC-DXB", "2026-10-01", "2026-10-02",
                                  ["firsttrip"], "Economy")
     assert err is None and plan.source_keys == ["firsttrip"]
