@@ -39,8 +39,10 @@ def _selftest() -> int:
     def _engine():
         from discount_engine import build_report          # noqa: F401
         from discount_engine import by_route              # imported lazily by build_report
+        from discount_engine import route_xlsx            # imported lazily by the xlsx writer
         blocks = by_route.route_blocks({("DAC", "CXB"): {"Amy": {"BS": "6"}}})
-        return f"discount engine + by-route ({len(blocks)} block)"
+        shown = route_xlsx.visible_rows(blocks[0]["rows"])
+        return f"discount engine + by-route ({len(blocks)} block, {len(shown)} row shown)"
 
     def _market():
         from market_engine import (cache, collect, fares, har, render, rows,

@@ -1036,7 +1036,14 @@ def _render_report_sheet(ws, report: dict[str, Any],
         r += 1
 
         # Data rows: values written here; fills/fonts come from the shared flags.
-        for label, kind in ROW_ORDER:
+        # A row blank for every airline is dropped (and the B2B/B2C gap with it
+        # when one side is empty); order is unchanged, and the red diff matches
+        # rows by label, so dropping a row never shifts another's comparison.
+        from .route_xlsx import visible_rows
+        shown = visible_rows([{"label": lab, "kind": kind, "cells": rows_by_label.get(lab, {})}
+                              for lab, kind in ROW_ORDER])
+        for row in shown:
+            label, kind = row["label"], row["kind"]
             if kind == "sep":
                 r += 1
                 continue
@@ -1108,7 +1115,10 @@ def _render_transposed_sheet(ws, report: dict[str, Any],
             continue
         airlines = grid["columns"]
         rows_by_label = {row["label"]: row.get("cells", {}) for row in grid["rows"]}
-        channels = [lbl for lbl, kind in ROW_ORDER if kind != "sep" and lbl in rows_by_label]
+        # OTA columns with no data for any airline are dropped (the rotated twin of
+        # dropping blank rows on the main sheet).
+        channels = [lbl for lbl, kind in ROW_ORDER if kind != "sep" and lbl in rows_by_label
+                    and any(str(v or "").strip() for v in rows_by_label[lbl].values())]
         flags, best = hl[rt]["flags"], hl[rt]["best"]
         ncol = 2 + len(channels)          # Airline + channels + Best OTA
         max_cols = max(max_cols, ncol)
@@ -1283,7 +1293,9 @@ def write_xlsx(report: dict[str, Any], xlsx_path: Path) -> Path:
     if sheet_name in wb.sheetnames:
         del wb[sheet_name]          # overwrite today's sheet on re-run
     ws = wb.create_sheet(title=sheet_name)
-    _render_report_sheet(ws, report, prev_lookup)
+    note = _empty_capture_note(report)
+    _render_report_sheet(ws, report, prev_lookup,
+                         title_extra={"INTL": note, "DOM": note} if note else None)
     return _save_workbook(wb, xlsx_path)
 
 
@@ -1305,44 +1317,25 @@ def write_single_sheet_xlsx(report: dict[str, Any],
     prev_lookup = prev_lookup_from_report(prev_report)
     # Three layouts in one download: OTA-rows (default), rotated airline-rows, and the
     # detailed tier/coupon/fee breakdown.
-    _render_report_sheet(wb.create_sheet(title=_sheet_name(report)), report, prev_lookup)
+    note = _empty_capture_note(report)
+    _render_report_sheet(wb.create_sheet(title=_sheet_name(report)), report, prev_lookup,
+                         title_extra={"INTL": note, "DOM": note} if note else None)
     _render_transposed_sheet(
         wb.create_sheet(title=f"{_sheet_name(report)} (by airline)"), report, prev_lookup)
     _render_detailed_sheet(wb.create_sheet(title=f"{_sheet_name(report)} (detailed)"), report)
-    if report.get("by_route"):      # local runs only; synced/stored reports carry no routes
-        _render_route_sheet(wb.create_sheet(title=f"{_sheet_name(report)} (by route)"), report)
+    # Local runs only: synced/stored reports carry no routes, so the website's
+    # download keeps its three sheets.
+    from .route_xlsx import add_route_sheets
+    add_route_sheets(wb, report, _sheet_name(report))
     return _save_workbook(wb, xlsx_path)
 
 
-def _route_sheet_inputs(report: dict[str, Any]):
-    """(pseudo-report keyed by route, block titles, per-route 'no data' notes)."""
-    blocks = report.get("by_route") or []
-    used = {lab for b in blocks for lab in b["coverage"]["with_data"]}
-    grids = {b["route"]: b for b in blocks}
-    titles = [(b["route"], f"{b['route']} · "
-               + ("DOMESTIC" if b["market"] == "DOM" else "INTERNATIONAL")) for b in blocks]
-    # Only OTAs captured somewhere in this run; never-captured rows would be noise.
-    notes = {}
-    for b in blocks:
-        missing = [lab for lab in b["coverage"]["without"] if lab in used]
-        if missing:
-            notes[b["route"]] = "No data on this route: " + ", ".join(missing)
-    # Preferred routes nobody captured have no grid to show; name them on the first
-    # block so the gap is visible in the file rather than silently absent.
-    if blocks and report.get("preferred_missing"):
-        first = blocks[0]["route"]
-        gap = "Preferred routes not captured yet: " + ", ".join(report["preferred_missing"])
-        notes[first] = f"{notes[first]}\n{gap}" if first in notes else gap
-    pseudo = {"report_date": report["report_date"], "report_time": report["report_time"],
-              "grids": grids}
-    return pseudo, titles, notes
-
-
-def _render_route_sheet(ws, report: dict[str, Any]) -> None:
-    """One colored block per route, same styling as the daily sheet. Highlights rank
-    OTAs within a route; there is no red change-diff here (that stays on the summary)."""
-    pseudo, titles, notes = _route_sheet_inputs(report)
-    _render_report_sheet(ws, pseudo, {}, blocks=titles, title_extra=notes)
+def _empty_capture_note(report: dict[str, Any]) -> Optional[str]:
+    """Blank rows are dropped from the sheets, so a capture that FAILED (captured but
+    parsed to nothing) would vanish silently; name those channels instead."""
+    empty = [lab for lab, st in (report.get("channel_status") or {}).items()
+             if st in ("captured_but_empty", "parse_failed")]
+    return ("Captured but no data (check these captures): " + ", ".join(empty)) if empty else None
 
 
 # Substrings that identify which channel a HAR belongs to (first match wins).

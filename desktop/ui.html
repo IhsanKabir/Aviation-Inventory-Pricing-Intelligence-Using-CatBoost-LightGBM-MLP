@@ -622,8 +622,11 @@ function showRunLog(log) {
   box.querySelector("pre").textContent = (log || "").trim() || "(no engine output)";
 }
 
-function gridTable(title, block, channelStatus) {
-  const rows = block.rows.filter(r => r.kind !== "sep");
+function gridTable(title, block, channelStatus, hideBlankRows) {
+  // Route view: an OTA with nothing on this route is named in the note below the
+  // table instead of taking a row of dashes.
+  const rows = block.rows.filter(r => r.kind !== "sep" && (!hideBlankRows ||
+    Object.values(r.cells || {}).some(v => String(v || "").trim())));
   const head = `<tr><th>OTA</th>${block.columns.map(c => `<th>${esc(c)}</th>`).join("")}</tr>`;
   const body = rows.map(r => `
     <tr>
@@ -839,7 +842,7 @@ function drawDiscounts() {
         continue;
       }
       const market = b.market === "DOM" ? "DOMESTIC" : "INTERNATIONAL";
-      html += gridTable(`${b.route} (${market}) / ${report.report_time}hrs`, b, {});
+      html += gridTable(`${b.route} (${market}) / ${report.report_time}hrs`, b, {}, true);
       const missing = b.coverage.without.filter(l => used.has(l));
       if (missing.length) {
         html += `<div class="muted" style="margin:-4px 0 14px">No data on this route: ${esc(missing.join(", "))} — capture this route on those sites to compare them here.</div>`;

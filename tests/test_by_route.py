@@ -138,13 +138,14 @@ def test_excel_gets_a_route_sheet_only_when_routes_exist():
               "by_route": by_route.highlighted(blocks)}
     out = Path(tempfile.mkdtemp())
     wb = load_workbook(grid.write_single_sheet_xlsx(report, None, out / "a.xlsx"))
-    assert wb.sheetnames[-1] == "20 September (by route)"
-    titles = [c.value for c in wb.worksheets[-1]["A"] if c.value and "DAC-" in str(c.value)]
-    assert titles[0].startswith("20/09/2026 (DAC-CXB · DOMESTIC)")
-    assert "No data on this route: BDFare" in titles[0]    # captured elsewhere, not here
+    assert wb.sheetnames[-3:] == ["20 September routes", "20 September route detail",
+                                  "20 September route data"]
+    detail = [c.value for c in wb["20 September route detail"]["A"] if c.value]
+    assert "DAC-CXB · Domestic" in detail
+    assert "No data on this route: BDFare" in detail       # captured elsewhere, not here
     del report["by_route"]                                   # a stored/synced report
     wb = load_workbook(grid.write_single_sheet_xlsx(report, None, out / "b.xlsx"))
-    assert not any("by route" in n for n in wb.sheetnames)
+    assert not any("route" in n for n in wb.sheetnames)
 
 
 def test_routes_never_reach_the_sync_payload():
