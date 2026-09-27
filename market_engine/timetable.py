@@ -163,6 +163,9 @@ def seat_capacity(airline: str, aircraft: str,
     candidates = [(known, int(seats)) for known, seats in by_air.items()
                   if len(known) >= _MIN_MATCH and len(key) >= _MIN_MATCH
                   and (known in key or key in known)]
+    # Same aircraft under an unrelated name ("DEHAVILLAND DASH 8" vs "DH8").
+    candidates += [(known, int(seats)) for known, seats in by_air.items()
+                   if _family(known) == _family(key)]
     if not candidates:
         return None
     seats = {s for _, s in candidates}
@@ -188,6 +191,10 @@ class TimetableRow:
     dep: str               # HHMM
     arr: str               # HHMM
     seats: Optional[int]
+    #: per weekday: "1" seen | "?" searched once, not seen (sold out or not
+    #: flying) | "" not seen on 2+ searched days | "-" weekday not searched.
+    #: `days`/`freq` count confirmed days only.
+    day_state: tuple = ()
 
 
 def _hhmm(clock: str) -> str:
@@ -229,8 +236,93 @@ def _sector(origin: str, destination: str, home: str = HOME,
     return "{}-{}".format(origin, destination)   # neither end is home-side
 
 
-def build_timetable(sched: Any, *, home: str = HOME) -> list:
+def _stop_label(leg: Any) -> str:
+    """The 1Stop cell: the via airport(s), or "1 stop" when the source counted a
+    stop without naming it. FirstTrip does that for a same-number through flight
+    (BS322 MCT-CGP-DAC), which otherwise read as a NONSTOP with a later arrival."""
+    vias = _vias(getattr(leg, "via", ""))
+    stops = int(getattr(leg, "stops", 0) or 0)
+    if not vias and stops > 0:
+        return "{} stop{}".format(stops, "" if stops == 1 else "s")
+    return vias
+
+
+#: Names that share no letters with each other but are one aircraft, as reported
+#: by different sources: FirstTrip "DH8" (the IATA code) vs ShareTrip
+#: "DEHAVILLAND DASH 8" split every Biman Dash 8 flight into two rows.
+_FAMILIES = (("DH8", ("DASH8", "DHC8", "Q400", "DH8")),)
+
+
+def _family(key: str) -> str:
+    for canonical, markers in _FAMILIES:
+        if any(m in key for m in markers):
+            return canonical
+    return key
+
+
+def _aircraft_groups(legs: list) -> list:
+    """[(label, legs)] - one flight's legs split by aircraft TYPE, not spelling.
+
+    Two labels are the same type when one normalized key contains the other
+    ("ATR725" is inside "ATR72500"); short keys never match (see _MIN_MATCH).
+    Legs with no aircraft, or only a family name without a model number, join the
+    flight's only known type; with several known types their aircraft is
+    genuinely unknown, so they keep their own row. Each group's label is its most
+    frequent spelling.
+    """
+    from collections import Counter
+
+    def _same(a: str, b: str) -> bool:
+        a, b = _family(a), _family(b)
+        return a == b or (min(len(a), len(b)) >= _MIN_MATCH and (a in b or b in a))
+
+    clusters: list = []                       # [(keys set, legs list)]
+    unknown: list = []
+    # A label with no model number ("ATR TURBOPROP", ShareTrip's family name for
+    # every ATR) says no more than a blank one; it yields to a specific type and
+    # only stands on its own when nothing more specific was reported.
+    specific = any(any(ch.isdigit() for ch in normalize_aircraft(l.aircraft or ""))
+                   for l in legs)
+    for leg in legs:
+        label = str(getattr(leg, "aircraft", "") or "").strip()
+        key = normalize_aircraft(label)
+        if not key or (specific and not any(ch.isdigit() for ch in key)):
+            unknown.append(leg)
+            continue
+        for keys, members in clusters:
+            if any(_same(key, k) for k in keys):
+                keys.add(key)
+                members.append(leg)
+                break
+        else:
+            clusters.append(({key}, [leg]))
+    if len(clusters) == 1:
+        clusters[0][1].extend(unknown)
+        unknown = []
+    out = []
+    for _keys, members in clusters:
+        spellings = Counter(str(l.aircraft).strip() for l in members if str(l.aircraft or "").strip())
+        out.append((spellings.most_common(1)[0][0], members))
+    if unknown:
+        out.append(("", unknown))
+    return out
+
+
+def build_timetable(sched: Any, *, home: str = HOME,
+                    searched: Optional[dict] = None,
+                    extra_seen: Optional[dict] = None,
+                    extra_searched: Optional[dict] = None) -> list:
     """Operated legs -> timetable rows, sorted by sector then departure.
+
+    `searched` = schedule.searched_dates(rows). With it, a weekday a flight was
+    not seen on is only reported as "doesn't operate" when that weekday was
+    searched on two or more dates; one sold-out day must not delete a day from
+    the schedule (VQ921 lost its Friday that way on 2026-09-27).
+
+    `extra_seen` / `extra_searched` are evidence from the same weekday in nearby
+    weeks (market_engine.confirm): {flight key incl. departure: weekdays} and
+    {(origin, dest): dates}. They settle "?" days; `days`/`freq` then follow the
+    settled pattern, because the sheet is a weekly schedule, not a log of dates.
 
     Built from the LEGS rather than the weekly pattern on purpose. A flight that
     retimes during the range has two real timings, and a timetable shows each on
@@ -244,21 +336,33 @@ def build_timetable(sched: Any, *, home: str = HOME) -> list:
     home = str(settings.get("home") or home).upper()
     bases = {str(a).upper() for a in (settings.get("bases") or [])} or {home}
 
-    groups: dict = {}
+    flights: dict = {}
     for leg in getattr(sched, "legs", sched):
-        # Aircraft is part of the identity: a flight flown by a 777 on Tuesday and
-        # a 787 on Thursday has two different seat counts, and collapsing them
-        # would attach one aircraft's capacity to both days.
         key = (str(leg.airline).upper(), str(leg.flight).strip(),
                str(leg.origin).upper(), str(leg.destination).upper(),
-               leg.departure, leg.arrival, str(getattr(leg, "aircraft", "") or ""),
-               _vias(getattr(leg, "via", "")),
+               leg.departure, leg.arrival, _stop_label(leg),
                str(getattr(leg, "operated_by", "") or "").upper())
-        groups.setdefault(key, []).append(leg)
+        flights.setdefault(key, []).append(leg)
+    # Aircraft is part of the identity: a flight flown by a 777 on Tuesday and a
+    # 787 on Thursday has two seat counts. But the SAME aircraft spelled
+    # differently by different sources/fetches ("ATR725", "ATR 72-500", blank)
+    # must not split one flight into several partial rows (field case VQ921).
+    groups: dict = {}
+    for (code, number, org, dest, dep, arr, via, operator), legs in flights.items():
+        for aircraft, same in _aircraft_groups(legs):
+            groups[(code, number, org, dest, dep, arr, aircraft, via, operator)] = same
+
+    from market_engine.schedule import weekday_states
 
     rows = []
     for (code, number, org, dest, dep, arr, aircraft, via, operator), legs in groups.items():
-        days = tuple(any(l.flight_date.weekday() == i for l in legs) for i in range(7))
+        seen = {l.flight_date.weekday() for l in legs}
+        seen |= (extra_seen or {}).get((code, number, org, dest, dep), set())
+        route_searched = None if searched is None else (
+            set(searched.get((org, dest), set()))
+            | set((extra_searched or {}).get((org, dest), set())))
+        state = weekday_states(seen, route_searched)
+        days = tuple(s == "1" for s in state)
         rows.append(TimetableRow(
             sector=_sector(org, dest, home, bases),
             days=days,
@@ -276,6 +380,7 @@ def build_timetable(sched: Any, *, home: str = HOME) -> list:
             dep=_hhmm(dep),
             arr=_hhmm(arr),
             seats=seat_capacity(code, aircraft, caps),
+            day_state=state,
         ))
     rows.sort(key=lambda r: (r.sector, r.dep, r.airline_code, r.flight_no))
     return rows

@@ -168,6 +168,13 @@ def choose_sources(quality: fq.QualityReport, requested=None,
     return tuple(accepted), refused
 
 
+def _aircraft_detail(label: str) -> tuple:
+    """How much an aircraft label says: a model number beats a family name
+    ("ATR 72 - 600" > "ATR TURBOPROP" > ""), then the longer label wins."""
+    text = str(label or "").strip()
+    return (any(ch.isdigit() for ch in text), len(text))
+
+
 def build(rows, *, sources_requested=None, sources_refused=None,
           date_from: date | None = None, date_to: date | None = None,
           include_itineraries: bool = False) -> ScheduleResult:
@@ -224,8 +231,12 @@ def build(rows, *, sources_requested=None, sources_refused=None,
         # silently -- `reported_times` carries the disagreement.
         if leg.seats is None and r.get("seats") is not None:
             leg.seats = r.get("seats")
-        if not leg.aircraft:
-            leg.aircraft = str(r.get("aircraft") or "").strip()
+        # Keep the MOST SPECIFIC aircraft any source reported, not the first:
+        # ShareTrip calls every ATR "ATR TURBOPROP" while FirstTrip says
+        # "ATR 72 - 600" - first-wins lost the model and with it the seat count.
+        candidate = str(r.get("aircraft") or "").strip()
+        if _aircraft_detail(candidate) > _aircraft_detail(leg.aircraft):
+            leg.aircraft = candidate
         if not leg.arrival:
             leg.arrival = str(r.get("arrival_time") or "").strip()
 

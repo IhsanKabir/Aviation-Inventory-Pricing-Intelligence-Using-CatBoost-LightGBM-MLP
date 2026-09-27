@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Optional
 
-from market_engine.rows import FlightRow
+from market_engine.rows import FlightRow, clean_aircraft
 
 #: A schedule stays meaningful for weeks; a fare does not survive the day.
 FRESH_SCHEDULE = timedelta(days=21)
@@ -52,6 +52,10 @@ def _decode(blob: str) -> list[FlightRow]:
         for k in ("departure_date", "arrival_date"):
             d[k] = date.fromisoformat(d[k]) if d[k] else None
         d["fetched_at"] = datetime.fromisoformat(d["fetched_at"])
+        # Rows cached by older versions: no aircraft at all, or ShareTrip's
+        # aircraft dict stored as text. Both are repaired on the way in.
+        d["aircraft"] = clean_aircraft(d.get("aircraft"))
+        d.setdefault("operated_by", "")
         rows.append(FlightRow(**d))
     return rows
 

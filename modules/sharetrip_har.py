@@ -29,6 +29,13 @@ def _alias(code: str) -> str:
     return AIRLINE_ALIAS.get(str(code or "").upper(), str(code or "").upper())
 
 
+def _aircraft_name(value: Any) -> str:
+    """ShareTrip's segment aircraft is {'code': '725', 'model': 'ATR 72-500 '}."""
+    if isinstance(value, dict):
+        value = value.get("model") or value.get("name") or value.get("code") or ""
+    return str(value or "").strip()
+
+
 def _cabin_bucket(text: Any) -> str:
     t = str(text or "Economy").lower()
     return "business" if ("business" in t or "first" in t) else "economy"
@@ -113,7 +120,9 @@ def _normalize(fl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "stops":              max(0, len(segs) - 1),
         "via_airports":       via,
         "layover_times":      layover_times,
-        "aircraft":           str(s0.get("aircraft") or "").strip() or None,
+        # ShareTrip sends {'code': '725', 'model': 'ATR 72-500 '}: keep the model,
+        # not the dict's text (which split one flight across timetable rows).
+        "aircraft":           _aircraft_name(s0.get("aircraft")) or None,
         "baggage":            _baggage(segs),
         "fare_refundable":    bool(fl.get("isRefundable")),
         "fare_id":            str(fl.get("sequenceCode") or fl.get("providerCode") or ""),

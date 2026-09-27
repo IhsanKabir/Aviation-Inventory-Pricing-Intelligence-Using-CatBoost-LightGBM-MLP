@@ -1113,6 +1113,11 @@ function marketNotes(r, extra) {
 
 function renderSchedule(r) {
   const extra = [];
+  if ((r.confirmed || []).length) {
+    extra.push(`Checked against the same weekday in a nearby week (a flight is not listed once sold out): `
+      + r.confirmed.join(" · "));
+  }
+  if (r.unsure_patterns) extra.push(`${r.unsure_patterns} flight(s) show a day with "?" — not on sale on the only such day searched (sold out, or not flying). Widen the date range to 2+ weeks to confirm.`);
   if (r.held_back) extra.push(`${r.held_back} connecting itineraries held back — a marketed origin-destination is not an operated leg`);
   if (r.dropped_no_clock) extra.push(`${r.dropped_no_clock} rows excluded — no real departure time`);
   if (r.dropped_no_flight) extra.push(`${r.dropped_no_flight} rows excluded — no readable flight number`);

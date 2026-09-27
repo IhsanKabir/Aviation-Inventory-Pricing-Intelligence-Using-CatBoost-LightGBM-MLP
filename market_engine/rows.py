@@ -14,9 +14,28 @@ Honesty rules baked into the row itself:
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Optional
+
+
+def clean_aircraft(value: Any) -> str:
+    """An aircraft label from whatever a source sent.
+
+    ShareTrip sends {'code': '725', 'model': 'ATR 72-500 '}; it used to be stored
+    as that dict's TEXT, which split one flight into several timetable rows (the
+    same ATR spelled three ways). Rows cached before the fix still hold the text,
+    so it is recognised here too.
+    """
+    if isinstance(value, dict):
+        value = value.get("model") or value.get("name") or value.get("code") or ""
+    text = str(value or "").strip()
+    if text.startswith("{") and ("model" in text or "code" in text):
+        m = (re.search(r"""['"]model['"]\s*:\s*['"]([^'"]*)['"]""", text)
+             or re.search(r"""['"]code['"]\s*:\s*['"]([^'"]*)['"]""", text))
+        text = m.group(1).strip() if m else ""
+    return text
 
 #: A departure at exactly midnight is treated as "no clock" — matches
 #: engines.schedule_view.MIDNIGHT. A real 00:00 departure is vanishingly rare and
@@ -143,7 +162,7 @@ def from_connector(raw: dict[str, Any], *, source: str, cabin: str,
         arrival_date=arr_d,
         stops=int(stops) if stops is not None else None,
         via=str(raw.get("via_airports") or raw.get("via") or ""),
-        aircraft=str(raw.get("aircraft") or raw.get("equipment") or "").strip(),
+        aircraft=clean_aircraft(raw.get("aircraft") or raw.get("equipment")),
         operated_by=_operator(raw, airline),
         cabin=cabin,
         gross_bdt=gross,

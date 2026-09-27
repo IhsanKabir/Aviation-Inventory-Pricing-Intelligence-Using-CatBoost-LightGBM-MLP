@@ -127,7 +127,7 @@ def write_fares(ws, table, best_by_route: dict, title: str) -> None:
     _widths(ws, [10, 8, 8, 9, 7, 11, 11, 11, 10, 10, 10, 13, 30])
 
 
-def write_timetable(ws, rows, title: str) -> None:
+def write_timetable(ws, rows, title: str, confirmed: Optional[list] = None) -> None:
     """The operator's schedule sheet: sector-grouped, day flags, HHMM times.
 
     Sector is merged down its block because it labels a market, not a row, and
@@ -138,6 +138,14 @@ def write_timetable(ws, rows, title: str) -> None:
     from market_engine.timetable import DAY_COLUMNS
 
     ws.cell(1, 1, title).font = Font(bold=True, size=12)
+    # An OTA drops a flight once it is sold out, so an unseen day is only a
+    # "no" when it was searched on 2+ dates. Say what ? and – mean whenever used.
+    states = {s for row in rows for s in (row.day_state or ())}
+    if "?" in states or "-" in states:
+        ws.cell(2, 1, "1 = on sale that weekday   ? = not on sale on the ONLY such day "
+                      "searched (sold out, or not flying) - widen the date range to 2+ "
+                      "weeks to confirm   – = that weekday was not in the date range   "
+                      "Freq. counts confirmed days only").font = NOTE_FONT
     header = (["Sector"] + list(DAY_COLUMNS)
               + ["Freq.", "Airline", "Aircraft", "Flight no.", "Org", "1Stop",
                  "Dest", "Dep", "Arr", "Seat Capacity", "Operated by"])
@@ -146,9 +154,15 @@ def write_timetable(ws, rows, title: str) -> None:
     first_row = r
     for row in rows:
         ws.cell(r, 1, row.sector)
-        for i, on in enumerate(row.days):
-            c = ws.cell(r, 2 + i, 1 if on else None)
+        day_state = row.day_state or tuple("1" if on else "" for on in row.days)
+        for i, state in enumerate(day_state):
+            value = {"1": 1, "?": "?", "-": "–"}.get(state)
+            c = ws.cell(r, 2 + i, value)
             c.alignment = Alignment(horizontal="center")
+            if state == "?":
+                c.fill = WARN_FILL                # unknown, never a silent "no"
+            elif state == "-":
+                c.font = NOTE_FONT
         ws.cell(r, 9, row.freq).alignment = Alignment(horizontal="center")
         ws.cell(r, 10, row.airline)
         ws.cell(r, 11, row.aircraft)
@@ -184,13 +198,21 @@ def write_timetable(ws, rows, title: str) -> None:
                 ws.cell(start, 1).alignment = Alignment(horizontal="center",
                                                         vertical="center")
             start = i
+    # Days that were "?" in the range and settled from the same weekday in a
+    # nearby week: say so under the table, so a 1 is never unexplained.
+    if confirmed:
+        ws.cell(r + 1, 1, "Settled from the same weekday in a nearby week "
+                          "(the flight was not on sale on the only such day in range):"
+                ).font = NOTE_FONT
+        for i, line in enumerate(confirmed, start=2):
+            ws.cell(r + i, 1, "  " + line).font = NOTE_FONT
     _widths(ws, [10, 4, 4, 4, 4, 4, 4, 4, 7, 22, 18, 11, 6, 7, 6, 7, 7, 14, 22])
     ws.freeze_panes = ws.cell(first_row, 1)
 
 
 def write_workbook(path: Path, *, patterns=None, sched=None, table=None,
                    best_by_route: Optional[dict] = None, timetable=None,
-                   title: str = "") -> Path:
+                   title: str = "", confirmed: Optional[list] = None) -> Path:
     wb = Workbook()
     wb.remove(wb.active)
     stamp = title or datetime.now().strftime("%d %b %Y %H:%M")
@@ -199,7 +221,7 @@ def write_workbook(path: Path, *, patterns=None, sched=None, table=None,
                        f"Airline schedule — {stamp}")
     if timetable is not None:
         write_timetable(wb.create_sheet("Timetable"), timetable,
-                        f"Schedule timetable — {stamp}")
+                        f"Schedule timetable — {stamp}", confirmed=confirmed)
     if table is not None:
         write_fares(wb.create_sheet("Fares"), table, best_by_route or {},
                     f"Fare comparison — {stamp}")

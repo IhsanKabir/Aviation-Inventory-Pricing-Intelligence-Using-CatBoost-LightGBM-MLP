@@ -46,6 +46,48 @@ class MarketApiMixin:
         check = getattr(self, "_live_allowed", None)
         return bool(check()) if callable(check) else True
 
+    #: Ceiling on extra live queries spent settling "?" days in one run.
+    CONFIRM_MAX_QUERIES = 24
+
+    def _settle_unsure(self, plan, timetable: list, first, last, har_all: list,
+                       tracker=None) -> list:
+        """Rows from the same weekday in nearby weeks, for every "?" day.
+
+        Live sources (admin): through collect(), so the cache answers first and
+        only missing dates are fetched, nearest week first, capped. HAR-only: the
+        user's captures of that route on that weekday outside the range, in the
+        same season. Returns [] when there is nothing to settle."""
+        from market_engine import confirm
+        from market_engine.collect import CollectPlan, collect
+
+        targets = confirm.unsure_targets(timetable, first, last)
+        if not targets:
+            return []
+        if tracker:
+            tracker.note("Confirming '?' days from the same weekday in nearby weeks…")
+        rows: list = []
+        if plan.source_keys and self._live_ok():
+            budget = self.CONFIRM_MAX_QUERIES // max(1, len(plan.source_keys))
+            for (o, d), dates in targets.items():
+                near = sorted(dates, key=lambda x: min(abs((x - last).days),
+                                                       abs((first - x).days)))
+                pick = near[:max(0, budget)]
+                budget -= len(pick)
+                if not pick:
+                    break
+                mini = CollectPlan(routes=[(o, d)], dates=pick, source_keys=plan.source_keys,
+                                   cabin=plan.cabin, purpose="schedule", use_har=False)
+                rows += collect(mini, self._market_cache(),
+                                should_cancel=lambda: getattr(self, "_market_cancel", False)).rows
+        for r in har_all:
+            dates = targets.get((r.origin, r.destination))
+            if (dates and r.departure_date and not first <= r.departure_date <= last
+                    and any(r.departure_date.weekday() == t.weekday()
+                            and confirm.season(r.departure_date) == confirm.season(t)
+                            for t in dates)):
+                rows.append(r)
+        return rows
+
     def _market_cache(self):
         from desktop.backend import config_dir
         from market_engine.cache import CacheStore
@@ -183,7 +225,7 @@ class MarketApiMixin:
         if blocked:
             return blocked
 
-        from market_engine.collect import collect
+        from market_engine.collect import CollectResult, collect
         from market_engine.fares import build_fares, cheapest_by_route
         from market_engine.schedule import build_schedule, weekly_pattern
         from market_engine.timetable import build_timetable, coverage_gaps
@@ -202,6 +244,7 @@ class MarketApiMixin:
             result = collect(plan, self._market_cache(), progress=progress,
                              should_cancel=lambda: getattr(self, "_market_cancel", False))
             har_notes: list = []
+            har_all: list = []                  # every HAR row, before the route/date cut
             if plan.use_har:
                 from market_engine.har import (collect_har_rows, describe_coverage,
                                                select_rows)
@@ -209,6 +252,7 @@ class MarketApiMixin:
                 har_rows, har_notes = collect_har_rows(
                     Path(self._config.get("har_dir") or "."), purpose=plan.purpose,
                     progress=progress)
+                har_all = list(har_rows)
                 # Captures hold whatever their author searched: keep only the routes
                 # and dates asked for (blank = everything they cover).
                 har_rows, cut_note = select_rows(
@@ -238,17 +282,44 @@ class MarketApiMixin:
                 "har_notes": har_notes}
 
             if kind == "schedule":
+                # The days each route was genuinely searched (any airline answered):
+                # an unseen weekday is "unknown", not "doesn't fly", unless that
+                # weekday was searched on 2+ dates - a sold-out flight drops out.
+                from market_engine.schedule import searched_dates
+                searched = searched_dates(r for r in result.rows
+                                          if r.departure_date and first <= r.departure_date <= last)
                 sched = build_schedule(result, date_from=first, date_to=last)
-                patterns = weekly_pattern(sched, date_from=first, date_to=last)
                 # The timetable lists every SERVICE on sale, connections included:
                 # on a long-haul market nearly every offer carries a stop, so the
                 # nonstop-only view would leave the sheet virtually empty.
                 full = build_schedule(result, date_from=first, date_to=last,
                                       include_itineraries=True)
-                timetable = build_timetable(full)
+                timetable = build_timetable(full, searched=searched)
+                # A "?" day (not on sale on the only such day searched) is settled
+                # from the same weekday in nearby weeks - cache first, then a short
+                # live search for the admin, or the user's other HAR dates.
+                ev = self._settle_unsure(plan, timetable, first, last, har_all, tracker)
+                confirmed: list = []
+                if ev:
+                    from market_engine import confirm
+                    ev_full = build_schedule(CollectResult(rows=ev), include_itineraries=True)
+                    ev_plain = build_schedule(CollectResult(rows=ev))
+                    ev_searched = searched_dates(ev)
+                    before = timetable
+                    timetable = build_timetable(
+                        full, searched=searched, extra_searched=ev_searched,
+                        extra_seen=confirm.seen_weekdays(ev_full.legs))
+                    confirmed = confirm.confirmations(before, timetable)
+                    patterns = weekly_pattern(
+                        sched, date_from=first, date_to=last, searched=searched,
+                        extra_searched=ev_searched,
+                        extra_seen=confirm.seen_weekdays(ev_plain.legs, with_time=False))
+                else:
+                    patterns = weekly_pattern(sched, date_from=first, date_to=last,
+                                              searched=searched)
                 gaps = coverage_gaps(timetable)
                 self._market_last = {"kind": kind, "sched": sched, "patterns": patterns,
-                                     "timetable": timetable}
+                                     "timetable": timetable, "confirmed": confirmed}
                 payload.update({
                     "patterns": [{"route": p.route, "airline": p.airline, "flight": p.flight,
                                   "operates": p.weekday_label, "departure": p.departure,
@@ -261,6 +332,10 @@ class MarketApiMixin:
                     "dropped_no_flight": sched.dropped_no_flight,
                     "refused": dict(sched.sources_refused or {}),
                     "timetable_rows": len(timetable),
+                    # flights with a weekday seen on no searched day but searched
+                    # only once (sold out or not flying) - shown as "Fri?" etc.
+                    "unsure_patterns": sum(1 for p in patterns if p.unsure),
+                    "confirmed": confirmed,
                     # Name what the reference sheet could not fill, so it is fixable
                     # by editing config rather than silently blank forever.
                     "missing_seat_capacity": ["{} {}".format(a, t) for a, t in gaps["seats"]],
@@ -327,7 +402,8 @@ class MarketApiMixin:
             written = write_workbook(path, patterns=last.get("patterns"),
                                      sched=last.get("sched"), table=last.get("table"),
                                      best_by_route=last.get("best"),
-                                     timetable=last.get("timetable"))
+                                     timetable=last.get("timetable"),
+                                     confirmed=last.get("confirmed"))
         except OSError as exc:
             return {"ok": False, "error": "Could not write the file: {}".format(exc)}
         self._log_usage("market_export", target=last["kind"])
