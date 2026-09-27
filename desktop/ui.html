@@ -68,6 +68,12 @@
   .route-pair { display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
     padding: 3px 2px 0 8px; margin: 0 8px 6px 0; }
   .route-pair label { margin-right: 8px; }
+  /* A checkbox beside its text. The generic "label" rule stacks a label's
+     children in a column (field over caption), which put every source's
+     checkbox ABOVE its name. */
+  label.inline-check { display: inline-flex; flex-direction: row; align-items: center; gap: 5px;
+    font-size: 12.5px; color: #111827; margin-right: 14px; }
+  label.inline-check input { min-width: 0; }
   /* Progress bar - one component on every tab (see watchProgress). */
   .prog { margin-top: 10px; max-width: 760px; }
   .prog-track { height: 10px; background: #e5e7eb; border-radius: 999px; overflow: hidden; }
@@ -134,11 +140,13 @@
 <div id="routes-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto">
   <div class="card" style="max-width:820px;width:100%">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-      <strong>Preferred routes</strong>
+      <strong id="routes-title">Preferred routes</strong>
       <button class="secondary" style="padding:4px 12px" onclick="closeRoutes()">Close</button>
     </div>
-    <p class="muted" style="margin:0 0 8px">Tick the routes you compare. They are saved on this computer and
+    <p class="muted" id="routes-intro-pref" style="margin:0 0 8px">Tick the routes you compare. They are saved on this computer and
       open first in the <b>By route</b> view and Excel sheet, in the order below. Edit them any time.</p>
+    <p class="muted" id="routes-intro-pick" style="margin:0 0 8px;display:none">Tick the routes for this search,
+      or <b>Select all</b>. Many routes over many days means many searches — the estimate shows how long before anything runs.</p>
     <div style="margin-bottom:8px"><span class="muted">Your routes, in order:</span>
       <div id="routes-picked" style="margin-top:4px"></div></div>
     <div class="row" style="margin-bottom:6px">
@@ -156,9 +164,11 @@
     </div>
     <div id="routes-groups"></div>
     <div class="row" style="justify-content:flex-end;margin-top:10px">
+      <button class="secondary" onclick="selectAllRoutes()">Select all</button>
       <button class="secondary" onclick="clearPickedRoutes()">Clear all</button>
-      <button class="secondary" onclick="savePreferredRoutes(false)">Save</button>
-      <button id="save-live-btn" onclick="savePreferredRoutes(true)"
+      <button id="routes-use-btn" style="display:none" onclick="useRoutesForTab()">Use these routes</button>
+      <button class="secondary pref-only" onclick="savePreferredRoutes(false)">Save</button>
+      <button id="save-live-btn" class="pref-only" onclick="savePreferredRoutes(true)"
         title="Also put these routes in the FirstTrip B2C and ShareTrip live-search boxes">Save &amp; use for live searches</button>
     </div>
   </div>
@@ -263,6 +273,7 @@
   <section class="card" id="tab-schedule" style="display:none">
     <div class="row">
       <label>Routes <input id="sch_routes" placeholder="DAC-CGP,DAC-JED" style="width:230px"></label>
+      <button class="secondary" onclick="openRoutes('sch_routes')" title="Pick from every route, or select all">Choose routes…</button>
       <label>Preset <select id="sch_preset" onchange="applyPreset('sch')"></select></label>
       <label>From <input id="sch_from" placeholder="YYYY-MM-DD"></label>
       <label>To <input id="sch_to" placeholder="YYYY-MM-DD"></label>
@@ -282,10 +293,11 @@
   <section class="card" id="tab-fare" style="display:none">
     <div class="row">
       <label>Routes <input id="far_routes" placeholder="DAC-CGP,DAC-JED" style="width:230px"></label>
+      <button class="secondary" onclick="openRoutes('far_routes')" title="Pick from every route, or select all">Choose routes…</button>
       <label>Preset <select id="far_preset" onchange="applyPreset('far')"></select></label>
       <label>From <input id="far_from" placeholder="YYYY-MM-DD"></label>
       <label>To <input id="far_to" placeholder="YYYY-MM-DD"></label>
-      <label style="font-size:12px"><input type="checkbox" id="far_direct"> Nonstop only</label>
+      <label class="inline-check"><input type="checkbox" id="far_direct"> Nonstop only</label>
       <button class="secondary" onclick="estimateMarket('fare')">Estimate</button>
       <button class="big" id="far-run" onclick="runMarket('fare')">Compare fares</button>
       <button class="secondary" id="far-cancel" style="display:none" onclick="cancelMarket()">Cancel</button>
@@ -770,13 +782,52 @@ function renderPreferredChips() {
     : '<span class="muted">none yet — pick the routes you compare</span> ';
 }
 
-async function openRoutes() {
+// null = editing the saved preferred routes; an input id = choosing routes for
+// the Schedule/Fare tab that owns that box (nothing is saved).
+let routePickTarget = null;
+
+async function openRoutes(target) {
   const rs = await api().routes_state();
   routeCatalog = rs.catalog || {};
-  pickedRoutes = [...(rs.preferred || [])];
+  routePickTarget = typeof target === "string" ? target : null;
+  if (routePickTarget) {
+    const current = document.getElementById(routePickTarget).value;
+    pickedRoutes = [...new Set(current.toUpperCase().split(/[\s,;]+/).filter(r => /^[A-Z]{3}-[A-Z]{3}$/.test(r)))];
+  } else {
+    pickedRoutes = [...(rs.preferred || [])];
+  }
+  const picking = !!routePickTarget;
+  document.getElementById("routes-title").textContent = picking ? "Choose routes" : "Preferred routes";
+  document.getElementById("routes-intro-pref").style.display = picking ? "none" : "";
+  document.getElementById("routes-intro-pick").style.display = picking ? "" : "none";
+  document.getElementById("routes-use-btn").style.display = picking ? "" : "none";
+  document.querySelectorAll("#routes-modal .pref-only").forEach(b => {
+    b.style.display = picking ? "none" : "";
+  });
+  if (!picking) applyLiveAccess();            // "use for live searches" stays admin-only
   document.getElementById("routes-custom").value = "";
   setRouteDirection(routeDirection);          // draws the picker in the current direction
   document.getElementById("routes-modal").style.display = "flex";
+}
+
+/** Tick every route shown (all regions, in the current direction). */
+function selectAllRoutes() {
+  const shown = (drawRoutePicker.groups || []).flatMap(([, routes]) => routes);
+  pickedRoutes = [...new Set([...pickedRoutes, ...shown])];
+  drawRoutePicker();
+}
+
+/** Put the ticked routes in the Schedule/Fare tab's box (nothing is saved). */
+function useRoutesForTab() {
+  if (document.getElementById("routes-custom").value.trim()) {
+    addCustomRoutes();
+    if (document.getElementById("routes-custom").value.trim()) return;   // invalid text: fix first
+  }
+  const box = document.getElementById(routePickTarget);
+  box.value = pickedRoutes.join(",");
+  const tab = routePickTarget.startsWith("sch") ? "schedule" : "fare";
+  closeRoutes();
+  estimateMarket(tab);                        // show the cost of the selection straight away
 }
 
 function closeRoutes() { document.getElementById("routes-modal").style.display = "none"; }
@@ -868,6 +919,7 @@ async function savePreferredRoutes(useForLive) {
   if (!r.ok) { addBanner("err", r.error); return; }
   closeRoutes();
   await refreshState();                       // chips + live boxes show the saved values
+  if (marketReady) refreshMarketPresets();    // "My preferred routes" quick pick
   if (shownReport) renderReport(shownReport, lastPrevAvailable);
   addBanner("ok", r.preferred.length
     ? `Saved ${r.preferred.length} preferred route(s)` + (r.used_for_live ? " and put them in the live-search boxes." : ".")
@@ -994,15 +1046,53 @@ function applyTab() {
     b.classList.toggle("active", b.dataset.tab === currentTab);
 }
 
+/** Preset list for the Schedule/Fare tabs: the configured groups, then quick picks
+ *  built from the route catalogue - preferred routes and ALL routes. */
+async function marketPresets(configured) {
+  let catalog = {}, preferred = [];
+  try {
+    const rs = await api().routes_state();
+    catalog = rs.catalog || {};
+    preferred = rs.preferred || [];
+  } catch (e) { /* older backend: configured presets only */ }
+  const out = { ...(configured || {}) };
+  const all = [...new Set(Object.values(catalog).flat())];
+  if (preferred.length) out[`★ My preferred routes (${preferred.length})`] = preferred;
+  if (all.length) {
+    const back = all.map(reverseRoute);
+    out[`All routes — from Bangladesh (${all.length})`] = all;
+    out[`All routes — to Bangladesh (${back.length})`] = back;
+    out[`All routes — both ways (${all.length * 2})`] = all.flatMap((r, i) => [r, back[i]]);
+  }
+  return out;
+}
+
+/** Rebuild only the Preset lists (leaves the ticked sources alone). */
+async function refreshMarketPresets() {
+  const st = await api().market_state();
+  const presets = await marketPresets(st.presets);
+  for (const p of ["sch", "far"]) {
+    const sel = document.getElementById(p + "_preset");
+    const keep = sel.value;
+    sel.innerHTML = `<option value="">— preset —</option>` +
+      Object.keys(presets).map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join("");
+    sel.dataset.presets = JSON.stringify(presets);
+    if (presets[keep]) sel.value = keep;
+  }
+}
+
 async function initMarket() {
   const st = await api().market_state();
   marketSources = st.sources || [];
+  const presets = await marketPresets(st.presets);
   const iso = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
   for (const p of ["sch", "far"]) {
     const sel = document.getElementById(p + "_preset");
+    const keep = sel.value;
     sel.innerHTML = `<option value="">— preset —</option>` +
-      Object.keys(st.presets || {}).map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join("");
-    sel.dataset.presets = JSON.stringify(st.presets || {});
+      Object.keys(presets).map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join("");
+    sel.dataset.presets = JSON.stringify(presets);
+    if (presets[keep]) sel.value = keep;
     // A source that cannot answer THIS view is disabled with the reason, rather
     // than silently returning nothing after a long run.
     const want = p === "sch" ? "can_schedule" : "can_fare";
@@ -1015,7 +1105,7 @@ async function initMarket() {
       const why = !s.available ? (s.note || "not installed on this machine")
                 : (!s[want] ? "cannot answer this view" : (s.note || ""));
       const off = !s.available || !s[want];
-      return `<label style="font-size:12px;margin-right:12px" title="${esc(why)}">
+      return `<label class="inline-check" title="${esc(why)}">
         <input type="checkbox" class="${p}-src" value="${esc(s.key)}"
           ${off ? "disabled" : (s.key === defaultKey ? "checked" : "")}>
         ${esc(s.label)}${off ? ` <span class="muted">(${esc(why)})</span>` : ""}</label>`;
@@ -1036,7 +1126,10 @@ async function initMarket() {
 function applyPreset(p) {
   const sel = document.getElementById(p + "_preset");
   const routes = (JSON.parse(sel.dataset.presets || "{}"))[sel.value] || [];
-  if (routes.length) document.getElementById(p + "_routes").value = routes.join(",");
+  if (routes.length) {
+    document.getElementById(p + "_routes").value = routes.join(",");
+    estimateMarket(p === "sch" ? "schedule" : "fare");   // a big pick shows its cost at once
+  }
 }
 
 function marketArgs(kind) {
@@ -1049,11 +1142,14 @@ function marketArgs(kind) {
           p === "far" && document.getElementById("far_direct").checked];
 }
 
+const lastEstimate = {};
+
 async function estimateMarket(kind) {
   const p = kind === "schedule" ? "sch" : "far";
   const a = marketArgs(kind);
   const r = await api().market_estimate(a[0], a[1], a[2], a[3], a[4], a[5]);
   const box = document.getElementById(p + "_estimate");
+  lastEstimate[kind] = r.ok ? r : null;
   if (!r.ok) { box.textContent = r.error; return false; }
   if (r.har_only) {
     const a2 = marketArgs(kind);
@@ -1066,9 +1162,21 @@ async function estimateMarket(kind) {
   return true;
 }
 
+//: A live run longer than this asks first: "all routes" x 30 days is thousands of
+//: searches - hours of work, and exactly the volume that gets a site to throttle.
+const BIG_RUN_MINUTES = 15;
+
 async function runMarket(kind) {
   const p = kind === "schedule" ? "sch" : "far";
   if (!await estimateMarket(kind)) return;     // validation errors surface first
+  const est = lastEstimate[kind];
+  if (est && !est.har_only && est.to_fetch > 0) {
+    const minutes = Math.round((est.est_seconds || 0) / 60);
+    if (minutes > BIG_RUN_MINUTES && !confirm(
+        `This makes about ${est.to_fetch} live searches (${est.cached} already cached) and takes ` +
+        `about ${minutes} minutes. Sites may slow or block you on runs this large.\n\n` +
+        `Continue? (Fewer routes or a shorter date range is quicker.)`)) return;
+  }
   document.getElementById(p + "-run").disabled = true;
   document.getElementById(p + "-cancel").style.display = "";
   const a = marketArgs(kind);
