@@ -79,9 +79,10 @@ def _firsttrip_b2c(table: RouteTable, rows_by_route, fees: dict[str, Any]) -> No
     by_od: dict[Route, dict] = {}
     for (o, d, when), rows in (rows_by_route or {}).items():
         by_od.setdefault((o.upper(), d.upper()), {})[(o, d, when)] = rows
+    catalog = g._recall("ft_catalog", "all")       # payment-page coupon list, if captured
     for route, subset in by_od.items():
         _put(table, "Firsttrip-B2C", route,
-             g._collect_firsttrip_b2c_rows(subset, fees.get("common"), fees.get("card")))
+             g._collect_firsttrip_b2c_rows(subset, fees.get("common"), fees.get("card"), catalog))
 
 
 def _sharetrip(table: RouteTable, hars) -> None:

@@ -204,8 +204,33 @@ def ft_tier(code: str, airline: str, *, special_slot: bool = False) -> tuple[str
     return UNCLEAR, "Not a known card or wallet code: check the offer on FirstTrip"
 
 
-def firsttrip_b2c(rows_by_route: Optional[dict], fees: Optional[dict]) -> list[dict[str, Any]]:
+def _ft_coupon_obs(where: dict[str, Any], c: dict[str, Any], w: dict[str, Any],
+                   fees: dict[str, Any]) -> dict[str, Any]:
+    """One catalogue coupon on one fare."""
+    fo = g.firsttrip_offers
+    tier, who = fo.audience(c)
+    tier = COMMON if tier == "common" else SPECIAL
+    rate = w["rate"]
+    flat = rate["type"] == "F"
+    return _obs(**where, tier=tier, code=c["code"], who=who,
+                published=None if flat else rate["value"], effective=w["pct"], cap=rate["cap"],
+                stacks=c["stacks_with_dynamic"],
+                fee=fees.get("common" if tier == COMMON else "card"),
+                title=(f"Flat BDT {rate['value']:,.0f} off. " if flat else "")
+                + (c["description"] or c["title"]))
+
+
+def firsttrip_b2c(rows_by_route: Optional[dict], fees: Optional[dict],
+                  catalog: Optional[dict] = None) -> list[dict[str, Any]]:
+    """Every FirstTrip option per fare: the dynamic discount, the search's auto-applied
+    coupon, and (when the payment-page offer list was captured) every coupon that
+    applies to the fare. Catalogue coupons that matched no fare seen are listed per
+    airline from their rate table; telco perks without a rate are shown as such."""
     fees = fees or {}
+    catalog = catalog or {}
+    coupons = catalog.get("coupons") or []
+    in_catalog = {c["code"] for c in coupons}
+    used: set = set()
     out: list[dict[str, Any]] = []
     for rows in (rows_by_route or {}).values():
         for r in rows:
@@ -219,19 +244,67 @@ def firsttrip_b2c(rows_by_route: Optional[dict], fees: Optional[dict]) -> list[d
             if (r.get("dynamic_rate") or 0) > 0:
                 out.append(_obs(**where, tier=COMMON, code=r.get("dynamic_code") or NO_CODE,
                                 who="Anyone (automatic)", published=r["dynamic_rate"],
-                                effective=r["dynamic_rate"], fee=fees.get("common")))
+                                effective=g.firsttrip_offers.dynamic_pct(r), fee=fees.get("common")))
+            for c in coupons:
+                w = g.firsttrip_offers.worth(c, airline, r.get("origin") or "", r.get("destination") or "", base)
+                if w:
+                    used.add((c["code"], airline, _route(r)))
+                    out.append(_ft_coupon_obs(where, c, w, fees))
             code, rate = r.get("coupon_code") or "", float(r.get("headline_rate") or 0)
-            if rate > 0:
+            if rate > 0 and code not in in_catalog:
                 tier, who = ft_tier(code, airline)
-                out.append(_obs(**where, tier=tier, code=code or NO_CODE, who=who, published=rate,
-                                effective=_ft_effective(rate, base, r.get("coupon_cap_bdt")),
-                                cap=r.get("coupon_cap_bdt"), fee=fee_for.get(tier)))
+                flat = r.get("coupon_type") == "F"
+                out.append(_obs(**where, tier=tier, code=code or NO_CODE, who=who,
+                                published=None if flat else rate,
+                                effective=rate if flat else _ft_effective(rate, base, r.get("coupon_cap_bdt")),
+                                cap=r.get("coupon_cap_bdt"), fee=fee_for.get(tier),
+                                title=f"Flat BDT {r['coupon_flat_bdt']:,.0f} off" if flat and r.get("coupon_flat_bdt") else ""))
             slot, slot_rate = r.get("special_code") or "", float(r.get("special_rate") or 0)
-            if slot_rate > 0 and slot != code:
+            if slot_rate > 0 and slot != code and slot not in in_catalog:
                 tier, who = ft_tier(slot, airline, special_slot=True)
                 out.append(_obs(**where, tier=tier, code=slot or NO_CODE, who=who,
                                 published=slot_rate, effective=slot_rate, fee=fee_for.get(tier)))
+    out += _ft_rate_table_obs(coupons, used, fees)
+    out += _ft_perk_obs(catalog.get("perks") or {})
     return out
+
+
+def _ft_rate_table_obs(coupons: list[dict[str, Any]], used: set,
+                       fees: dict[str, Any]) -> list[dict[str, Any]]:
+    """Coupon rates from the offer list for airline/routes with no fare in this run: the
+    coupon's rate table still says what each gets (one row per table entry)."""
+    out = []
+    fo = g.firsttrip_offers
+    for c in coupons:
+        tier, who = fo.audience(c)
+        for d in c["config"]:
+            route = f"{d['origin']}-{d['destination']}" if d["origin"] and d["destination"] else ALL_ROUTES
+            seen_airline = any(u[0] == c["code"] and u[1] == d["airline"] for u in used)
+            if not d["airline"] or (c["code"], d["airline"], route) in used \
+                    or (route == ALL_ROUTES and seen_airline):
+                continue
+            flat = d["type"] == "F"
+            out.append(_obs(market=c["market"], route=route, ota="Firsttrip-B2C", airline=d["airline"],
+                            tier=COMMON if tier == "common" else SPECIAL, code=c["code"], who=who,
+                            published=None if flat else d["value"], effective=None, basis=BASE,
+                            cap=d["cap"] or c["cap"], stacks=c["stacks_with_dynamic"],
+                            fee=fees.get("common" if tier == "common" else "card"),
+                            title=("Rate from FirstTrip's coupon table (no fare searched). "
+                                   + (f"Flat BDT {d['value']:,.0f} off. " if flat else "")
+                                   + (c["description"] or ""))))
+    return out
+
+
+def _ft_perk_obs(perks: dict[str, list[str]]) -> list[dict[str, Any]]:
+    """FirstTrip's telco perks: the partners are listed for the fare, but the rate only
+    appears after the customer picks an operator and verifies the number."""
+    return [_obs(market=market, route=ALL_ROUTES, ota="Firsttrip-B2C", airline="All",
+                 tier=NOT_CAPTURED, code="(telco perk)", who=f"{' / '.join(names)} customers",
+                 published=None, effective=None, basis=BASE,
+                 title="FirstTrip offers telco perks on this fare. The rate shows only after "
+                       "choosing the operator and verifying the phone number on the payment "
+                       "page; capture that step to get it.")
+            for market, names in perks.items() if names]
 
 
 # --- merge + entry point ------------------------------------------------------------
@@ -362,7 +435,8 @@ def collect(*, sharetrip_hars=None, gozayaan_hars=None, b2c_rows_by_route=None,
     observations: list[dict[str, Any]] = []
     steps = [("ShareTrip", lambda: sharetrip(sharetrip_hars)),
              ("GoZayaan", lambda: gozayaan(gozayaan_hars)),
-             ("FirstTrip B2C", lambda: firsttrip_b2c(b2c_rows_by_route, b2c_fees))]
+             ("FirstTrip B2C", lambda: firsttrip_b2c(b2c_rows_by_route, b2c_fees,
+                                                     g._recall("ft_catalog", "all")))]
     for name, step in steps:
         try:
             observations += step()

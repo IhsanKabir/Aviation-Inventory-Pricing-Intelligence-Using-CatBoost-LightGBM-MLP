@@ -317,6 +317,17 @@ def json_safe_loads(text: str) -> Any:
     return json.loads(text)
 
 
+def b2c_headers() -> Dict[str, str]:
+    """Headers the FirstTrip website sends to b2c-api (search and payment-page calls)."""
+    sxsrf = _get_sxsrf()
+    return {
+        "Content-Type": "application/json", "User-Agent": USER_AGENT,
+        "Origin": "https://firsttrip.com", "Referer": "https://firsttrip.com/",
+        "Accept": "application/json, text/event-stream", "platformtypeid": "1",
+        **({} if not sxsrf else {"sxsrf": sxsrf}),
+    }
+
+
 def _raw_offers(origin: str, destination: str, date: str, cabin: str = "Economy",
                 promo: str = "", timeout: int = 90) -> List[Dict[str, Any]]:
     """
@@ -333,14 +344,7 @@ def _raw_offers(origin: str, destination: str, date: str, cabin: str = "Economy"
         "preferredCarriers": [], "prohibitedCarriers": [], "childrenAges": [],
         "promoCode": promo, "fareType": 1, "isComboFare": False,
     }
-    sxsrf = _get_sxsrf()
-    headers = {
-        "Content-Type": "application/json", "User-Agent": USER_AGENT,
-        "Origin": "https://firsttrip.com", "Referer": "https://firsttrip.com/",
-        "Accept": "application/json, text/event-stream", "platformtypeid": "1",
-        **({} if not sxsrf else {"sxsrf": sxsrf}),
-    }
-    resp = requests.post(API_SEARCH, json=payload, headers=headers,
+    resp = requests.post(API_SEARCH, json=payload, headers=b2c_headers(),
                          timeout=timeout, stream=True)
     _update_sxsrf(resp)
     if resp.status_code != 200:
@@ -378,6 +382,35 @@ def fetch_b2c_discounts(origin: str, destination: str, date: str,
                                  cabin, airline_code)
 
 
+def _coupon_pct(offer: Dict[str, Any], base_fare: float) -> float:
+    """The auto-applied coupon as % of the base fare: a percent coupon's rate as-is; a
+    FLAT one (type 'F') as its BDT amount, capped, over the base fare."""
+    rate = float(offer.get("couponDiscountRate") or 0)
+    if str(offer.get("couponDiscountType") or "").upper() != "F":
+        return rate
+    amount = float(offer.get("couponDiscountValue") or rate)
+    cap = float(offer.get("couponMaximumDiscountAmount") or 0)
+    amount = min(amount, cap) if cap else amount
+    return round(amount / base_fare * 100, 2) if base_fare > 0 else 0.0
+
+
+def _offer_request(offer: Dict[str, Any], base_fare: float) -> Optional[Dict[str, Any]]:
+    """The GetOfferList body the payment page sends for this fare (live catalogue)."""
+    try:
+        seg = offer["directions"][0][0]["segments"][0]
+    except (KeyError, IndexError, TypeError):
+        return None
+    return {"departureDate": str(seg.get("departureTime") or "")[:19],
+            "flightType": int(offer.get("flightTypeId") or 0) or None,
+            "supplierId": offer.get("supplierId"),
+            "airlineCode": str(offer.get("marketingCarrierCode") or "").upper(),
+            "departureAirportCode": seg.get("originAirportCode"),
+            "arrivalAirportCode": (offer["directions"][0][0]["segments"][-1].get("destinationAirportCode")),
+            "tripTypeId": int(offer.get("tripTypeId") or 1), "cabinClassId": CABIN_MAP.get(
+                str(seg.get("cabinClass") or "economy").lower().replace(" ", "_"), 1),
+            "rbd": seg.get("rbd"), "minimumSalesAmount": round(base_fare)}
+
+
 def _b2c_rows_from_offers(offers: List[Dict[str, Any]], cabin: str = "Economy",
                           airline_code: Optional[str] = None) -> List[Dict[str, Any]]:
     """Offer dicts -> B2C discount rows. Shared by the LIVE fetch and the HAR
@@ -392,6 +425,7 @@ def _b2c_rows_from_offers(offers: List[Dict[str, Any]], cabin: str = "Economy",
         if gross <= 0:
             continue
         coupon_amt = float(o.get("totalCouponAmount") or 0)
+        base_fare = float(o.get("finalBasePrice") or base.get("fare_amount") or 0)
         rows.append({
             "channel": "firsttrip",
             "persona": "B2C",
@@ -401,10 +435,18 @@ def _b2c_rows_from_offers(offers: List[Dict[str, Any]], cabin: str = "Economy",
             "departure": base["departure"],
             "flight_number": base["flight_number"],
             "gross_total_bdt": round(gross),
-            "base_fare_bdt": round(float(o.get("finalBasePrice") or base.get("fare_amount") or 0)),
+            "base_fare_bdt": round(base_fare),
             "coupon_code": o.get("couponCode") or "",
-            "headline_rate": float(o.get("couponDiscountRate") or 0),
+            # a FLAT coupon (type 'F', e.g. FTCITYAMEX 4,500-10,000 BDT) carries its BDT
+            # amount in couponDiscountRate; it is converted to % of base here (the old
+            # "10000%" cells were that amount read as a percent)
+            "headline_rate": _coupon_pct(o, base_fare),
+            "coupon_type": "F" if str(o.get("couponDiscountType") or "").upper() == "F" else "P",
+            "coupon_flat_bdt": (float(o.get("couponDiscountValue") or o.get("couponDiscountRate") or 0)
+                                if str(o.get("couponDiscountType") or "").upper() == "F" else None),
             "coupon_cap_bdt": float(o.get("couponMaximumDiscountAmount") or 0) or None,
+            "dynamic_amount_bdt": float(o.get("dynamicDiscountAmount") or 0) or None,
+            "offer_request": _offer_request(o, base_fare),
             "coupon_amount_bdt": round(coupon_amt),
             "price_with_coupon_bdt": round(float(o.get("finalTotalPriceWithCoupon") or 0)) or None,
             "realized_pct": round(coupon_amt / gross * 100, 2) if gross else 0.0,
@@ -454,18 +496,28 @@ _FT_CARD_LABELS = {"EBL": "EBL", "CITY": "City Bank", "DBBL": "DBBL", "BRAC": "B
                    "NRB": "NRB", "NRBC": "NRBC", "SEBL": "Southeast Bank", "DHAKA": "Dhaka Bank",
                    "ONE": "One Bank", "HSBC": "HSBC", "JAMUNA": "Jamuna Bank",
                    "PUBALI": "Pubali Bank", "ROBI": "Robi", "ORANGE": "Orange Club",
-                   "STAR": "GPStar"}
+                   "STAR": "GPStar", "CITYAMEX": "City Bank AMEX"}
 # Wallet cores: anyone paying with that wallet gets it, so these are NOT card specials.
 _FT_WALLET_LABELS = {"BKASH": "bKash", "NAGAD": "Nagad", "UPAY": "Upay", "ROCKET": "Rocket"}
 
 
 def _ft_coupon_core(code: Optional[str]) -> str:
-    """Bare brand core of a FirstTrip coupon code (FTEBLDOM07 -> 'EBL', FTCITYDOM -> 'CITY')."""
+    """Bare brand core of a FirstTrip coupon code (FTEBLDOM07 -> 'EBL', FTCITYDOM -> 'CITY',
+    FT-Nagad -> 'NAGAD', FTIN-bKash -> 'BKASH', FTCITYAMEX -> 'CITYAMEX')."""
     if not code:
         return ""
-    core = re.sub(r"^FT", "", str(code).upper())
+    flat = re.sub(r"[^A-Z0-9]", "", str(code).upper())       # FT-Nagad -> FTNAGAD
+    core = re.sub(r"^FT", "", flat)
     core = re.sub(r"(DOM|INT|INTL|OW|RT).*$", "", core)
-    return re.sub(r"\d+$", "", core).strip()
+    core = re.sub(r"\d+$", "", core).strip()
+    if core in _FT_CARD_LABELS or core in _FT_WALLET_LABELS:
+        return core
+    # a known brand inside a longer code (FTINBKASH): longest first, 4+ letters only so
+    # short cores (GP, ONE) never match by accident
+    for key in sorted((*_FT_CARD_LABELS, *_FT_WALLET_LABELS), key=len, reverse=True):
+        if len(key) >= 4 and key in flat:
+            return key
+    return core
 
 
 def _ft_coupon_label(code: Optional[str]) -> str:

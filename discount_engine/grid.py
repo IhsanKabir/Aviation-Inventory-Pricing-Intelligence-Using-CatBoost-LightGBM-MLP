@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from modules import firsttrip, gozayaan_har, amyweb, sharetrip_har, akijair_har, bdfare_har
+from modules import firsttrip, firsttrip_offers, gozayaan_har, amyweb, sharetrip_har, akijair_har, bdfare_har
 
 from .highlight import (
     BEST_SHORT,
@@ -129,25 +129,51 @@ def _firsttrip_b2c_cell(cell: dict[str, Any], common_fee: Optional[float],
     """Two-tier FT B2C cell like ShareTrip/GoZayaan: the common discount anyone gets
     (with its convenience fee), then the higher card/loyalty coupon (with the card fee)."""
     common_rate = cell.get("common_rate", cell.get("rate", 0))
-    common_note = f"({_fmt(common_fee)}% fee)" if (common_fee and common_rate) else ""
+    # a coupon that beat the dynamic discount for everyone is named (FTINT26 15%)
+    parts = [cell["common_code"]] if cell.get("common_from_coupon") and cell.get("common_code") else []
+    if cell.get("common_capped"):
+        parts.append("capped")
+    if common_fee and common_rate:
+        parts.append(f"{_fmt(common_fee)}% fee")
+    common_note = f"({', '.join(parts)})" if parts and common_rate else ""
     text = _fmt(common_rate) + common_note
     special = cell.get("special_rate")
     if special:
         label = cell.get("special_label") or cell.get("special_code") or "card"
+        cap = ", capped" if cell.get("special_capped") else ""
         card_note = f", {_fmt(card_fee)}% fee" if card_fee else ""
-        text += f", {_fmt(special)} ({label}{card_note})"
+        text += f", {_fmt(special)} ({label}{cap}{card_note})"
     return text
+
+
+def _ft_classify(code: str, airline: str) -> tuple[str, str]:
+    """A FirstTrip coupon NOT in the offer list, judged by its code: a wallet offer is
+    common, anything else stays special (as before the offer list was read)."""
+    core = firsttrip._ft_coupon_core(code)
+    if core in firsttrip._FT_WALLET_LABELS:
+        return "common", f"{firsttrip._FT_WALLET_LABELS[core]} payment"
+    return "special", firsttrip._ft_coupon_label(code)
+
+
+def _ft_summary(rows: list[dict[str, Any]], catalog: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """FT B2C cells per airline: with the payment-page offer list, every coupon is judged
+    (firsttrip_offers.summarize); without it, the search's auto-applied coupon only."""
+    if catalog and catalog.get("coupons"):
+        return firsttrip_offers.summarize(rows, catalog, classify_code=_ft_classify,
+                                          label_of=firsttrip._ft_coupon_label)
+    return firsttrip.summarize_b2c_discounts(rows)
 
 
 def _collect_firsttrip_b2c_rows(
         rows_by_route: dict[tuple[str, str, str], list[dict[str, Any]]],
         common_fee: Optional[float] = None, card_fee: Optional[float] = None,
+        catalog: Optional[dict[str, Any]] = None,
         ) -> dict[tuple[str, str], str]:
     cells: dict[tuple[str, str], str] = {}
     best_rank: dict[tuple[str, str], float] = {}
     for (origin, destination, _date), rows in rows_by_route.items():
         rt = _route_type(origin, destination)
-        summary = firsttrip.summarize_b2c_discounts(rows)
+        summary = _ft_summary(rows, catalog)
         for airline, cell in summary.items():
             key = (rt, airline)
             text = _firsttrip_b2c_cell(cell, common_fee, card_fee)
@@ -159,6 +185,29 @@ def _collect_firsttrip_b2c_rows(
                 cells[key] = text
                 best_rank[key] = rank
     return cells
+
+
+def _firsttrip_catalog(b2c_hars: Optional[list[str]],
+                       live_rows_by_route: Optional[dict] = None) -> dict[str, Any]:
+    """FirstTrip's full coupon list (payment-page GetOfferList): from every FT B2C HAR,
+    plus one live call per (market, airline) when this run searched FirstTrip live."""
+    catalogs = []
+    for h in b2c_hars or []:
+        try:
+            catalogs.append(firsttrip_offers.parse_har(h))
+        except Exception as exc:  # noqa: BLE001 — the extra coupons are lost, nothing else
+            print(f"  ! FT B2C offer list {Path(h).name} skipped: {exc}")
+    if live_rows_by_route:
+        try:
+            fares = [r for rows in live_rows_by_route.values() for r in rows]
+            catalogs.append(firsttrip_offers.fetch_catalog(fares, firsttrip.b2c_headers()))
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ! FT B2C live offer list failed: {exc}")
+    catalog = firsttrip_offers.merge_catalogs(catalogs)
+    if catalog["coupons"]:
+        print(f"  FT B2C offer list: {len(catalog['coupons'])} coupon(s): "
+              + ", ".join(c["code"] for c in catalog["coupons"]))
+    return catalog
 
 
 def collect_firsttrip_b2c(routes: list[tuple[str, str, Optional[str]]],
@@ -725,6 +774,8 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
         lambda h: _collect_amy_rows(amy_rows_by_path[h])
         if h in amy_rows_by_path else collect_amy(h), "HAR")
 
+    ft_catalog = _firsttrip_catalog(firsttrip_b2c_hars, b2c_rows_by_route if routes else None)
+    _remember("ft_catalog", "all", ft_catalog)
     b2c_fees: dict[str, Any] = {}
     if routes or b2c_rows_by_route:
         # FT B2C convenience fee (payment-step, gateway-dependent) from the captured FT
@@ -736,7 +787,7 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
         fees = firsttrip.b2c_gateway_fees(gws)
         b2c_fees = fees
         channel_cells["Firsttrip-B2C"] = _collect_firsttrip_b2c_rows(
-            b2c_rows_by_route, fees.get("common"), fees.get("card"))
+            b2c_rows_by_route, fees.get("common"), fees.get("card"), ft_catalog)
         parts = []
         if routes:
             parts.append(f"live: {len(routes)} route(s)")
@@ -1473,20 +1524,29 @@ FILENAME_HINTS: list[tuple[str, str]] = [
 
 
 def detect_channel(har_path: Path) -> Optional[str]:
-    """Identify a HAR's channel by filename first, then by sniffing the head."""
+    """Identify a HAR's channel by filename first, then by sniffing its content in
+    _SNIFF_BYTES chunks (constant memory). A browser export of a whole site can open
+    with megabytes of videos and scripts before the first API call (a FirstTrip
+    payment-page capture did), so the scan goes past the head when it has to."""
     name = har_path.name.lower()
     for channel, hint in FILENAME_HINTS:
         if hint in name:
             return channel
+    overlap = max(len(n) for _c, n in HAR_SIGNATURES)
+    tail = ""
     try:
         with open(har_path, encoding="utf-8", errors="ignore") as f:
-            text = f.read(_SNIFF_BYTES)
+            while True:
+                chunk = f.read(_SNIFF_BYTES)
+                if not chunk:
+                    return None
+                text = tail + chunk
+                for channel, needle in HAR_SIGNATURES:
+                    if needle in text:
+                        return channel
+                tail = text[-overlap:]
     except OSError:
         return None
-    for channel, needle in HAR_SIGNATURES:
-        if needle in text:
-            return channel
-    return None
 
 
 def auto_detect_hars(har_dir: Path) -> dict[str, list[str]]:
