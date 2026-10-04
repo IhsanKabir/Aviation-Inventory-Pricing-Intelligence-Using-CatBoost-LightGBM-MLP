@@ -287,8 +287,10 @@ def _sharetrip_cell_text(c: dict[str, Any]) -> str:
 
     wallet = ""
     if c.get("common_code"):
-        name = "Nagad" if "nagad" in str(c["common_code"]).lower() else "Bkash"
-        wallet = f"({name}{_fee(c.get('common_fee_pct'))})"
+        # a telco code (GPStar) carries its label; a wallet keeps the Bkash/Nagad name
+        name = c.get("common_label") or ("Nagad" if "nagad" in str(c["common_code"]).lower() else "Bkash")
+        cap = ", capped" if c.get("common_capped") else ""
+        wallet = f"({name}{cap}{_fee(c.get('common_fee_pct'))})"
     text = _fmt(c["common_pct"]) + wallet
     if c.get("special_pct") is not None:
         cap = ", capped" if c.get("special_capped") else ""

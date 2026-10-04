@@ -218,6 +218,7 @@ def test_all_codes_lists_every_firsttrip_coupon_rate_table_and_telco_gap(catalog
     table = [e for e in all_codes.merge(out) if e["airline"] == "EK"]
     assert {(e["route"], e["code"], e["published_pct"]) for e in table} == \
         {("DAC-DXB", "FTINT26", 9.0), ("DAC-JED", "FTINT26", 8.1)}     # from the coupon's table
+    assert {e["tier"] for e in table} == {"Not searched"}       # never passed off as a searched fare
     perk = [e for e in all_codes.merge(out) if e["code"] == "(telco perk)"]
     assert perk and perk[0]["tier"] == "Not captured" and "Gp / Robi" in perk[0]["who"]
 

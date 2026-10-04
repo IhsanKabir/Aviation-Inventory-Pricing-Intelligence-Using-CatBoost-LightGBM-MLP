@@ -276,9 +276,9 @@
       <select id="cf-ota" onchange="drawDiscounts()" title="OTA"></select>
       <select id="cf-airline" onchange="drawDiscounts()" title="Airline"></select>
       <select id="cf-tier" onchange="drawDiscounts()" title="Common = anyone; Special = needs a card or membership">
-        <option value="">Every discount (not 0% codes)</option><option>Common</option><option>Special</option>
-        <option>Unclear</option><option>Not captured</option><option>No discount</option>
-        <option value="__all__">Everything, incl. 0% codes</option></select>
+        <option value="">Every discount on searched fares</option><option>Common</option><option>Special</option>
+        <option>Unclear</option><option>Not captured</option><option>Not searched</option><option>No discount</option>
+        <option value="__all__">Everything, incl. not searched and 0% codes</option></select>
       <input id="cf-text" placeholder="Find a code or card, e.g. AMEX" oninput="drawDiscounts()" style="min-width:220px">
     </div>
     <div id="grids"></div>
@@ -1016,7 +1016,10 @@ function drawDiscounts() {
 const CODES_SHOWN_MAX = 600;
 let allCodes = null;                 // fetched from the backend when the view first opens
 const TIER_STYLE = { "Common": "hl-highest", "Special": "hl-second", "Not captured": "hl-changed",
-                     "Unclear": "tier-unclear", "No discount": "tier-zero" };
+                     "Unclear": "tier-unclear", "No discount": "tier-zero", "Not searched": "tier-zero" };
+// shown only when picked: 0% payment options, and coupon-table rates for routes this
+// run didn't search (they'd make an unsearched route look fully covered)
+const HIDDEN_TIERS = ["No discount", "Not searched"];
 
 function fillCodeFilters(codes) {
   const pref = (state && state.preferred_routes) || [];
@@ -1041,7 +1044,7 @@ function filteredCodes(codes) {
   return codes.filter(c =>
     (!route || (route === "__preferred__" ? pref.has(c.route) : c.route === route)) &&
     (!ota || c.ota === ota) && (!airline || c.airline === airline) &&
-    (tier === "__all__" || (tier ? c.tier === tier : c.tier !== "No discount")) &&
+    (tier === "__all__" || (tier ? c.tier === tier : !HIDDEN_TIERS.includes(c.tier))) &&
     (!text || `${c.code} ${c.who} ${c.title}`.toLowerCase().includes(text)));
 }
 
@@ -1063,7 +1066,12 @@ function codesTable(codes) {
   const more = rows.length > CODES_SHOWN_MAX
     ? `<p class="muted">Showing ${CODES_SHOWN_MAX} of ${rows.length} — pick a route, OTA or airline to narrow it. The Excel export has every row.</p>` : "";
   const gaps = rows.filter(c => c.tier === "Not captured").length;
-  const note = `<p class="muted" style="margin:0 0 8px">${rows.length} code(s). <b>Common</b> = anyone gets it;
+  const unsearched = document.getElementById("cf-tier").value ? 0
+    : codes.filter(c => c.tier === "Not searched").length;
+  const note = `<p class="muted" style="margin:0 0 8px">${rows.length} code(s)${unsearched
+      ? ` · ${unsearched} coupon-table rate(s) for routes not searched are hidden (pick <b>Not searched</b>):
+         those routes' automatic discount and other offers only show once they're searched` : ""}.
+    <b>Common</b> = anyone gets it;
     <b>Special</b> = needs that card, bank or membership; <b>Not captured</b> = ShareTrip's coupons differ by airline
     and this airline's booking page wasn't captured${gaps ? ` (${gaps} here)` : ""}. <b>Effective</b> = what it was worth
     at the fares seen, caps applied (a range when fares differed), including the automatic discount when the code goes

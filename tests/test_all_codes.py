@@ -353,3 +353,57 @@ def test_gozayaan_flat_campaign_is_bdt_off_the_booking():
                          kind="FLAT", amount=2000)]})
     assert (row["discount_type"], row["flat_bdt"], row["realized_pct"], row["eligibility_scope"]) == \
         ("FLAT", 2000, 5.0, "specific")
+
+
+# --- ShareTrip telco codes: no verification, so open to anyone (common) ---------------
+
+_TELCO = {"couponCode": "FLYGPSTAR", "title": "Exclusive for GPStar Customers!", "category": "Loyalty",
+          "operatorLogo": "https://x/gp.png", "discount": 1, "discountType": "Percentage",
+          "maximumDiscountAmount": 5000, "withDiscount": "Yes"}
+_STELLAR = {"couponCode": "STLRSIQ326", "title": "Up to BDT 6,000 Savings with Stellar Signature",
+            "category": "General", "discount": 18, "discountType": "Percentage",
+            "maximumDiscountAmount": 6000, "withDiscount": "No"}
+_BKASH = {"couponCode": "bKASHDOM26", "title": "Exclusive for bKash Users", "category": "General",
+          "discount": 2, "discountType": "Percentage", "maximumDiscountAmount": 0, "withDiscount": "Yes"}
+
+
+def test_sharetrip_telco_code_lifts_the_common_rate():
+    # BS DAC-DXB: automatic 8.5% + FLYGPSTAR 1% on top = 9.5% for anyone (no verification)
+    cell = sharetrip_har.judge_cell(8.5, 25968, [_TELCO, _STELLAR])
+    assert (cell["common_pct"], cell["common_code"], cell["common_label"]) == (9.5, "FLYGPSTAR", "GPStar")
+    assert cell["special_code"] == "STLRSIQ326"              # the telco code is no longer a "special"
+    assert grid._sharetrip_cell_text(cell) == "9.5(GPStar), 18 (Stellar Signature)"
+
+
+def test_sharetrip_wallet_still_wins_when_it_gives_more():
+    cell = sharetrip_har.judge_cell(7.0, 5000, [_TELCO, _BKASH])
+    assert (cell["common_pct"], cell["common_code"]) == (9.0, "bKASHDOM26")   # 7 + 2 bKash > 7 + 1 GP
+    assert grid._sharetrip_cell_text(cell) == "9(Bkash)"
+    assert cell["special_code"] is None                       # both open offers sit in common
+
+
+def test_sharetrip_telco_code_is_common_in_all_codes(memo):
+    row = {"channel": "sharetrip", "airline": "BS", "flight_type": "INTL", "coupon_terms": [_TELCO, _STELLAR],
+           "origin": "DAC", "destination": "DXB", "departure_date": "2026-10-31"}
+    row.update(sharetrip_har.judge_cell(8.5, 25968, [_TELCO, _STELLAR]))
+    memo._remember("sharetrip_routed", "st.har", ([row], []))
+    out = all_codes.collect(sharetrip_hars=["st.har"])
+    gp = _codes(out, code="FLYGPSTAR")[0]
+    assert (gp["tier"], gp["who"], gp["effective"]) == \
+        ("Common", "Anyone entering the GPStar code (not verified)", "9.5")
+    assert _codes(out, code="STLRSIQ326")[0]["tier"] == "Special"
+
+
+def test_sharetrip_telco_common_rate_is_the_published_rate_when_uncapped():
+    # 8.5% of 26,377 floors to 2,242 and 1% to 263: 9.49% by amounts, 9.5 published
+    cell = sharetrip_har.judge_cell(8.5, 26377, [_TELCO])
+    assert cell["common_pct"] == 9.5
+
+
+def test_sharetrip_special_keeps_its_own_gateway_fee():
+    stellar_cheap = {**sharetrip_har.judge_cell(9, 40000, [_STELLAR]), "airline": "SV", "flight_type": "INTL",
+                     "common_pct": 9.0}
+    other = {**stellar_cheap, "common_pct": 10.0, "special_pct": 5.0, "special_fee_pct": 1.5}
+    stellar_cheap["special_fee_pct"] = 2.0
+    cell = sharetrip_har.summarize_details([other, stellar_cheap])[("SV", "INTL")]
+    assert (cell["common_pct"], cell["special_pct"], cell["special_fee_pct"]) == (10.0, 15.0, 2.0)   # 18% capped at 6,000

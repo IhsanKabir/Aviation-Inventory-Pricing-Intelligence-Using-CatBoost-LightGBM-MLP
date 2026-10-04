@@ -32,7 +32,10 @@ from . import grid as g
 
 COMMON, SPECIAL, UNCLEAR = "Common", "Special", "Unclear"
 NO_DISCOUNT, NOT_CAPTURED = "No discount", "Not captured"
-TIER_ORDER = {COMMON: 0, SPECIAL: 1, UNCLEAR: 2, NOT_CAPTURED: 3, NO_DISCOUNT: 4}
+# a coupon rate from FirstTrip's coupon table for a route this run did not search: the
+# route's automatic discount and its other offers are unknown until it is searched
+NOT_SEARCHED = "Not searched"
+TIER_ORDER = {COMMON: 0, SPECIAL: 1, UNCLEAR: 2, NOT_CAPTURED: 3, NOT_SEARCHED: 4, NO_DISCOUNT: 5}
 BASE, TOTAL = "Base fare", "Booking total"
 NO_CODE = "(automatic, no code)"
 ALL_ROUTES = "All its routes"     # route of a per-airline row (0% codes)
@@ -98,11 +101,14 @@ def _sharetrip_obs(where: dict[str, Any], auto_pct: float, auto_code: Optional[s
                         title="ShareTrip's coupons differ by airline. Open this airline's "
                               "booking page on ShareTrip and save the HAR to see them."))
         return out
-    wallet = (cell or {}).get("common_code")
+    # open to anyone: the wallet coupon and the telco codes (ShareTrip doesn't verify them)
+    open_codes = set((cell or {}).get("open_codes") or [])
+    telco = {c.get("couponCode") for c in g.sharetrip_har._telco_coupons(terms)}
     for j in (cell or {}).get("judged") or []:
-        is_wallet = bool(wallet) and j["code"] == wallet
-        out.append(_obs(**where, tier=COMMON if is_wallet else SPECIAL, code=j["code"],
-                        who=f"{j['label']} payment" if is_wallet else j["label"],
+        is_open = j["code"] in open_codes
+        who = (f"Anyone entering the {j['label']} code (not verified)" if j["code"] in telco
+               else f"{j['label']} payment" if is_open else j["label"])
+        out.append(_obs(**where, tier=COMMON if is_open else SPECIAL, code=j["code"], who=who,
                         published=j["nominal_pct"], effective=j["effective_pct"],
                         cap=j.get("cap_bdt"), stacks=j["stacks_with_auto"],
                         fee=j.get("fee_pct"), title=titles.get(j["code"], "")))
@@ -327,11 +333,14 @@ def _ft_rate_table_obs(coupons: list[dict[str, Any]], used: set,
                 continue
             flat = d["type"] == "F"
             out.append(_obs(market=c["market"], route=route, ota="Firsttrip-B2C", airline=d["airline"],
-                            tier=COMMON if tier == "common" else SPECIAL, code=c["code"], who=who,
+                            tier=NOT_SEARCHED, code=c["code"],
+                            who=who + ("" if tier == "common" else " (card offer)"),
                             published=None if flat else d["value"], effective=None, basis=BASE,
                             cap=d["cap"] or c["cap"], stacks=c["stacks_with_dynamic"],
                             fee=fees.get("common" if tier == "common" else "card"),
-                            title=("Rate from FirstTrip's coupon table (no fare searched). "
+                            title=("Route not searched in this run: this rate comes from "
+                                   "FirstTrip's coupon table. The route's automatic discount and "
+                                   "its other offers show once it is searched (live or HAR). "
                                    + (f"Flat BDT {d['value']:,.0f} off. " if flat else "")
                                    + (c["description"] or ""))))
     return out
@@ -415,14 +424,16 @@ _WIDTHS = {"market": 13, "route": 10, "travel_dates": 14, "ota": 15, "airline": 
 _NOTE = ("Every promo code each OTA offered, not just the best one shown in the grids. "
          "Common = anyone gets it; Special = needs that card, bank or membership; "
          "Not captured = ShareTrip's coupons differ by airline and this airline's booking "
-         "page wasn't captured; No discount = a 0% payment option (EMI, net banking). "
+         "page wasn't captured; Not searched = a FirstTrip coupon-table rate for a route "
+         "this run didn't search (its automatic discount and other offers are unknown "
+         "until it is searched); No discount = a 0% payment option (EMI, net banking). "
          "Effective % = what the code was worth at the fares seen (caps applied; a range "
          "when fares differed), including the automatic discount when the code goes on "
          "top of it. '% of' says what the % is taken from: ShareTrip and FirstTrip use the "
          "base fare, GoZayaan the booking total, so compare like with like. "
          "Use the filter arrows in the header row.")
 _TIER_FILL = {COMMON: "C6EFCE", SPECIAL: "DDEBF7", UNCLEAR: "FFF2CC",
-              NOT_CAPTURED: "FFC7CE", NO_DISCOUNT: "EDEDED"}
+              NOT_CAPTURED: "FFC7CE", NOT_SEARCHED: "EDEDED", NO_DISCOUNT: "EDEDED"}
 
 
 def _pct(v: Any) -> Any:

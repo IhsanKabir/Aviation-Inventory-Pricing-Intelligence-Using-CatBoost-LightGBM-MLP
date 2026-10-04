@@ -362,6 +362,15 @@ def _wallet_coupon(coupons: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _telco_coupons(coupons: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Telco codes (FLYGPSTAR / FLYORANGE / FLYELITE): category "Loyalty" with the
+    operator's logo. ShareTrip asks for no phone verification, so anyone entering the
+    code gets it, like any other discount option -> part of the COMMON rate."""
+    return [c for c in coupons
+            if (str(c.get("category") or "").lower() == "loyalty" or c.get("operatorLogo"))
+            and float(c.get("discount") or 0) > 0]
+
+
 def terms_by_airline(rows: List[Dict[str, Any]]) -> Dict[tuple[str, str], List[Dict[str, Any]]]:
     """{(DOM|INTL, airline): coupon terms} from booking-details rows, merged over every
     booking captured for that airline (any route), one object per coupon code.
@@ -454,28 +463,45 @@ def judge_cell(auto_pct: float, base_fare: float, coupons: List[Dict[str, Any]],
                gateways: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     """One grid cell judged from an airline's automatic rate + the market coupon terms.
 
-    common  = auto + stackable wallet coupon (bKash/Nagad), the rate anyone paying
-              online gets; special = the best JUDGED coupon (cap-aware, stack-aware,
-              ranked NET of the cheapest eligible gateway fee when known);
-              card = the best standalone card coupon when it is not already the winner
-              (so a loyalty stack beating a capped card still shows the card rate).
+    common  = the best rate ANYONE gets: auto, auto + stackable wallet coupon
+              (bKash/Nagad), or auto + a telco code (FLYGPSTAR...: no verification on
+              ShareTrip, so open to all); special = the best other JUDGED coupon
+              (cap-aware, stack-aware, ranked NET of the cheapest eligible gateway fee
+              when known); card = the best standalone card coupon when it is not already
+              the winner (so a stack beating a capped card still shows the card rate).
     Displayed percentages stay gross-of-fee (comparable with other channels); the
     fee itself is carried in *_fee_pct for annotation.
     """
     judged = judge_coupons(base_fare, auto_pct, coupons, total_fare, gateways)
     wallet = _wallet_coupon(coupons)
+    telco_codes = {c["couponCode"] for c in _telco_coupons(coupons)}
     cell: Dict[str, Any] = {
         "base_pct": round(auto_pct, 2),
         "common_pct": round(auto_pct + float(wallet["discount"]), 2) if wallet else round(auto_pct, 2),
         "common_code": wallet["couponCode"] if wallet else None,
+        "common_label": None,               # None = wallet (rendered Bkash/Nagad) or auto
         "common_fee_pct": _min_gateway_fee(wallet, gateways) if wallet else None,
+        "common_capped": False,
+        "open_codes": sorted(telco_codes | ({wallet["couponCode"]} if wallet else set())),
         "special_pct": None, "special_label": None, "special_code": None,
         "special_capped": False, "special_fee_pct": None,
         "card_pct": None, "card_label": None, "card_capped": False, "card_fee_pct": None,
         "judged": judged,
         "base_fare_bdt": round(base_fare) if base_fare > 0 else None,
     }
-    contenders = [j for j in judged if not (wallet and j["code"] == wallet["couponCode"])]
+    telco = [j for j in judged if j["code"] in telco_codes]
+    t = max(telco, key=lambda j: j["effective_pct"]) if telco else None
+    # uncapped: the published rates (8.5 + 1 = 9.5); ShareTrip floors each taka amount,
+    # which would show 9.49. Capped: what it was actually worth.
+    pct = None
+    if t:
+        nominal = auto_pct + t["nominal_pct"] if t["stacks_with_auto"] else t["nominal_pct"]
+        pct = round(nominal if not t["cap_bound"] else t["effective_pct"], 2)
+    if t and pct > cell["common_pct"]:            # a wallet giving as much keeps the cell
+        cell.update(common_pct=pct, common_code=t["code"],
+                    common_label=t["label"], common_fee_pct=t["fee_pct"], common_capped=t["cap_bound"])
+    open_codes = set(cell["open_codes"])
+    contenders = [j for j in judged if j["code"] not in open_codes]
     if contenders:
         winner = contenders[0]
         cell.update(special_pct=round(winner["effective_pct"], 1),
@@ -660,8 +686,10 @@ def summarize_details(rows: List[Dict[str, Any]]) -> Dict[tuple[str, str], Dict[
         specials = [r for r in items if r.get("special_pct") is not None]
         if specials:
             top = max(specials, key=lambda r: r["special_pct"])
+            # the fee travels WITH its special (it used to come from the common row's
+            # booking, e.g. SV showed Stellar at 1.5% instead of its 2% gateway fee)
             for k in ("special_pct", "special_label", "special_code", "special_capped",
-                      "card_pct", "card_label", "card_capped"):
+                      "special_fee_pct", "card_pct", "card_label", "card_capped", "card_fee_pct"):
                 best[k] = top.get(k)
         out[key] = best
     return out
