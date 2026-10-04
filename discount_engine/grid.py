@@ -1474,8 +1474,11 @@ def write_single_sheet_xlsx(report: dict[str, Any],
         _render_detailed_by_route_sheet(
             wb.create_sheet(title=f"{_sheet_name(report)} (detail by route)"), report)
     if report.get("all_codes"):
-        from .all_codes import write_sheet
-        write_sheet(wb.create_sheet(title=f"{_sheet_name(report)} (all codes)"), report)
+        # by type (one row per route x OTA x airline, discount types as columns), then the
+        # one-row-per-code detail with caps, fees and offer text
+        from . import all_codes, codes_by_type
+        codes_by_type.write_sheet(wb.create_sheet(title=f"{_sheet_name(report)} (all codes)"), report)
+        all_codes.write_sheet(wb.create_sheet(title=f"{_sheet_name(report)} (codes detail)"), report)
     too_long = [n for n in wb.sheetnames if len(n) > 31]
     if too_long:
         raise ValueError(f"Excel sheet name over 31 characters: {too_long}")

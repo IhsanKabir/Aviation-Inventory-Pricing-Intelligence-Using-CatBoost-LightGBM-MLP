@@ -272,6 +272,8 @@
       </div>
     </div>
     <div id="codes-filters" class="row" style="display:none;margin:10px 0 6px;align-items:center">
+      <select id="cf-layout" onchange="drawDiscounts()" title="By type: one row per route, OTA and airline; Detail: one row per code with caps, fees and offer text">
+        <option value="type">By type (columns)</option><option value="detail">Detail (one row per code)</option></select>
       <select id="cf-route" onchange="drawDiscounts()" title="Route"></select>
       <select id="cf-ota" onchange="drawDiscounts()" title="OTA"></select>
       <select id="cf-airline" onchange="drawDiscounts()" title="Airline"></select>
@@ -280,6 +282,8 @@
         <option>Unclear</option><option>Not captured</option><option>Not searched</option><option>No discount</option>
         <option value="__all__">Everything, incl. not searched and 0% codes</option></select>
       <input id="cf-text" placeholder="Find a code or card, e.g. AMEX" oninput="drawDiscounts()" style="min-width:220px">
+      <label class="inline-check" id="cf-unsearched-wrap"><input type="checkbox" id="cf-unsearched" onchange="drawDiscounts()">
+        Include routes not searched</label>
     </div>
     <div id="grids"></div>
   </section>
@@ -958,6 +962,7 @@ async function setDiscountView(view) {
     if (await handleAuthRequired(r)) return;
     if (!r.ok) { addBanner("err", r.error); return; }
     allCodes = r.codes || [];
+    codesByType = { rows: r.by_type || [], kinds: r.kinds || [] };
     fillCodeFilters(allCodes);
   }
   discountView = view;
@@ -977,7 +982,11 @@ function drawDiscounts() {
   const grids = document.getElementById("grids");
   let html = "";
   if (codes) {
-    html = codesTable(allCodes || []);
+    const byType = document.getElementById("cf-layout").value === "type";
+    // the tier filter belongs to the one-row-per-code list; by type, tiers are the columns
+    document.getElementById("cf-tier").style.display = byType ? "none" : "";
+    document.getElementById("cf-unsearched-wrap").style.display = byType ? "" : "none";
+    html = byType ? codesByTypeTable(codesByType) : codesTable(allCodes || []);
   } else if (!byRoute) {
     for (const [rt, label] of [["INTL", "INTERNATIONAL"], ["DOM", "DOMESTIC"]]) {
       const block = (report.grids || {})[rt];
@@ -1046,6 +1055,43 @@ function filteredCodes(codes) {
     (!ota || c.ota === ota) && (!airline || c.airline === airline) &&
     (tier === "__all__" || (tier ? c.tier === tier : !HIDDEN_TIERS.includes(c.tier))) &&
     (!text || `${c.code} ${c.who} ${c.title}`.toLowerCase().includes(text)));
+}
+
+let codesByType = { rows: [], kinds: [] };   // one row per route x OTA x airline (backend-built)
+
+function codesByTypeTable(data) {
+  const v = id => document.getElementById(id).value;
+  const route = v("cf-route"), ota = v("cf-ota"), airline = v("cf-airline");
+  const text = v("cf-text").trim().toLowerCase();
+  const withUnsearched = document.getElementById("cf-unsearched").checked;
+  const pref = new Set((state && state.preferred_routes) || []);
+  const kinds = data.kinds.filter(k => data.rows.some(r => (r.cells[k] || []).length));  // drop empty types
+  const rows = data.rows.filter(r =>
+    (withUnsearched || !r.status) &&
+    (!route || (route === "__preferred__" ? pref.has(r.route) : r.route === route)) &&
+    (!ota || r.ota === ota) && (!airline || r.airline === airline) &&
+    (!text || JSON.stringify(r.cells).toLowerCase().includes(text)));
+  const hidden = withUnsearched ? 0 : data.rows.filter(r => r.status).length;
+  const cell = items => items.length ? items.map(esc).join("<br>") : '<span class="muted">—</span>';
+  const head = `<tr><th>Route</th><th>Travel date(s)</th><th>OTA</th><th>Airline</th>
+    ${kinds.map(k => `<th>${esc(k)}</th>`).join("")}<th>Best for anyone</th><th>Best with card / telco</th>
+    <th>% of</th><th>Notes</th></tr>`;
+  const body = rows.slice(0, CODES_SHOWN_MAX).map(r => `<tr${r.status ? ' style="opacity:.65"' : ""}>
+    <td>${esc(r.route || "—")}${r.status ? `<br><span class="muted">${esc(r.status)}</span>` : ""}</td>
+    <td>${esc(r.travel_dates)}</td><td>${esc(r.ota)}</td><td>${esc(r.airline)}</td>
+    ${kinds.map(k => `<td style="text-align:left;white-space:normal;min-width:150px">${cell(r.cells[k] || [])}</td>`).join("")}
+    <td class="hl-highest" style="text-align:left">${esc(r.best_anyone)}</td>
+    <td style="text-align:left;white-space:normal">${esc(r.best_with_card)}</td>
+    <td>${esc(r.basis)}</td><td class="muted" style="white-space:normal">${esc(r.notes)}</td></tr>`).join("");
+  const note = `<p class="muted" style="margin:0 0 8px">${rows.length} row(s): one per route, OTA and airline; each
+    column is a type of discount, so OTAs line up. Cells show what each code was worth at the fares seen
+    (caps applied). <b>Automatic</b> = no code needed. Telco on ShareTrip needs no verification; on FirstTrip
+    the number is verified by OTP.${hidden ? ` ${hidden} row(s) for routes not searched are hidden.` : ""}
+    Caps, fees and offer text: switch to <b>Detail</b>.</p>`;
+  const more = rows.length > CODES_SHOWN_MAX
+    ? `<p class="muted">Showing ${CODES_SHOWN_MAX} of ${rows.length} — pick a route, OTA or airline. The Excel export has every row.</p>` : "";
+  if (!rows.length) return note + '<p class="muted">No row matches these filters.</p>';
+  return note + `<div class="table-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>` + more;
 }
 
 function codesTable(codes) {

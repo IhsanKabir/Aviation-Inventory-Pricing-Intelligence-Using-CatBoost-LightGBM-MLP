@@ -292,7 +292,7 @@ def _report(codes):
             "channel_status": {}, "sources": {}, "all_codes": codes}
 
 
-def test_excel_gets_a_filterable_all_codes_sheet(memo):
+def test_excel_gets_a_filterable_codes_detail_sheet(memo):
     from openpyxl import load_workbook
     memo._remember("gozayaan_routed", "gz.har", ([], {"INTL": 2.1}))
     memo._remember("gozayaan_fares", "gz.har",
@@ -300,7 +300,7 @@ def test_excel_gets_a_filterable_all_codes_sheet(memo):
     report = _report(all_codes.collect(gozayaan_hars=["gz.har"]))
     path = Path(tempfile.mkdtemp()) / "r.xlsx"
     grid.write_single_sheet_xlsx(report, None, path)
-    ws = load_workbook(path)["04 October (all codes)"]
+    ws = load_workbook(path)["04 October (codes detail)"]   # per-code list
     heads = [c.value for c in ws[3]]
     assert heads[:8] == ["Market", "Route", "Travel date(s)", "OTA", "Airline", "Tier",
                          "Promo code", "Who can use it"]

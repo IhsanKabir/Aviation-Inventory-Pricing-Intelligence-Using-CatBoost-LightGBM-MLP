@@ -876,7 +876,10 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
             return {"ok": False, "auth_required": True, "error": "Sign in to use the app."}
         if not self._report:
             return {"ok": False, "error": "Run the report first."}
-        return {"ok": True, "codes": self._report.get("all_codes") or []}
+        from discount_engine import codes_by_type
+        codes = self._report.get("all_codes") or []
+        return {"ok": True, "codes": codes, "by_type": codes_by_type.rows(codes),
+                "kinds": codes_by_type.KINDS}
 
     # ------------------------------------------------------------------ export
     def export_xlsx(self) -> dict[str, Any]:

@@ -205,7 +205,11 @@ def test_code_list_is_fetched_on_demand_not_shipped_with_the_run(api, monkeypatc
     tmp_path = _mktmp()
     api._config["har_dir"] = str(tmp_path)
     _sign_in(api, monkeypatch)
-    codes = [{"code": f"C{i}", "tier": "Common"} for i in range(3)]
+    from discount_engine import all_codes
+    codes = all_codes.merge([all_codes._obs(market="DOM", route="DAC-CXB", ota="Go Zayaan", airline="BS",
+                                            tier="Common", code=f"C{i}", who="Pay with bKash",
+                                            published=5 + i, effective=5 + i, basis="Booking total")
+                             for i in range(3)])
     monkeypatch.setattr(backend_mod, "auto_detect_hars", lambda d: {})
     monkeypatch.setattr(backend_mod, "build_report",
                         lambda *a, **kw: {**_report(bs="12"), "all_codes": codes})
@@ -216,7 +220,10 @@ def test_code_list_is_fetched_on_demand_not_shipped_with_the_run(api, monkeypatc
     assert result["ok"]
     assert "all_codes" not in result["report"] and result["report"]["all_codes_count"] == 3
     assert "all_codes" not in saved[0]                       # baseline stays small
-    assert api.all_codes() == {"ok": True, "codes": codes}   # the view fetches it
+    fetched = api.all_codes()                                 # the view fetches it
+    assert fetched["ok"] and fetched["codes"] == codes
+    (row,) = fetched["by_type"]                               # one row, bKash column holds all 3
+    assert row["cells"]["bKash"] == ["7% C2", "6% C1", "5% C0"]
     assert api._report["all_codes"] == codes                 # export still has it
 
 
