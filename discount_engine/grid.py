@@ -158,7 +158,7 @@ def _ft_classify(code: str, airline: str) -> tuple[str, str]:
 def _ft_summary(rows: list[dict[str, Any]], catalog: Optional[dict[str, Any]]) -> dict[str, Any]:
     """FT B2C cells per airline: with the payment-page offer list, every coupon is judged
     (firsttrip_offers.summarize); without it, the search's auto-applied coupon only."""
-    if catalog and catalog.get("coupons"):
+    if catalog and (catalog.get("coupons") or catalog.get("perk_offers")):
         return firsttrip_offers.summarize(rows, catalog, classify_code=_ft_classify,
                                           label_of=firsttrip._ft_coupon_label)
     return firsttrip.summarize_b2c_discounts(rows)
@@ -207,6 +207,9 @@ def _firsttrip_catalog(b2c_hars: Optional[list[str]],
     if catalog["coupons"]:
         print(f"  FT B2C offer list: {len(catalog['coupons'])} coupon(s): "
               + ", ".join(c["code"] for c in catalog["coupons"]))
+    for p in catalog.get("perk_offers") or []:
+        print(f"  FT B2C telco offer: {p['code']} ({p['operator']}) {p['value']:g}"
+              f"{'%' if p['type'] == 'P' else ' BDT'} on {p['airline']} {p['market']}")
     return catalog
 
 

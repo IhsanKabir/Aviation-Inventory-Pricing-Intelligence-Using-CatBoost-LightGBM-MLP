@@ -174,7 +174,7 @@ def test_offer_list_and_telco_partners_are_read_from_a_payment_page_har():
                       [{"id": 1, "partnerName": "Gp"}, {"id": 2, "partnerName": "Robi"}])])
     cat = fo.parse_har(har)
     assert sorted(c["code"] for c in cat["coupons"]) == ["BANKONLY", "FTIN-bKash", "FTINT26"]
-    assert cat["perks"] == {"DOM": ["Gp", "Robi"]}
+    assert cat["perks"] == {"DOM": ["GP", "Robi"]}
 
 
 def test_capture_whose_api_calls_come_after_megabytes_of_site_files_is_detected():
@@ -203,7 +203,7 @@ def test_live_catalogue_asks_once_per_market_and_airline():
              {"airline": "EK", "offer_request": {**req, "airlineCode": "EK"}}]
     cat = fo.fetch_catalog(fares, {}, post=post, sleep=lambda s: None)
     assert calls == [("GetOfferList", "BS"), ("GetPerkOfferList", "BS"), ("GetOfferList", "EK")]
-    assert cat["perks"] == {"INTL": ["Gp"]} and len(cat["coupons"]) == 3
+    assert cat["perks"] == {"INTL": ["GP"]} and len(cat["coupons"]) == 3
 
 
 # --- all codes ------------------------------------------------------------------------
@@ -220,3 +220,53 @@ def test_all_codes_lists_every_firsttrip_coupon_rate_table_and_telco_gap(catalog
         {("DAC-DXB", "FTINT26", 9.0), ("DAC-JED", "FTINT26", 8.1)}     # from the coupon's table
     perk = [e for e in all_codes.merge(out) if e["code"] == "(telco perk)"]
     assert perk and perk[0]["tier"] == "Not captured" and "Gp / Robi" in perk[0]["who"]
+
+
+# --- telco perks: the OTP step's offer, never the phone number ------------------------
+
+def _telco_har(operator=1, airline="BS"):
+    fare = {"departureDate": "2026-10-06T18:30:00", "flightType": 1, "airlineCode": airline,
+            "departureAirportCode": "DAC", "arrivalAirportCode": "CXB", "minimumSalesAmount": 3224}
+    return _har([
+        _post(fo.PERK_LIST, {**fare, "couponType": 4},
+              [{"id": 1, "partnerName": "Gp"}, {"id": 2, "partnerName": "Robi"}]),
+        _post(fo.PERK_CHECK, {**fare, "couponType": 4, "phoneNumber": "01700000000", "operator": operator},
+              {"code": None, "isValid": True, "discountType": " ", "discountValue": 0.0}),
+        _post(fo.PERK_VERIFY, {"otpCode": "123456", "phoneNumber": "01700000000"},
+              {"code": "FTGPSTAR", "isValid": True, "description": "Exclusive Offer for GPStar Customers",
+               "discountType": "P", "discountValue": 14.0, "maximumDiscountAmount": 10000.0}),
+    ])
+
+
+def test_verified_telco_offer_is_read_without_the_phone_number_or_otp():
+    cat = fo.parse_har(_telco_har())
+    (perk,) = cat["perk_offers"]
+    assert (perk["code"], perk["operator"], perk["value"], perk["cap"], perk["market"], perk["airline"]) == \
+        ("FTGPSTAR", "GP", 14.0, 10000.0, "DOM", "BS")
+    assert "01700000000" not in json.dumps(cat) and "123456" not in json.dumps(cat)
+    assert cat["perks"] == {"DOM": ["GP", "Robi"]}
+
+
+def test_telco_offer_competes_with_the_dynamic_rate_it_replaces():
+    cat = fo.parse_har(_telco_har())
+    # GP Star 14% vs dynamic 15%: anyone gets 15, so the telco offer isn't a special here
+    cells = grid._collect_firsttrip_b2c_rows(
+        {("DAC", "CXB", "d"): [_row("BS", 3224, dyn=15.0, dyn_amt=483, o="DAC", d="CXB")]}, None, None, cat)
+    assert cells[("DOM", "BS")] == "15"
+    # with a 10% dynamic rate it is the better (special) option
+    cells = grid._collect_firsttrip_b2c_rows(
+        {("DAC", "CXB", "d"): [_row("BS", 3224, dyn=10.0, dyn_amt=322, o="DAC", d="CXB")]}, None, None, cat)
+    assert cells[("DOM", "BS")] == "10, 14 (GPStar)"   # grid label; All codes keeps FTGPSTAR
+
+
+def test_telco_offer_listed_per_fare_and_missing_operators_flagged():
+    cat = fo.parse_har(_telco_har())
+    rows = {("DAC", "CXB", "d"): [{**_row("BS", 3224, dyn=15.0, dyn_amt=483, o="DAC", d="CXB"),
+                                   "departure": "2026-10-06T18:30", "flight_number": "141"},
+                                  {**_row("VQ", 3500, o="DAC", d="CXB"), "departure": "2026-10-06T09:00",
+                                   "flight_number": "921"}]}
+    out = all_codes.merge(all_codes.firsttrip_b2c(rows, {}, cat))
+    gp = [e for e in out if e["code"] == "FTGPSTAR"]
+    assert [(e["airline"], e["route"], e["tier"], e["effective"]) for e in gp] == [("BS", "DAC-CXB", "Special", "14")]
+    gap = next(e for e in out if e["code"] == "(telco perk)")
+    assert gap["who"] == "Robi customers"          # GP's rate is known; Robi's isn't yet

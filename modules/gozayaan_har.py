@@ -319,18 +319,21 @@ def rows_from_discount_list(*, plating_carrier: Any, flight_type: Any,
         if not isinstance(it, dict):
             continue
         markup = it.get("discount_markup") or {}
-        if str(markup.get("markup_type") or "").upper() != "PERCENTAGE":
-            continue  # only percentage campaigns map to a comparable rate
+        kind = str(markup.get("markup_type") or "").upper()
+        if kind not in ("PERCENTAGE", "FLAT"):
+            continue  # an unknown markup type has no comparable rate
         code = (it.get("discount_promo_code")
                 or (it.get("discount_campaign") or {}).get("campaign_code") or "")
-        pct = float(markup.get("markup_amount") or 0)
-        if pct <= 0:
+        amount = float(markup.get("markup_amount") or 0)
+        if amount <= 0:
             continue
         cap = float(markup.get("markup_max_amount") or 0)
-        realized_amt = pct / 100.0 * price
+        # FLAT = a BDT amount off the booking (e.g. REINT07262K: 2,000 BDT, EBL Visa)
+        realized_amt = amount if kind == "FLAT" else amount / 100.0 * price
         if cap:
             realized_amt = min(realized_amt, cap)
-        realized_pct = round(realized_amt / price * 100.0, 2) if price else pct
+        realized_pct = round(realized_amt / price * 100.0, 2) if price else amount
+        pct = realized_pct if kind == "FLAT" else amount
 
         sig = (airline, ftype, code)
         if sig in seen:
@@ -345,6 +348,8 @@ def rows_from_discount_list(*, plating_carrier: Any, flight_type: Any,
             "product_price": round(price),
             "coupon_code": code,
             "discount_pct": pct,
+            "discount_type": "FLAT" if kind == "FLAT" else "PERCENTAGE",
+            "flat_bdt": round(amount) if kind == "FLAT" else None,
             "cap_bdt": round(cap) if cap else None,
             "realized_discount_bdt": round(realized_amt),
             "realized_pct": realized_pct,
@@ -377,6 +382,10 @@ def bank_cards(campaign: Dict[str, Any]) -> str:
     return "; ".join(f"{bank} {'/'.join(cards)}".strip() for bank, cards in sorted(by_bank.items()))
 
 
+_WALLET_NAMES = {"BKASH": "bKash", "NAGAD": "Nagad", "UPAY": "Upay", "TAP": "Tap",
+                 "ROCKET": "Rocket", "OKWALLET": "OK Wallet", "CELLFIN": "CellFin"}
+
+
 def _is_other_bank(name: str) -> bool:
     """GoZayaan's catch-all bank entry ('Others'): any bank's card of that scheme."""
     return name.strip().lower() in ("others", "other", "other banks", "any")
@@ -397,6 +406,20 @@ def _classify_eligibility(campaign: Dict[str, Any]) -> tuple[str, str]:
         holders of those banks' cards get it, so it is not a rate anyone gets (it was
         "common / Most cards" before 2026-10; a bKash or other-bank payer is excluded)
     """
+    validation = campaign.get("discount_validation") or {}
+    # Mobile wallets (validation type MFS): anyone paying with that wallet qualifies
+    wallets = [str(m.get("name") or "").strip() for m in (validation.get("mfs_type_details") or [])
+               if m.get("name")]
+    if str(validation.get("type") or "").upper() == "MFS" or wallets:
+        names = [_WALLET_NAMES.get(w.upper(), w.title()) for w in wallets]
+        return "common", "Pay with " + (" / ".join(names) if names else "a mobile wallet")
+    # GoZayaan's own group names: "All Card" / "All VISA" are open to any such card
+    group = str(validation.get("name") or "").strip()
+    if group.lower() in ("all card", "all cards"):
+        return "common", "Any card"
+    if group.lower() in ("all visa", "all mastercard", "all amex"):
+        return "common", f"Any {group[4:].strip()} card"
+
     details = _bank_details(campaign)
     banks = sorted({str(b.get("bank_name")).strip() for b in details if b.get("bank_name")})
     schemes = sorted({str(b.get("card_type")).strip() for b in details if b.get("card_type")})

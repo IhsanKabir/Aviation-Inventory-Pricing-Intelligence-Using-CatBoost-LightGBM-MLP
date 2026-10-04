@@ -166,14 +166,18 @@ def gozayaan(hars: Optional[list[str]]) -> list[dict[str, Any]]:
         for r in rows if rows is not None else _rows:
             market = _market(r["flight_type"], r.get("origin"), r.get("destination"))
             date = r.get("departure_date") or ""
+            common = r["eligibility_scope"] == "common"
+            flat = r.get("discount_type") == "FLAT"
             out.append(_obs(
                 market=market, route=_route(r), ota="Go Zayaan", airline=r["airline"],
-                tier=COMMON if r["eligibility_scope"] == "common" else SPECIAL,
-                code=r["coupon_code"], who=r.get("bank_cards") or r["eligibility"],
-                published=r["discount_pct"], effective=r["realized_pct"], basis=TOTAL,
-                fare=(_route(r), date, r.get("product_price")), date=date,
+                tier=COMMON if common else SPECIAL, code=r["coupon_code"],
+                # open offers say how to pay (bKash, any VISA); bank offers name every card
+                who=r["eligibility"] if common else (r.get("bank_cards") or r["eligibility"]),
+                published=None if flat else r["discount_pct"], effective=r["realized_pct"],
+                basis=TOTAL, fare=(_route(r), date, r.get("product_price")), date=date,
                 cap=r.get("cap_bdt"), fee=(surcharge or {}).get(market),
-                title=r.get("name") or ""))
+                title=(f"Flat BDT {r['flat_bdt']:,} off. " if flat and r.get("flat_bdt") else "")
+                + (r.get("name") or "")))
     return out
 
 
@@ -264,9 +268,47 @@ def firsttrip_b2c(rows_by_route: Optional[dict], fees: Optional[dict],
                 tier, who = ft_tier(slot, airline, special_slot=True)
                 out.append(_obs(**where, tier=tier, code=slot or NO_CODE, who=who,
                                 published=slot_rate, effective=slot_rate, fee=fee_for.get(tier)))
+    out += _ft_telco_obs(rows_by_route, catalog, fees)
     out += _ft_rate_table_obs(coupons, used, fees)
-    out += _ft_perk_obs(catalog.get("perks") or {})
+    out += _ft_perk_obs(catalog.get("perks") or {}, catalog.get("perk_offers") or [])
     return out
+
+
+def _ft_telco_obs(rows_by_route: Optional[dict], catalog: dict, fees: dict[str, Any]) -> list[dict[str, Any]]:
+    """Verified telco offers (FTGPSTAR...) on each fare of the airline they were verified for;
+    an offer whose airline had no fare in this run is listed once from its own capture."""
+    fo = g.firsttrip_offers
+    out, placed = [], set()
+    for rows in (rows_by_route or {}).values():
+        for r in rows:
+            base = float(r.get("base_fare_bdt") or 0)
+            date = str(r.get("departure") or "")[:10]
+            for p in fo.perks_for(catalog, _market("", r.get("origin"), r.get("destination")), r["airline"]):
+                w = fo.perk_worth(p, base)
+                if not w:
+                    continue
+                placed.add((p["code"], p["market"], p["airline"]))
+                out.append(_telco_obs(p, market=_market("", r.get("origin"), r.get("destination")),
+                                      route=_route(r), effective=w["pct"], date=date,
+                                      fare=(_route(r), date, r.get("flight_number"), round(base)),
+                                      fee=fees.get("card")))
+    for p in catalog.get("perk_offers") or []:
+        if (p["code"], p["market"], p["airline"]) not in placed:
+            route = f"{p['origin']}-{p['destination']}" if p["origin"] and p["destination"] else ALL_ROUTES
+            out.append(_telco_obs(p, market=p["market"], route=route, effective=None,
+                                  fee=fees.get("card")))
+    return out
+
+
+def _telco_obs(p: dict[str, Any], *, market: str, route: str, effective: Any, fee: Any,
+               date: str = "", fare: Any = None) -> dict[str, Any]:
+    flat = p["type"] == "F"
+    return _obs(market=market, route=route, ota="Firsttrip-B2C", airline=p["airline"],
+                tier=SPECIAL, code=p["code"], who=f"{p['operator']} customers (number verified by OTP)",
+                published=None if flat else p["value"], effective=effective, basis=BASE,
+                cap=p["cap"], stacks=False, fee=fee, date=date, fare=fare,
+                title=(f"Flat BDT {p['value']:,.0f} off. " if flat else "")
+                + (p["description"] or "Telco perk") + ". Replaces the automatic discount.")
 
 
 def _ft_rate_table_obs(coupons: list[dict[str, Any]], used: set,
@@ -295,16 +337,22 @@ def _ft_rate_table_obs(coupons: list[dict[str, Any]], used: set,
     return out
 
 
-def _ft_perk_obs(perks: dict[str, list[str]]) -> list[dict[str, Any]]:
-    """FirstTrip's telco perks: the partners are listed for the fare, but the rate only
-    appears after the customer picks an operator and verifies the number."""
-    return [_obs(market=market, route=ALL_ROUTES, ota="Firsttrip-B2C", airline="All",
-                 tier=NOT_CAPTURED, code="(telco perk)", who=f"{' / '.join(names)} customers",
-                 published=None, effective=None, basis=BASE,
-                 title="FirstTrip offers telco perks on this fare. The rate shows only after "
-                       "choosing the operator and verifying the phone number on the payment "
-                       "page; capture that step to get it.")
-            for market, names in perks.items() if names]
+def _ft_perk_obs(perks: dict[str, list[str]], offers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """FirstTrip's telco perks whose rate wasn't captured: the partners are listed for the
+    fare, but a rate only appears after the customer picks an operator and verifies the
+    number (one capture per operator)."""
+    out = []
+    for market, names in perks.items():
+        have = {p["operator"] for p in offers if p["market"] == market}
+        missing = [n for n in names if n not in have]
+        if missing:
+            out.append(_obs(market=market, route=ALL_ROUTES, ota="Firsttrip-B2C", airline="All",
+                            tier=NOT_CAPTURED, code="(telco perk)", who=f"{' / '.join(missing)} customers",
+                            published=None, effective=None, basis=BASE,
+                            title="FirstTrip offers these telco perks, but the rate shows only after "
+                                  "choosing the operator and verifying a phone number of that "
+                                  "operator on the payment page. Capture that step once per operator."))
+    return out
 
 
 # --- merge + entry point ------------------------------------------------------------

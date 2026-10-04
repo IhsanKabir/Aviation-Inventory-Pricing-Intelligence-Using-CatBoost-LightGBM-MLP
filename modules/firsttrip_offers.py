@@ -34,6 +34,11 @@ from typing import Any, Dict, List, Optional
 API = "https://b2c-api.firsttrip.com/flight/api/v1/DiscountsAndCoupons"
 OFFER_LIST = "/DiscountsAndCoupons/GetOfferList"
 PERK_LIST = "/DiscountsAndCoupons/GetPerkOfferList"
+PERK_CHECK = "/DiscountsAndCoupons/CheckLoyaltyOfferEligibility"
+PERK_VERIFY = "/DiscountsAndCoupons/VerifyLoyaltyUserOtp"
+# telco partner ids as GetPerkOfferList numbers them (fallback when the list wasn't captured)
+PARTNER_NAMES = {"gp": "GP", "1": "GP", "robi": "Robi", "2": "Robi", "banglalink": "Banglalink",
+                 "3": "Banglalink", "skitto": "Skitto", "4": "Skitto"}
 WALLETS = ("bkash", "nagad", "upay", "rocket", "tap", "ok wallet", "okwallet", "cellfin")
 OFFER_SLEEP = 1.0           # live: pause between offer-list calls (one per market x airline)
 
@@ -147,11 +152,44 @@ def _load(path: str | Path) -> Dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
 
+def _partner(name: str) -> str:
+    return PARTNER_NAMES.get(name.strip().lower(), name.strip())
+
+
+def _perk_offer(context: Dict[str, Any], offer: Dict[str, Any],
+                partner_ids: Dict[int, str]) -> Optional[Dict[str, Any]]:
+    """The telco offer the OTP step returned, tied to the fare it was asked for. Only the
+    offer and the fare context are kept: never the phone number or the OTP."""
+    code = str(offer.get("code") or "").strip()
+    if not code or not offer.get("isValid"):
+        return None
+    try:
+        op_id = int(context.get("operator") or 0)
+    except (TypeError, ValueError):
+        op_id = 0
+    return {"code": code,
+            "operator": partner_ids.get(op_id) or PARTNER_NAMES.get(str(op_id), f"Operator {op_id}"),
+            "type": "F" if str(offer.get("discountType") or "").strip().upper() == "F" else "P",
+            "value": float(offer.get("discountValue") or 0),
+            "cap": float(offer.get("maximumDiscountAmount") or 0) or None,
+            "description": " ".join(str(offer.get("description") or "").split()),
+            "market": _market(context.get("flightType")),
+            "airline": str(context.get("airlineCode") or "").upper(),
+            "origin": str(context.get("departureAirportCode") or "").upper(),
+            "destination": str(context.get("arrivalAirportCode") or "").upper()}
+
+
 def parse_har(path: str | Path, *, har: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """{'coupons': [...], 'perks': {market: [partner, ...]}} from a FirstTrip B2C HAR."""
+    """{'coupons': [...], 'perks': {market: [partner, ...]}, 'perk_offers': [...]} from a
+    FirstTrip B2C HAR. perk_offers come from a capture where the customer verified a
+    telco number: CheckLoyaltyOfferEligibility (fare + operator) then
+    VerifyLoyaltyUserOtp (the offer, e.g. FTGPSTAR 14% capped 10,000 BDT)."""
     har = har if har is not None else _load(path)
     coupons: Dict[str, Dict[str, Any]] = {}
     perks: Dict[str, List[str]] = {}
+    perk_offers: Dict[tuple, Dict[str, Any]] = {}
+    partner_ids: Dict[int, str] = {}
+    context: Dict[str, Any] = {}                   # the fare of the last eligibility check
     for e in (har.get("log") or {}).get("entries", []):
         req = e.get("request") or {}
         url = str(req.get("url") or "")
@@ -170,10 +208,19 @@ def parse_har(path: str | Path, *, har: Optional[Dict[str, Any]] = None) -> Dict
         elif url.endswith(PERK_LIST) and isinstance(rows, list):
             names = perks.setdefault(_market(body.get("flightType")), [])
             for p in rows:
-                name = str((p or {}).get("partnerName") or "").strip()
+                name = _partner(str((p or {}).get("partnerName") or ""))
                 if name and name not in names:
                     names.append(name)
-    return {"coupons": list(coupons.values()), "perks": perks}
+                if name and isinstance((p or {}).get("id"), int):
+                    partner_ids[p["id"]] = name
+        elif url.endswith(PERK_CHECK) and isinstance(body, dict):
+            context = {k: body.get(k) for k in ("operator", "flightType", "airlineCode",
+                                                 "departureAirportCode", "arrivalAirportCode")}
+        elif url.endswith(PERK_VERIFY) and isinstance(data, dict) and isinstance(data.get("data"), dict):
+            offer = _perk_offer(context, data["data"], partner_ids)
+            if offer:
+                perk_offers[(offer["code"], offer["market"], offer["airline"])] = offer
+    return {"coupons": list(coupons.values()), "perks": perks, "perk_offers": list(perk_offers.values())}
 
 
 def merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
@@ -191,13 +238,34 @@ def merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
 def merge_catalogs(catalogs: List[Dict[str, Any]]) -> Dict[str, Any]:
     coupons: Dict[str, Dict[str, Any]] = {}
     perks: Dict[str, List[str]] = {}
+    perk_offers: Dict[tuple, Dict[str, Any]] = {}
     for cat in catalogs:
         for c in cat.get("coupons") or []:
             coupons[c["code"]] = c if c["code"] not in coupons else merge(coupons[c["code"]], c)
         for m, names in (cat.get("perks") or {}).items():
             have = perks.setdefault(m, [])
             have += [n for n in names if n not in have]
-    return {"coupons": list(coupons.values()), "perks": perks}
+        for p in cat.get("perk_offers") or []:
+            perk_offers[(p["code"], p["market"], p["airline"])] = p
+    return {"coupons": list(coupons.values()), "perks": perks, "perk_offers": list(perk_offers.values())}
+
+
+def perk_worth(perk: Dict[str, Any], base_fare: float) -> Optional[Dict[str, Any]]:
+    """A verified telco offer on a fare: {pct, amount, capped} (same rules as coupons)."""
+    if base_fare <= 0 or perk["value"] <= 0:
+        return None
+    raw = perk["value"] if perk["type"] == "F" else math.floor(base_fare * perk["value"] / 100)
+    amount = min(raw, perk["cap"]) if perk["cap"] else raw
+    capped = bool(perk["cap"]) and raw > perk["cap"]
+    pct = perk["value"] if perk["type"] == "P" and not capped else round(amount / base_fare * 100, 2)
+    return {"pct": pct, "amount": round(amount), "capped": capped}
+
+
+def perks_for(catalog: Optional[Dict[str, Any]], market: str, airline: str) -> List[Dict[str, Any]]:
+    """Verified telco offers that apply to this airline in this market. A verified offer
+    is tied to the airline it was asked for; other airlines stay 'not captured'."""
+    return [p for p in (catalog or {}).get("perk_offers") or []
+            if p["market"] == market and p["airline"] == airline.upper()]
 
 
 # --- per-fare options for the grid -----------------------------------------------------
@@ -231,7 +299,23 @@ def fare_options(row: Dict[str, Any], catalog: Optional[Dict[str, Any]], *,
     if slot and srate > 0 and slot != code and slot not in in_catalog:
         out.append({"code": slot, "pct": srate, "tier": "special", "who": "Card holders",
                     "capped": False, "source": "search"})
+    for p in perks_for(catalog, _row_market(row), airline):
+        w = perk_worth(p, base)
+        if w:   # a telco offer REPLACES the dynamic discount (RePrice, 2026-10-05)
+            out.append({"code": p["code"], "pct": w["pct"], "tier": "special",
+                        "who": f"{p['operator']} customers (number verified)", "capped": w["capped"],
+                        "source": "telco"})
     return out
+
+
+# Bangladesh domestic airports (mirror of discount_engine.grid.DOMESTIC_AIRPORTS; modules/
+# can't import the engine without a cycle)
+_DOMESTIC = {"DAC", "CGP", "CXB", "ZYL", "SPD", "BZL", "RJH", "JSR", "SAH", "TKR", "IRD", "KMI"}
+
+
+def _row_market(row: Dict[str, Any]) -> str:
+    o, d = str(row.get("origin") or "").upper(), str(row.get("destination") or "").upper()
+    return "DOM" if o in _DOMESTIC and d in _DOMESTIC else "INTL"
 
 
 def summarize(rows: List[Dict[str, Any]], catalog: Optional[Dict[str, Any]] = None, *,
@@ -297,7 +381,7 @@ def fetch_catalog(fares: List[Dict[str, Any]], headers: Dict[str, str], post=Non
             if market not in perk_markets:              # the partner list is per market
                 perk_markets.add(market)
                 partners = call("GetPerkOfferList", {**req, "couponType": 4}) or []
-                cat["perks"] = {market: [str(x.get("partnerName")) for x in partners
+                cat["perks"] = {market: [_partner(str(x.get("partnerName"))) for x in partners
                                          if isinstance(x, dict) and x.get("partnerName")]}
             catalogs.append(cat)
         except Exception:  # noqa: BLE001 — a missing catalogue only drops the extra coupons

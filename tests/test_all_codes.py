@@ -323,3 +323,33 @@ def test_codes_never_leave_the_machine():
                                             airline="BS", tier="Common", code="X", who="Any",
                                             published=5, effective=5, basis="Booking total")])
     assert "all_codes" not in json.dumps(sanitize_report_for_sync(_report(entry)))
+
+
+def _gz_campaign(code, validation, kind="PERCENTAGE", amount=7, cap=100000):
+    return {"discount_promo_code": code, "discount_name": f"{code} campaign",
+            "discount_markup": {"markup_type": kind, "markup_amount": amount, "markup_max_amount": cap},
+            "discount_validation": validation}
+
+
+def test_gozayaan_wallet_and_open_card_campaigns_say_how_to_pay():
+    rows = gozayaan_har.rows_from_discount_list(
+        plating_carrier="BS", flight_type="DOM", product_price=5000, data={"result": [
+            _gz_campaign("RDOMB", {"type": "MFS", "name": "bKash Only", "mfs_type_details": [{"name": "BKASH"}]}),
+            _gz_campaign("RFLYDOM", {"type": "MFS", "name": "NAGAD, Upay, Tap, Rocket", "mfs_type_details": [
+                {"name": "NAGAD"}, {"name": "UPAY"}, {"name": "TAP"}, {"name": "ROCKET"}]}),
+            _gz_campaign("RGOFLY", {"type": "CARDS", "name": "All Card", "is_for_admin": True}),
+            _gz_campaign("RVISA", {"type": "CARDS", "name": "All VISA"})]})
+    got = {r["coupon_code"]: (r["eligibility_scope"], r["eligibility"]) for r in rows}
+    assert got == {"RDOMB": ("common", "Pay with bKash"),
+                   "RFLYDOM": ("common", "Pay with Nagad / Upay / Tap / Rocket"),
+                   "RGOFLY": ("common", "Any card"), "RVISA": ("common", "Any VISA card")}
+
+
+def test_gozayaan_flat_campaign_is_bdt_off_the_booking():
+    (row,) = gozayaan_har.rows_from_discount_list(
+        plating_carrier="BS", flight_type="OUTBOUND", product_price=40000, data={"result": [
+            _gz_campaign("REINT07262K", {"type": "CARDS", "name": "EBL Visa credit cards",
+                                         "bank_type_details": [{"bank_name": "EBL", "card_type": "Visa"}]},
+                         kind="FLAT", amount=2000)]})
+    assert (row["discount_type"], row["flat_bdt"], row["realized_pct"], row["eligibility_scope"]) == \
+        ("FLAT", 2000, 5.0, "specific")
