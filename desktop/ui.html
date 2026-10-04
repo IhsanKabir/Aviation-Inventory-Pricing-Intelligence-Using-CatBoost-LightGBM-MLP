@@ -256,6 +256,8 @@
                   title="Domestic and international summary (all routes combined)">Summary</button>
           <button id="view-route" class="secondary" onclick="setDiscountView('route')"
                   title="Which OTA gives which discount on each route you captured">By route</button>
+          <button id="view-codes" class="secondary" onclick="setDiscountView('codes')"
+                  title="Every promo code each OTA offered, common and special, not just the best one">All codes / discounts</button>
           <select id="route-filter" onchange="drawDiscounts()" style="display:none"></select>
         </span>
         <button class="secondary" onclick="exportXlsx()">Export xlsx</button>
@@ -266,6 +268,14 @@
           <span style="background:var(--red-bg);color:var(--red-tx)">Change</span>
         </span>
       </div>
+    </div>
+    <div id="codes-filters" class="row" style="display:none;margin:10px 0 6px;align-items:center">
+      <select id="cf-route" onchange="drawDiscounts()" title="Route"></select>
+      <select id="cf-ota" onchange="drawDiscounts()" title="OTA"></select>
+      <select id="cf-airline" onchange="drawDiscounts()" title="Airline"></select>
+      <select id="cf-tier" onchange="drawDiscounts()" title="Common = anyone; Special = needs a card or membership">
+        <option value="">Common + special</option><option>Common</option><option>Special</option></select>
+      <input id="cf-text" placeholder="Find a code or card, e.g. AMEX" oninput="drawDiscounts()" style="min-width:220px">
     </div>
     <div id="grids"></div>
   </section>
@@ -747,7 +757,11 @@ function renderReport(report, prevAvailable) {
   lastPrevAvailable = prevAvailable;
   const routes = report.by_route || [];
   const pref = (state && state.preferred_routes) || [];
-  document.getElementById("view-switch").style.display = (routes.length || pref.length) ? "" : "none";
+  const hasCodes = (report.all_codes || []).length > 0;
+  document.getElementById("view-switch").style.display = (routes.length || pref.length || hasCodes) ? "" : "none";
+  document.getElementById("view-route").style.display = (routes.length || pref.length) ? "" : "none";
+  document.getElementById("view-codes").style.display = hasCodes ? "" : "none";
+  fillCodeFilters(report.all_codes || []);
   const filter = document.getElementById("route-filter");
   const keep = filter.value;
   filter.innerHTML =
@@ -756,7 +770,8 @@ function renderReport(report, prevAvailable) {
     routes.map(b => `<option value="${esc(b.route)}">${esc(b.route)}</option>`).join("");
   const options = [...filter.options].map(o => o.value);
   filter.value = options.includes(keep) && keep !== "" ? keep : (pref.length ? "__preferred__" : "");
-  if (!routes.length && !pref.length) discountView = "summary";
+  if ((discountView === "route" && !routes.length && !pref.length) ||
+      (discountView === "codes" && !hasCodes)) discountView = "summary";
   drawDiscounts();
 }
 
@@ -939,12 +954,17 @@ function drawDiscounts() {
   const report = shownReport;
   if (!report) return;
   const byRoute = discountView === "route";
-  document.getElementById("view-summary").className = byRoute ? "secondary" : "";
+  const codes = discountView === "codes";
+  document.getElementById("view-summary").className = discountView === "summary" ? "" : "secondary";
   document.getElementById("view-route").className = byRoute ? "" : "secondary";
+  document.getElementById("view-codes").className = codes ? "" : "secondary";
   document.getElementById("route-filter").style.display = byRoute ? "" : "none";
+  document.getElementById("codes-filters").style.display = codes ? "" : "none";
   const grids = document.getElementById("grids");
   let html = "";
-  if (!byRoute) {
+  if (codes) {
+    html = codesTable(report.all_codes || []);
+  } else if (!byRoute) {
     for (const [rt, label] of [["INTL", "INTERNATIONAL"], ["DOM", "DOMESTIC"]]) {
       const block = (report.grids || {})[rt];
       if (block && block.columns.length) {
@@ -975,6 +995,59 @@ function drawDiscounts() {
     if (!html) html = '<p class="muted">No route in this run.</p>';
   }
   grids.innerHTML = html;
+}
+
+// ---- All codes / discounts: every promo code, not just each cell's best ---------
+//: Rows drawn at once; Excel's "(all codes)" sheet always holds the full list.
+const CODES_SHOWN_MAX = 600;
+
+function fillCodeFilters(codes) {
+  const pref = (state && state.preferred_routes) || [];
+  const fill = (id, first, values) => {
+    const el = document.getElementById(id), keep = el.value;
+    el.innerHTML = first + values.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
+    if ([...el.options].some(o => o.value === keep)) el.value = keep;
+  };
+  const uniq = key => [...new Set(codes.map(c => c[key]).filter(Boolean))].sort();
+  fill("cf-route", (pref.length ? `<option value="__preferred__">My preferred routes (${pref.length})</option>` : "") +
+       '<option value="">All routes</option>', uniq("route"));
+  fill("cf-ota", '<option value="">All OTAs</option>', uniq("ota"));
+  fill("cf-airline", '<option value="">All airlines</option>', uniq("airline"));
+}
+
+function filteredCodes(codes) {
+  const v = id => document.getElementById(id).value;
+  const route = v("cf-route"), ota = v("cf-ota"), airline = v("cf-airline"), tier = v("cf-tier");
+  const text = v("cf-text").trim().toLowerCase();
+  const pref = new Set((state && state.preferred_routes) || []);
+  return codes.filter(c =>
+    (!route || (route === "__preferred__" ? pref.has(c.route) : c.route === route)) &&
+    (!ota || c.ota === ota) && (!airline || c.airline === airline) && (!tier || c.tier === tier) &&
+    (!text || `${c.code} ${c.who} ${c.title}`.toLowerCase().includes(text)));
+}
+
+function codesTable(codes) {
+  const rows = filteredCodes(codes);
+  const pct = x => (x === null || x === undefined || x === "") ? "" : `${x}%`;
+  const head = `<tr><th>Route</th><th>OTA</th><th>Airline</th><th>Tier</th><th>Promo code</th>
+    <th>Who can use it</th><th>Published</th><th>Effective</th><th>Cap (BDT)</th>
+    <th>On top of automatic</th><th>Payment fee</th><th>Offer</th></tr>`;
+  const body = rows.slice(0, CODES_SHOWN_MAX).map(c => `<tr>
+    <td>${esc(c.route || "—")}</td><td>${esc(c.ota)}</td><td>${esc(c.airline)}</td>
+    <td class="${c.tier === "Special" ? "hl-second" : "hl-highest"}">${esc(c.tier)}</td>
+    <td style="text-align:left;font-weight:700">${esc(c.code)}</td>
+    <td style="text-align:left">${esc(c.who)}</td><td>${esc(pct(c.published_pct))}</td>
+    <td title="At the fares seen, caps applied${c.seen > 1 ? ` (${c.seen} fares)` : ""}">${esc(pct(c.effective))}</td>
+    <td>${c.cap_bdt ? Number(c.cap_bdt).toLocaleString() : ""}</td><td>${esc(c.stacks)}</td>
+    <td>${esc(pct(c.fee_pct))}</td>
+    <td style="text-align:left;white-space:normal;min-width:240px" class="muted">${esc(c.title)}</td></tr>`).join("");
+  const more = rows.length > CODES_SHOWN_MAX
+    ? `<p class="muted">Showing ${CODES_SHOWN_MAX} of ${rows.length} — pick a route, OTA or airline to narrow it. The Excel export has every row.</p>` : "";
+  const note = `<p class="muted" style="margin:0 0 8px">${rows.length} code(s). <b>Common</b> = anyone gets it;
+    <b>Special</b> = needs that card, bank or membership. <b>Effective</b> = what it was worth at the fares seen,
+    caps applied (a range when fares differed), including the automatic discount when the code goes on top of it. ShareTrip and FirstTrip % are of the base fare, GoZayaan's of the booking total.</p>`;
+  if (!rows.length) return note + '<p class="muted">No code matches these filters.</p>';
+  return note + `<div class="table-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>` + more;
 }
 
 async function exportXlsx() {

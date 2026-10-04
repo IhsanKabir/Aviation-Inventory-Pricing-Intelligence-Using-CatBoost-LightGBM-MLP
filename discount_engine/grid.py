@@ -790,6 +790,10 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
         sharetrip_hars=sharetrip_hars, gozayaan_hars=gozayaan_hars,
         amy_rows=[r for rows in amy_rows_by_path.values() for r in rows],
         b2c_rows_by_route=b2c_rows_by_route, b2c_fees=b2c_fees)))
+    # Every promo code seen, not just each cell's winner (see all_codes.py).
+    from . import all_codes
+    codes = all_codes.collect(sharetrip_hars=sharetrip_hars, gozayaan_hars=gozayaan_hars,
+                              b2c_rows_by_route=b2c_rows_by_route, b2c_fees=b2c_fees)
 
     now = run_dt or datetime.now()
     return {
@@ -804,6 +808,7 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
         "channel_status": channel_status,           # ok|captured_but_empty|manual|not_attempted
         "grids": grids,
         "by_route": route_blocks,                   # per-route blocks (local view only)
+        "all_codes": codes,                         # every promo code seen (local view only)
     }
 
 
@@ -1409,6 +1414,9 @@ def write_single_sheet_xlsx(report: dict[str, Any],
         # is the longest this can be (the earlier "(detailed by route)" was 32).
         _render_detailed_by_route_sheet(
             wb.create_sheet(title=f"{_sheet_name(report)} (detail by route)"), report)
+    if report.get("all_codes"):
+        from .all_codes import write_sheet
+        write_sheet(wb.create_sheet(title=f"{_sheet_name(report)} (all codes)"), report)
     too_long = [n for n in wb.sheetnames if len(n) > 31]
     if too_long:
         raise ValueError(f"Excel sheet name over 31 characters: {too_long}")
