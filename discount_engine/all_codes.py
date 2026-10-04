@@ -3,19 +3,25 @@
 The summary and per-route grids keep ONE common rate and ONE special coupon per
 cell (the best). This list keeps all of them: every promo code each B2C channel
 served, with its real code name, who can use it, the published rate, what it was
-actually worth at the fares seen (caps applied), the cap, the payment fee and
-whether it stacks on the automatic discount.
+actually worth at the fares seen (caps applied), the cap, the payment fee, whether
+it stacks on the automatic discount, the travel dates and the % basis.
 
 Tier:
-  * Common  - anyone gets it (automatic discount, wallet/any-card promo).
-  * Special - needs a specific card, bank or membership (Stellar, AMEX, GPStar...).
+  * Common       - anyone gets it (automatic discount, wallet or any-payment promo).
+  * Special      - needs a specific card, bank or membership (Stellar, AMEX, GPStar,
+                   a GoZayaan campaign limited to named banks...).
+  * Unclear      - a FirstTrip code that is neither a known card nor a known wallet.
+  * No discount  - a 0% code (EMI, internet banking): a payment option, not a rate.
+  * Not captured - ShareTrip coupons differ by airline and this airline's booking page
+                   wasn't captured, so its coupons are unknown (never borrowed).
 
 Only the coupon channels are listed (FirstTrip B2C, ShareTrip, GoZayaan). The B2B
 channels and Amy pay a commission with no promo code; their rates are in the grids.
 
 Rows come from the parses build_report already did (memoized), so nothing is read
-or fetched twice. One entry per (route, OTA, airline, code); when the same code was
-seen on several fares its effective rate is shown as the lowest-highest range.
+or fetched twice. One entry per (route, OTA, airline, tier, code); a code seen on
+several fares shows its effective rate as the lowest-highest range, and "Fares seen"
+counts DISTINCT fares (date + price), so one fare met twice counts once.
 """
 from __future__ import annotations
 
@@ -24,15 +30,20 @@ from typing import Any, Optional
 
 from . import grid as g
 
-COMMON, SPECIAL = "Common", "Special"
+COMMON, SPECIAL, UNCLEAR = "Common", "Special", "Unclear"
+NO_DISCOUNT, NOT_CAPTURED = "No discount", "Not captured"
+TIER_ORDER = {COMMON: 0, SPECIAL: 1, UNCLEAR: 2, NOT_CAPTURED: 3, NO_DISCOUNT: 4}
+BASE, TOTAL = "Base fare", "Booking total"
+NO_CODE = "(automatic, no code)"
+ALL_ROUTES = "All its routes"     # route of a per-airline row (0% codes)
 
 # Column order for the sheet and the app's table: (key, heading).
 COLUMNS = [
-    ("market", "Market"), ("route", "Route"), ("ota", "OTA"), ("airline", "Airline"),
-    ("tier", "Tier"), ("code", "Promo code"), ("who", "Who can use it"),
-    ("published_pct", "Published %"), ("effective", "Effective %"), ("cap_bdt", "Cap (BDT)"),
-    ("stacks", "On top of automatic"), ("fee_pct", "Payment fee %"), ("seen", "Fares seen"),
-    ("title", "Offer text"),
+    ("market", "Market"), ("route", "Route"), ("travel_dates", "Travel date(s)"),
+    ("ota", "OTA"), ("airline", "Airline"), ("tier", "Tier"), ("code", "Promo code"),
+    ("who", "Who can use it"), ("published_pct", "Published %"), ("effective", "Effective %"),
+    ("basis", "% of"), ("cap_bdt", "Cap (BDT)"), ("stacks", "On top of automatic"),
+    ("fee_pct", "Payment fee %"), ("seen", "Fares seen"), ("title", "Offer text"),
 ]
 
 
@@ -48,49 +59,65 @@ def _route(r: dict[str, Any]) -> str:
 
 
 def _obs(*, market: str, route: str, ota: str, airline: str, tier: str, code: str,
-         who: str, published: Optional[float], effective: Optional[float],
-         cap: Any = None, stacks: Optional[bool] = None, fee: Any = None,
-         title: str = "") -> dict[str, Any]:
-    """One sighting of one code on one fare."""
+         who: str, published: Optional[float], effective: Optional[float], basis: str,
+         fare: Any = None, date: str = "", cap: Any = None, stacks: Optional[bool] = None,
+         fee: Any = None, title: str = "") -> dict[str, Any]:
+    """One sighting of one code on one fare (`fare` identifies the fare)."""
     return {"market": market, "route": route, "ota": ota, "airline": airline,
-            "tier": tier, "code": code or "(no code)", "who": who,
-            "published_pct": published, "effective_pct": effective,
-            "cap_bdt": round(float(cap)) if cap else None, "stacks": stacks,
-            "fee_pct": fee, "title": title}
+            "tier": tier, "code": code, "who": who,
+            "published_pct": published, "effective_pct": effective, "basis": basis,
+            "fare": fare, "date": date, "cap_bdt": round(float(cap)) if cap else None,
+            "stacks": stacks, "fee_pct": fee, "title": title}
 
 
 # --- ShareTrip ----------------------------------------------------------------------
 
-def _sharetrip_titles(details: list[dict[str, Any]]) -> dict[str, str]:
-    return {str(c.get("couponCode")): str(c.get("title") or "")
-            for r in details for c in (r.get("coupon_terms") or []) if c.get("couponCode")}
-
-
-def _sharetrip_obs(market: str, route: str, airline: str, auto_pct: float,
-                   auto_code: Optional[str], cell: dict[str, Any],
+def _sharetrip_obs(where: dict[str, Any], auto_pct: float, auto_code: Optional[str],
+                   terms: Optional[list[dict[str, Any]]], cell: Optional[dict[str, Any]],
                    titles: dict[str, str]) -> list[dict[str, Any]]:
-    """Sightings for one judged ShareTrip fare: the automatic discount, the stacking
-    wallet coupon (both Common) and every other coupon (Special)."""
-    out = []
-    ota = "ShareTrip-B2C"
+    """Sightings for one ShareTrip fare: the automatic discount; then, when this airline's
+    coupon terms are known, the wallet stack (Common), every other coupon (Special) and
+    the 0% codes (No discount); when they aren't, one 'Not captured' marker."""
+    # The default coupon (FLIGHTINT / FLYINSIDE) is the one the automatic rate rides on.
+    default = next((str(c.get("couponCode")) for c in terms or []
+                    if str(c.get("isDefault", "")).lower() in ("1", "true", "yes")), None)
+    auto_code = auto_code or default
+    # 0% codes are a per-airline payment option, not a per-route rate: one row per
+    # airline across all its routes (else EMI/net-banking repeat on every route).
+    anywhere = {**where, "route": ALL_ROUTES}
     if auto_pct > 0:
-        out.append(_obs(market=market, route=route, ota=ota, airline=airline, tier=COMMON,
-                        code=auto_code or "", who="Anyone (automatic)",
-                        published=auto_pct, effective=auto_pct,
-                        title=titles.get(auto_code or "", "")))
-    wallet = cell.get("common_code")
-    for j in cell.get("judged") or []:
+        out = [_obs(**where, tier=COMMON, code=auto_code or NO_CODE, who="Anyone (automatic)",
+                    published=auto_pct, effective=auto_pct, title=titles.get(auto_code or "", ""))]
+    else:      # e.g. the low-cost carriers' BUDGETFLY: no automatic discount at all
+        out = [_obs(**anywhere, tier=NO_DISCOUNT, code=auto_code or NO_CODE,
+                    who="Anyone (no automatic discount)", published=0.0, effective=None,
+                    title=titles.get(auto_code or "", ""))]
+    if terms is None:
+        out.append(_obs(**where, tier=NOT_CAPTURED, code="(booking page not captured)",
+                        who="Unknown", published=None, effective=None,
+                        title="ShareTrip's coupons differ by airline. Open this airline's "
+                              "booking page on ShareTrip and save the HAR to see them."))
+        return out
+    wallet = (cell or {}).get("common_code")
+    for j in (cell or {}).get("judged") or []:
         is_wallet = bool(wallet) and j["code"] == wallet
-        out.append(_obs(market=market, route=route, ota=ota, airline=airline,
-                        tier=COMMON if is_wallet else SPECIAL, code=j["code"],
+        out.append(_obs(**where, tier=COMMON if is_wallet else SPECIAL, code=j["code"],
                         who=f"{j['label']} payment" if is_wallet else j["label"],
                         published=j["nominal_pct"], effective=j["effective_pct"],
                         cap=j.get("cap_bdt"), stacks=j["stacks_with_auto"],
                         fee=j.get("fee_pct"), title=titles.get(j["code"], "")))
+    for c in terms:
+        code = str(c.get("couponCode") or "")
+        if code and code not in (auto_code, default) and float(c.get("discount") or 0) <= 0:
+            out.append(_obs(**anywhere, tier=NO_DISCOUNT, code=code,
+                            who=g.sharetrip_har._card_label(c), published=0.0, effective=None,
+                            stacks=str(c.get("withDiscount", "")).lower() == "yes",
+                            title=str(c.get("title") or "")))
     return out
 
 
 def sharetrip(hars: Optional[list[str]]) -> list[dict[str, Any]]:
+    st = g.sharetrip_har
     details: list[dict[str, Any]] = []
     search: list[dict[str, Any]] = []
     for h in hars or []:
@@ -100,27 +127,32 @@ def sharetrip(hars: Optional[list[str]]) -> list[dict[str, Any]]:
     if not details and not search:
         return []
     gateways = g._recall("sharetrip_gateways", "all", {}) or None
-    titles = _sharetrip_titles(details)
-    # Coupon terms are market-uniform (see grid.collect_sharetrip_b2c): fares seen only
-    # in a search are judged with the market's terms at their own base fare.
-    terms: dict[str, list[dict[str, Any]]] = {}
-    for r in details:
-        terms.setdefault(_market(r["flight_type"]), r.get("coupon_terms") or [])
+    titles = {str(c.get("couponCode")): str(c.get("title") or "")
+              for r in details for c in (r.get("coupon_terms") or []) if c.get("couponCode")}
+    # Terms differ by airline: each airline's come only from its own booking pages.
+    own = st.terms_by_airline(details)
     auto_code = {(_route(r), r["airline"]): r.get("coupon_code") for r in search}
 
     out: list[dict[str, Any]] = []
+
+    def where(r: dict[str, Any], market: str) -> dict[str, Any]:
+        base = round(float(r.get("base_fare_bdt") or 0)) or None
+        return {"market": market, "route": _route(r), "ota": "ShareTrip-B2C",
+                "airline": r["airline"], "basis": BASE, "date": r.get("departure_date") or "",
+                "fare": (_route(r), r.get("departure_date") or "", base)}
+
     for r in details:
-        route = _route(r)
-        out += _sharetrip_obs(_market(r["flight_type"], r.get("origin"), r.get("destination")),
-                              route, r["airline"], float(r.get("base_pct") or 0),
-                              auto_code.get((route, r["airline"])), r, titles)
+        market = _market(r["flight_type"], r.get("origin"), r.get("destination"))
+        out += _sharetrip_obs(where(r, market), float(r.get("base_pct") or 0),
+                              auto_code.get((_route(r), r["airline"])),
+                              r.get("coupon_terms") or [], r, titles)
     for r in search:
         market = _market(r["flight_type"], r.get("origin"), r.get("destination"))
         auto = float(r.get("discount_pct") or 0)
-        cell = g.sharetrip_har.judge_cell(auto, float(r.get("base_fare_bdt") or 0),
-                                          terms.get(market) or [], gateways=gateways)
-        out += _sharetrip_obs(market, _route(r), r["airline"], auto,
-                              r.get("coupon_code"), cell, titles)
+        terms = own.get(("DOM" if market == "DOM" else "INTL", r["airline"]))
+        cell = (st.judge_cell(auto, float(r.get("base_fare_bdt") or 0), terms, gateways=gateways)
+                if terms is not None else None)
+        out += _sharetrip_obs(where(r, market), auto, r.get("coupon_code"), terms, cell, titles)
     return out
 
 
@@ -129,14 +161,17 @@ def sharetrip(hars: Optional[list[str]]) -> list[dict[str, Any]]:
 def gozayaan(hars: Optional[list[str]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for h in hars or []:
-        rows, surcharge = g._recall("gozayaan_routed", h, ([], {}))
-        for r in rows:
+        _rows, surcharge = g._recall("gozayaan_routed", h, ([], {}))
+        rows = g._recall("gozayaan_fares", h, None)
+        for r in rows if rows is not None else _rows:
             market = _market(r["flight_type"], r.get("origin"), r.get("destination"))
+            date = r.get("departure_date") or ""
             out.append(_obs(
                 market=market, route=_route(r), ota="Go Zayaan", airline=r["airline"],
                 tier=COMMON if r["eligibility_scope"] == "common" else SPECIAL,
-                code=r["coupon_code"], who=r["eligibility"],
-                published=r["discount_pct"], effective=r["realized_pct"],
+                code=r["coupon_code"], who=r.get("bank_cards") or r["eligibility"],
+                published=r["discount_pct"], effective=r["realized_pct"], basis=TOTAL,
+                fare=(_route(r), date, r.get("product_price")), date=date,
                 cap=r.get("cap_bdt"), fee=(surcharge or {}).get(market),
                 title=r.get("name") or ""))
     return out
@@ -151,35 +186,51 @@ def _ft_effective(rate: float, base: float, cap: Any) -> float:
     return round(min(math.floor(base * rate / 100), float(cap)) / base * 100, 2)
 
 
-def firsttrip_b2c(rows_by_route: Optional[dict], fees: Optional[dict]) -> list[dict[str, Any]]:
+def ft_tier(code: str, airline: str, *, special_slot: bool = False) -> tuple[str, str]:
+    """(tier, who) for a FirstTrip code, from its brand core (FTEBLDOM07 -> EBL):
+    a known card/membership -> Special; a wallet -> Common; the airline's own or a bare
+    route code (FTBSDOM) -> Common; anything else -> Unclear (or Special when FirstTrip
+    itself put it in the special-coupon slot)."""
     ft = g.firsttrip
+    core = ft._ft_coupon_core(code)
+    if core in ft._FT_CARD_LABELS:
+        return SPECIAL, ft._FT_CARD_LABELS[core]
+    if core in ft._FT_WALLET_LABELS:
+        return COMMON, f"{ft._FT_WALLET_LABELS[core]} payment"
+    if special_slot:
+        return SPECIAL, "Card holders (FirstTrip special offer)"
+    if not core or core == str(airline).upper():
+        return COMMON, "Anyone"
+    return UNCLEAR, "Not a known card or wallet code: check the offer on FirstTrip"
+
+
+def firsttrip_b2c(rows_by_route: Optional[dict], fees: Optional[dict]) -> list[dict[str, Any]]:
     fees = fees or {}
     out: list[dict[str, Any]] = []
     for rows in (rows_by_route or {}).values():
         for r in rows:
-            route, airline = _route(r), r["airline"]
-            market = _market("", r.get("origin"), r.get("destination"))
+            airline = r["airline"]
             base = float(r.get("base_fare_bdt") or 0)
-            common = dict(market=market, route=route, ota="Firsttrip-B2C", airline=airline)
+            date = str(r.get("departure") or "")[:10]
+            where = dict(market=_market("", r.get("origin"), r.get("destination")),
+                         route=_route(r), ota="Firsttrip-B2C", airline=airline, basis=BASE,
+                         date=date, fare=(_route(r), date, r.get("flight_number"), round(base)))
+            fee_for = {COMMON: fees.get("common"), SPECIAL: fees.get("card")}
             if (r.get("dynamic_rate") or 0) > 0:
-                out.append(_obs(**common, tier=COMMON, code=r.get("dynamic_code") or "",
+                out.append(_obs(**where, tier=COMMON, code=r.get("dynamic_code") or NO_CODE,
                                 who="Anyone (automatic)", published=r["dynamic_rate"],
                                 effective=r["dynamic_rate"], fee=fees.get("common")))
             code, rate = r.get("coupon_code") or "", float(r.get("headline_rate") or 0)
             if rate > 0:
-                card = ft._is_ft_card_coupon(code)
-                out.append(_obs(**common, tier=SPECIAL if card else COMMON, code=code,
-                                who=ft._ft_coupon_label(code) if card else "Anyone",
-                                published=rate,
+                tier, who = ft_tier(code, airline)
+                out.append(_obs(**where, tier=tier, code=code or NO_CODE, who=who, published=rate,
                                 effective=_ft_effective(rate, base, r.get("coupon_cap_bdt")),
-                                cap=r.get("coupon_cap_bdt"),
-                                fee=fees.get("card" if card else "common")))
+                                cap=r.get("coupon_cap_bdt"), fee=fee_for.get(tier)))
             slot, slot_rate = r.get("special_code") or "", float(r.get("special_rate") or 0)
             if slot_rate > 0 and slot != code:
-                out.append(_obs(**common, tier=SPECIAL, code=slot,
-                                who=ft._ft_coupon_label(slot) or "Card holders",
-                                published=slot_rate, effective=slot_rate,
-                                fee=fees.get("card")))
+                tier, who = ft_tier(slot, airline, special_slot=True)
+                out.append(_obs(**where, tier=tier, code=slot or NO_CODE, who=who,
+                                published=slot_rate, effective=slot_rate, fee=fee_for.get(tier)))
     return out
 
 
@@ -191,46 +242,66 @@ def _fmt_range(lo: Optional[float], hi: Optional[float]) -> str:
     return g._fmt(hi) if lo is None or round(lo, 2) == round(hi, 2) else f"{g._fmt(lo)}-{g._fmt(hi)}"
 
 
+def _fmt_dates(dates: set) -> str:
+    ds = sorted(d for d in dates if d)
+    if len(ds) <= 3:
+        return ", ".join(ds)
+    return f"{ds[0]} to {ds[-1]} ({len(ds)} dates)"
+
+
 def merge(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """One entry per (market, route, OTA, airline, tier, code): the effective rate as a
-    lowest-highest range over the fares seen, sorted Common first, best first."""
+    lowest-highest range over the DISTINCT fares seen, sorted by tier, then best first."""
     by_key: dict[tuple, dict[str, Any]] = {}
     for o in observations:
         key = (o["market"], o["route"], o["ota"], o["airline"], o["tier"], o["code"])
-        e = by_key.get(key)
+        e = by_key.setdefault(key, {**o, "eff_lo": None, "eff_hi": None, "fares": set(),
+                                    "dates": set(), "unkeyed": 0})
         eff = o["effective_pct"]
-        if e is None:
-            by_key[key] = {**o, "eff_lo": eff, "eff_hi": eff, "seen": 1}
-            continue
-        e["seen"] += 1
         if eff is not None:
             e["eff_lo"] = eff if e["eff_lo"] is None else min(e["eff_lo"], eff)
             e["eff_hi"] = eff if e["eff_hi"] is None else max(e["eff_hi"], eff)
+        if o.get("fare") is None:
+            e["unkeyed"] += 1
+        else:
+            e["fares"].add(o["fare"])
+        if o.get("date"):
+            e["dates"].add(o["date"])
         for k in ("who", "title", "cap_bdt", "fee_pct", "published_pct", "stacks"):
             if e.get(k) in (None, "") and o.get(k) not in (None, ""):
                 e[k] = o[k]
     entries = []
     for e in by_key.values():
-        e.pop("effective_pct", None)
+        fares, dates = e.pop("fares"), e.pop("dates")
+        e["seen"] = len(fares) + e.pop("unkeyed")
+        e["dates"] = sorted(d for d in dates if d)
+        e["travel_dates"] = _fmt_dates(dates)
+        for k in ("effective_pct", "fare", "date"):
+            e.pop(k, None)
         e["effective"] = _fmt_range(e["eff_lo"], e["eff_hi"])
         e["stacks"] = "" if e["stacks"] is None else ("Yes" if e["stacks"] else "No")
         entries.append(e)
     ota_order = {lab: i for i, (lab, _k) in enumerate(g.ROW_ORDER)}
-    entries.sort(key=lambda e: (e["market"] != "DOM", e["route"] == "", e["route"],
+    entries.sort(key=lambda e: (e["market"] != "DOM", e["route"] in ("", ALL_ROUTES), e["route"],
                                 ota_order.get(e["ota"], 99), e["airline"],
-                                e["tier"] != COMMON, -(e["eff_hi"] or 0), e["code"]))
+                                TIER_ORDER.get(e["tier"], 9), -(e["eff_hi"] or 0), e["code"]))
     return entries
 
 
-_WIDTHS = {"market": 13, "route": 10, "ota": 15, "airline": 8, "tier": 9, "code": 18,
-           "who": 22, "published_pct": 11, "effective": 12, "cap_bdt": 10, "stacks": 11,
-           "fee_pct": 10, "seen": 8, "title": 60}
+_WIDTHS = {"market": 13, "route": 10, "travel_dates": 14, "ota": 15, "airline": 8, "tier": 12,
+           "code": 18, "who": 30, "published_pct": 11, "effective": 12, "basis": 13,
+           "cap_bdt": 10, "stacks": 11, "fee_pct": 10, "seen": 8, "title": 60}
 _NOTE = ("Every promo code each OTA offered, not just the best one shown in the grids. "
-         "Common = anyone gets it; Special = needs that card, bank or membership. "
+         "Common = anyone gets it; Special = needs that card, bank or membership; "
+         "Not captured = ShareTrip's coupons differ by airline and this airline's booking "
+         "page wasn't captured; No discount = a 0% payment option (EMI, net banking). "
          "Effective % = what the code was worth at the fares seen (caps applied; a range "
          "when fares differed), including the automatic discount when the code goes on "
-         "top of it. ShareTrip and FirstTrip % are of the base fare, GoZayaan's "
-         "of the booking total. Use the filter arrows in the header row.")
+         "top of it. '% of' says what the % is taken from: ShareTrip and FirstTrip use the "
+         "base fare, GoZayaan the booking total, so compare like with like. "
+         "Use the filter arrows in the header row.")
+_TIER_FILL = {COMMON: "C6EFCE", SPECIAL: "DDEBF7", UNCLEAR: "FFF2CC",
+              NOT_CAPTURED: "FFC7CE", NO_DISCOUNT: "EDEDED"}
 
 
 def _pct(v: Any) -> Any:
@@ -248,9 +319,8 @@ def write_sheet(ws, report: dict[str, Any]) -> None:
     from openpyxl.styles import PatternFill
     from openpyxl.utils import get_column_letter
     st = g._detail_styles()
-    tier_fill = {COMMON: PatternFill("solid", fgColor=g.HL_GREEN),
-                 SPECIAL: PatternFill("solid", fgColor=g.HL_BLUE)}
     ncol = len(COLUMNS)
+    tier_col = [k for k, _h in COLUMNS].index("tier") + 1
     t = ws.cell(1, 1, f"{report['report_date']} / {report['report_time']}hrs — all promo codes")
     t.font = st["title"]
     ws.cell(2, 1, _NOTE).font = st["note"]
@@ -267,13 +337,15 @@ def write_sheet(ws, report: dict[str, Any]) -> None:
             v = vals.get(key)
             cell = ws.cell(r, ci, v if v != "" else None)
             cell.font = st["label"] if key == "code" else st["data"]
-            cell.alignment = st["left"] if key in ("code", "who", "title", "ota") else st["center"]
+            cell.alignment = st["left"] if key in ("code", "who", "title", "ota", "travel_dates") \
+                else st["center"]
             cell.border = st["border"]
             if isinstance(v, float) and key in ("published_pct", "effective", "fee_pct"):
                 cell.number_format = "0.##%"
             elif key == "cap_bdt" and v:
                 cell.number_format = "#,##0"
-        ws.cell(r, 5).fill = tier_fill.get(e["tier"], PatternFill())
+        if e["tier"] in _TIER_FILL:
+            ws.cell(r, tier_col).fill = PatternFill("solid", fgColor=_TIER_FILL[e["tier"]])
         r += 1
     ws.auto_filter.ref = f"A3:{get_column_letter(ncol)}{max(r - 1, 3)}"
     ws.freeze_panes = "A4"

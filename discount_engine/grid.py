@@ -178,6 +178,9 @@ def collect_gozayaan(har_path: str) -> dict[tuple[str, str], str]:
     if _PARSE_MEMO is not None:     # route-tagged rows for the per-route view, same load
         _remember("gozayaan_routed", har_path,
                   (gozayaan_har.parse_discounts_routed(har_path, har=har), surcharge))
+        # every fare's campaigns, for the all-codes list (see all_codes.py)
+        _remember("gozayaan_fares", har_path,
+                  gozayaan_har.parse_discounts_routed(har_path, har=har, per_fare=True))
     return _gozayaan_cells(rows, surcharge)
 
 
@@ -188,12 +191,14 @@ def _gozayaan_cells(rows: list[dict[str, Any]],
     for (airline, flight_type), cell in summary.items():
         rt = "DOM" if flight_type == "DOM" else "INTL"
         common = cell.get("common_pct")
+        special = cell.get("special")
         if common is None:
-            continue
+            if not special:
+                continue
+            common = 0      # only card offers: anyone without those cards gets nothing
         fee = surcharge.get(rt)
         fee_note = f", {_fmt(fee)}% fee" if fee else ""
-        text = _fmt(common) + (f"({_fmt(fee)}% fee)" if fee else "")
-        special = cell.get("special")
+        text = _fmt(common) + (f"({_fmt(fee)}% fee)" if fee and common else "")
         if special:
             # the surcharge is booking-wide, so it applies to the card special too
             text += f", {_fmt(special['pct'])} ({special['eligibility']}{fee_note})"
@@ -253,10 +258,10 @@ def collect_sharetrip_b2c(har_paths: str | list[str]) -> dict[tuple[str, str], s
     1% uncapped loyalty stack. Cells show the common rate (automatic + wallet
     stack), the best judged special, and the best card special when different.
 
-    Coupon TERMS are market-uniform (verified 2026-07-06: identical coupon
-    objects across airlines within DOM / within INTL), so airlines that only
-    appear in a search capture are judged with the shared terms at their own
-    observed base fare. Only displayPrice.discount is airline-specific.
+    Coupon TERMS differ by airline (2026-09 captures: SkyTrip only on BS/BG, no
+    Stellar on CA/FZ, nothing on the low-cost carriers), so an airline seen only in
+    a search gets its OWN terms from a booking on another route, judged at its own
+    fare, or its automatic rate alone when no booking page of it was captured.
     """
     paths = [har_paths] if isinstance(har_paths, str) else list(har_paths)
 
@@ -314,26 +319,24 @@ def _assemble_sharetrip_cells(details_rows: list[dict[str, Any]], search_rows: l
                               terms_rows: Optional[list[dict[str, Any]]] = None,
                               ) -> dict[tuple[str, str], str]:
     """Judge ShareTrip cells from parsed inputs — shared by the HAR and LIVE collectors so
-    both render identically. details_rows = booking-flow judged rows (exact per airline +
-    market-uniform coupon_terms); search_rows = automatic-discount rows (fill airlines with
-    no booking capture at their own base); gateways = convenience-fee catalog.
-    terms_rows = where the market coupon terms come from (default details_rows); the
+    both render identically. details_rows = booking-flow judged rows (exact per airline,
+    with that airline's coupon_terms); search_rows = automatic-discount rows (fill airlines
+    with no booking capture here); gateways = convenience-fee catalog.
+    terms_rows = where each airline's coupon terms come from (default details_rows); the
     per-route view passes ALL routes' booking rows, since the live pull fetches each
-    airline's booking once per market, not once per route."""
+    airline's booking once per market, not once per route. Terms differ by airline, so an
+    airline never borrows another's: with no booking page captured it gets its automatic
+    rate only."""
     details = sharetrip_har.summarize_details(details_rows)
-    shared_terms: dict[str, list[dict[str, Any]]] = {}
-    for r in (details_rows if terms_rows is None else terms_rows):
-        rt = "DOM" if r["flight_type"] == "DOM" else "INTL"
-        if r.get("coupon_terms"):
-            shared_terms.setdefault(rt, r["coupon_terms"])
+    own_terms = sharetrip_har.terms_by_airline(details_rows if terms_rows is None else terms_rows)
 
     cells: dict[tuple[str, str], str] = {}
     for (airline, flight_type), c in details.items():
         rt = "DOM" if flight_type == "DOM" else "INTL"
         cells[(rt, airline)] = _sharetrip_cell_text(c)
 
-    # Search fill: airlines without a booking capture get the shared market terms
-    # judged at their own observed fare (caps re-evaluated per airline).
+    # Search fill: airlines without a booking capture HERE get their own terms (from a
+    # booking on another route) judged at this fare, or their automatic rate alone.
     common = sharetrip_har.summarize_discounts(search_rows)
     for (airline, flight_type), cell in common.items():
         rt = "DOM" if flight_type == "DOM" else "INTL"
@@ -341,7 +344,7 @@ def _assemble_sharetrip_cells(details_rows: list[dict[str, Any]], search_rows: l
             continue    # a booking capture already gave the exact cell
         judged = sharetrip_har.judge_cell(cell["discount_pct"],
                                           float(cell.get("base_fare_bdt") or 0),
-                                          shared_terms.get(rt) or [],
+                                          own_terms.get((rt, airline)) or [],
                                           gateways=gateways or None)
         cells[(rt, airline)] = _sharetrip_cell_text(judged)
     return cells

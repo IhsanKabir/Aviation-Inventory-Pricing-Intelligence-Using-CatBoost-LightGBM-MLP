@@ -239,19 +239,22 @@ def parse_discounts(path: str | Path, *, har: Dict[str, Any] | None = None) -> L
 
 
 def parse_discounts_routed(path: str | Path, *,
-                           har: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
-    """parse_discounts with each coupon row tagged with its ROUTE.
+                           har: Dict[str, Any] | None = None,
+                           per_fare: bool = False) -> List[Dict[str, Any]]:
+    """parse_discounts with each coupon row tagged with its ROUTE and travel date.
 
     The coupon request carries no route, only the search_id; the route comes from
-    the matching search request (trips[0] origin/destination). De-duplication is
-    per route: the plain parser de-duplicates across the file, which is right for
-    the market summary but would drop a coupon from every route after the first.
+    the matching search request (trips[0] origin/destination/preferred_time).
+    De-duplication is per route: the plain parser de-duplicates across the file,
+    which is right for the market summary but would drop a coupon from every route
+    after the first. per_fare=True keeps one row per FARE (each booking price) too,
+    for the all-codes list, so a capped campaign's range over fares is real.
     Rows whose search wasn't captured get origin/destination ''.
     """
     if har is None:
         har = _load_har(path)
     entries = har.get("log", {}).get("entries", [])
-    route_of: Dict[str, tuple[str, str]] = {}
+    route_of: Dict[str, tuple[str, str, str]] = {}
     for e in entries:
         if not e.get("request", {}).get("url", "").split("?")[0].endswith("/flight/v4.0/search/"):
             continue
@@ -264,10 +267,11 @@ def parse_discounts_routed(path: str | Path, *,
         sid = result.get("search_id") if isinstance(result, dict) else None
         trip = ((body.get("trips") or [{}])[0] or {}) if isinstance(body, dict) else {}
         if sid and trip.get("origin") and trip.get("destination"):
-            route_of[str(sid)] = (str(trip["origin"]).upper(), str(trip["destination"]).upper())
+            route_of[str(sid)] = (str(trip["origin"]).upper(), str(trip["destination"]).upper(),
+                                  str(trip.get("preferred_time") or "")[:10])
 
     out: List[Dict[str, Any]] = []
-    seen_by_route: Dict[tuple[str, str], set] = {}
+    seen_by_route: Dict[tuple, set] = {}
     for e in entries:
         if not e.get("request", {}).get("url", "").endswith("/api/business_rules/get_discount_list/"):
             continue
@@ -276,12 +280,13 @@ def parse_discounts_routed(path: str | Path, *,
             data = json.loads((e.get("response", {}).get("content", {}) or {}).get("text", "") or "{}")
         except json.JSONDecodeError:
             continue
-        route = route_of.get(str(body.get("search_id")), ("", ""))
+        origin, dest, when = route_of.get(str(body.get("search_id")), ("", "", ""))
+        scope = (origin, dest, when, body.get("product_price")) if per_fare else (origin, dest)
         rows = rows_from_discount_list(
             plating_carrier=body.get("plating_carrier"), flight_type=body.get("flight_type"),
             product_price=body.get("product_price"), data=data,
-            seen=seen_by_route.setdefault(route, set()))
-        out += [{**r, "origin": route[0], "destination": route[1]} for r in rows]
+            seen=seen_by_route.setdefault(scope, set()))
+        out += [{**r, "origin": origin, "destination": dest, "departure_date": when} for r in rows]
     return out
 
 
@@ -345,36 +350,71 @@ def rows_from_discount_list(*, plating_carrier: Any, flight_type: Any,
             "realized_pct": realized_pct,
             "apply_on": markup.get("apply_on"),
             "eligibility_scope": scope,        # "common" | "specific"
-            "eligibility": eligibility,        # human label
+            "eligibility": eligibility,        # short human label
+            "bank_cards": bank_cards(it),      # every bank card it is valid on ('' = any)
             "name": it.get("discount_name") or it.get("discount_description") or "",
         })
     return rows
 
 
+def _bank_details(campaign: Dict[str, Any]) -> list:
+    return (campaign.get("discount_validation") or {}).get("bank_type_details") or []
+
+
+def bank_cards(campaign: Dict[str, Any]) -> str:
+    """'Brac Bank Visa/Master; City Bank AMEX; ...' — every card a campaign is valid on,
+    by bank; '' when it has no bank restriction."""
+    by_bank: Dict[str, list] = {}
+    for b in _bank_details(campaign):
+        name = str(b.get("bank_name") or "").strip()
+        if _is_other_bank(name):
+            name = "Any other bank"
+        if name:
+            scheme = str(b.get("card_type") or "").strip()
+            cards = by_bank.setdefault(name, [])
+            if scheme and scheme not in cards:
+                cards.append(scheme)
+    return "; ".join(f"{bank} {'/'.join(cards)}".strip() for bank, cards in sorted(by_bank.items()))
+
+
+def _is_other_bank(name: str) -> bool:
+    """GoZayaan's catch-all bank entry ('Others'): any bank's card of that scheme."""
+    return name.strip().lower() in ("others", "other", "other banks", "any")
+
+
 def _classify_eligibility(campaign: Dict[str, Any]) -> tuple[str, str]:
     """
-    Classify a campaign as commonly-available vs card-specific using the
+    Classify a campaign as available to anyone vs card-specific using the
     structured discount_validation.bank_type_details, not the description text.
 
     Rule (structured-data driven):
       * no bank restriction            -> common  ("Any online payment")
       * AMEX-only scheme               -> specific (premium card)
       * exactly one bank               -> specific (that bank's card)
-      * broad multi-bank coverage      -> common  ("Most cards")
+      * includes the 'Others' bank      -> common ("Any Visa card"): any bank's card of
+        those schemes qualifies
+      * several named banks            -> specific ("Brac Bank / EBL +4 banks"): only
+        holders of those banks' cards get it, so it is not a rate anyone gets (it was
+        "common / Most cards" before 2026-10; a bKash or other-bank payer is excluded)
     """
-    details = (campaign.get("discount_validation") or {}).get("bank_type_details") or []
+    details = _bank_details(campaign)
     banks = sorted({str(b.get("bank_name")).strip() for b in details if b.get("bank_name")})
     schemes = sorted({str(b.get("card_type")).strip() for b in details if b.get("card_type")})
 
     if not banks:
         return "common", "Any online payment"
+    open_schemes = sorted({str(b.get("card_type")).strip() for b in details
+                           if _is_other_bank(str(b.get("bank_name") or "")) and b.get("card_type")})
+    if any(_is_other_bank(b) for b in banks):
+        return "common", f"Any {'/'.join(open_schemes)} card" if open_schemes else "Any card"
     if schemes == ["AMEX"]:
         bank = banks[0] if len(banks) == 1 else "AMEX"
         return "specific", f"{bank} AMEX"
     if len(banks) == 1:
         scheme = f" {schemes[0]}" if schemes else ""
         return "specific", f"{banks[0]}{scheme}"
-    return "common", "Most cards"
+    more = f" +{len(banks) - 2} banks" if len(banks) > 2 else ""
+    return "specific", f"{banks[0]} / {banks[1]}{more}"
 
 
 def summarize_discounts(rows: List[Dict[str, Any]]) -> Dict[tuple[str, str], Dict[str, Any]]:

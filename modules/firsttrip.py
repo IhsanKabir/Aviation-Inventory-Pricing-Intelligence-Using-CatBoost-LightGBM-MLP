@@ -448,7 +448,15 @@ def parse_b2c_har(har_path: str) -> List[Dict[str, Any]]:
 
 # FirstTrip coupon-code cores that denote a CARD / loyalty special (not a universal promo).
 _FT_CARD_LABELS = {"EBL": "EBL", "CITY": "City Bank", "DBBL": "DBBL", "BRAC": "BRAC",
-                   "GPSTAR": "GPStar", "GP": "GPStar", "SCB": "SCB", "MTB": "MTB"}
+                   "GPSTAR": "GPStar", "GP": "GPStar", "SCB": "SCB", "MTB": "MTB",
+                   "UCB": "UCB", "AMEX": "AMEX", "PRIME": "Prime Bank", "IFIC": "IFIC",
+                   "BANKASIA": "Bank Asia", "LBF": "LankaBangla", "LANKABANGLA": "LankaBangla",
+                   "NRB": "NRB", "NRBC": "NRBC", "SEBL": "Southeast Bank", "DHAKA": "Dhaka Bank",
+                   "ONE": "One Bank", "HSBC": "HSBC", "JAMUNA": "Jamuna Bank",
+                   "PUBALI": "Pubali Bank", "ROBI": "Robi", "ORANGE": "Orange Club",
+                   "STAR": "GPStar"}
+# Wallet cores: anyone paying with that wallet gets it, so these are NOT card specials.
+_FT_WALLET_LABELS = {"BKASH": "bKash", "NAGAD": "Nagad", "UPAY": "Upay", "ROCKET": "Rocket"}
 
 
 def _ft_coupon_core(code: Optional[str]) -> str:

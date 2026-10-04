@@ -810,7 +810,13 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
             self._prev_payload = self._load_local_prev()
             colored = apply_highlights(report, self._prev_payload)
             self._report = report
-            self._save_local_prev(report)
+            # The code list can run to thousands of rows (MBs): it stays here for export
+            # and the "All codes" view (fetched on demand via all_codes()), and never
+            # rides in the run result or the change-diff baseline.
+            codes_count = len(report.get("all_codes") or [])
+            colored = {k: v for k, v in colored.items() if k != "all_codes"}
+            colored["all_codes_count"] = codes_count
+            self._save_local_prev({k: v for k, v in report.items() if k != "all_codes"})
             self._status = "Done."
             self._log_usage("run_report",
                             count=sum(len(v) for v in hars.values()),
@@ -863,6 +869,14 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                     "log": log_buffer.getvalue()[-8000:]}
         finally:
             self._busy = False
+
+    def all_codes(self) -> dict[str, Any]:
+        """Every promo code from the last run, for the 'All codes / discounts' view."""
+        if not self._token():
+            return {"ok": False, "auth_required": True, "error": "Sign in to use the app."}
+        if not self._report:
+            return {"ok": False, "error": "Run the report first."}
+        return {"ok": True, "codes": self._report.get("all_codes") or []}
 
     # ------------------------------------------------------------------ export
     def export_xlsx(self) -> dict[str, Any]:

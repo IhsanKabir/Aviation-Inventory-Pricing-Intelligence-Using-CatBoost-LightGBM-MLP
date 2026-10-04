@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -241,9 +242,16 @@ def _legs_route(legs: Any) -> tuple[str, str]:
     return _code(legs[0].get("origin")), _code(legs[-1].get("destination"))
 
 
+def _legs_date(legs: Any) -> str:
+    """Travel date (YYYY-MM-DD) of an itinerary's first leg, '' when not carried."""
+    legs = legs if isinstance(legs, list) else []
+    dep = (legs[0].get("departureDateTime") if legs and isinstance(legs[0], dict) else None) or {}
+    return str(dep.get("date") or "")[:10] if isinstance(dep, dict) else ""
+
+
 def _routed(row: Dict[str, Any], legs: Any) -> Dict[str, Any]:
     origin, destination = _legs_route(legs)
-    return {**row, "origin": origin, "destination": destination}
+    return {**row, "origin": origin, "destination": destination, "departure_date": _legs_date(legs)}
 
 
 def parse_discounts_routed(path: str | Path, *,
@@ -268,8 +276,8 @@ def parse_discounts_routed(path: str | Path, *,
             if not row:
                 continue
             row = _routed(row, fl.get("legs"))
-            sig = (row["origin"], row["destination"], row["airline"], row["flight_type"],
-                   row["coupon_code"], row["discount_pct"], row["base_fare_bdt"])
+            sig = (row["origin"], row["destination"], row["departure_date"], row["airline"],
+                   row["flight_type"], row["coupon_code"], row["discount_pct"], row["base_fare_bdt"])
             if sig in seen:
                 continue
             seen.add(sig)
@@ -301,12 +309,18 @@ def summarize_discounts(rows: List[Dict[str, Any]]) -> Dict[tuple[str, str], Dic
 # and a withDiscount flag (Yes = stacks ON TOP of the automatic displayPrice.discount,
 # No = replaces it). Verified on 2026-07-06 captures: the automatic discount is a
 # percent of the BASE fare (floor(base*d/100) == total - promotionalAmount on all six
-# captures) and is airline-specific; the coupon TERMS are market-uniform (identical
-# coupon objects across airlines within DOM / within INTL).
+# captures) and is airline-specific. The coupon TERMS are airline-specific too: the
+# 2026-09-24/28 captures show SkyTrip only on BS/BG, no Stellar on CA/FZ/PR/RJ and no
+# coupons at all on the low-cost carriers (6E/G9/J9/OV). See terms_by_airline.
 # Longest keywords first so "Stellar Signature" doesn't collapse into "Stellar".
 _CARD_KEYWORDS = ["Stellar Signature", "Stellar Platinum", "American Express", "AMEX",
                   "SkyTrip", "Bank Asia", "EBL", "City Bank", "GPStar", "Orange Club",
-                  "Robi Elite", "bKash", "Nagad", "Visa", "Mastercard", "Stellar"]
+                  "Robi Elite", "bKash", "Nagad", "Upay", "Rocket", "Tap", "OK Wallet",
+                  "CellFin", "Visa", "Mastercard", "Stellar"]
+
+# Wallets whose stacking coupon counts as the COMMON rate (anyone can pay with one),
+# in order of preference when several are offered.
+_WALLETS = ["bkash", "nagad", "upay", "rocket", "tap", "okwallet", "ok wallet", "cellfin"]
 
 
 def _find_coupons(node: Any, acc: list) -> None:
@@ -329,18 +343,40 @@ def _card_label(coupon: Dict[str, Any]) -> str:
 
 
 def _wallet_coupon(coupons: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """The stackable wallet coupon for the 'common' rate (bKash preferred, then Nagad).
+    """The stackable wallet coupon for the 'common' rate (bKash preferred, then Nagad,
+    then the other wallets in _WALLETS).
 
     Only exists on domestic today — international has no wallet coupon, so the
     common rate there is the automatic discount alone.
     """
     def _is(c: Dict[str, Any], word: str) -> bool:
-        blob = (str(c.get("couponCode", "")) + str(c.get("title", ""))).lower()
-        return (word in blob and str(c.get("withDiscount", "")).lower() == "yes"
+        blob = (str(c.get("couponCode", "")) + " " + str(c.get("title", ""))).lower()
+        return (re.search(rf"\b{re.escape(word)}", blob) is not None
+                and str(c.get("withDiscount", "")).lower() == "yes"
                 and float(c.get("discount") or 0) > 0)
 
-    return (next((c for c in coupons if _is(c, "bkash")), None)
-            or next((c for c in coupons if _is(c, "nagad")), None))
+    for word in _WALLETS:
+        found = next((c for c in coupons if _is(c, word)), None)
+        if found:
+            return found
+    return None
+
+
+def terms_by_airline(rows: List[Dict[str, Any]]) -> Dict[tuple[str, str], List[Dict[str, Any]]]:
+    """{(DOM|INTL, airline): coupon terms} from booking-details rows, merged over every
+    booking captured for that airline (any route), one object per coupon code.
+
+    Terms differ by airline, so an airline's coupons come ONLY from its own booking
+    pages; an airline with none captured has no known coupons (never another's)."""
+    out: Dict[tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+    for r in rows:
+        key = ("DOM" if r.get("flight_type") == "DOM" else "INTL", r["airline"])
+        codes = out.setdefault(key, {})
+        for c in r.get("coupon_terms") or []:
+            code = str(c.get("couponCode") or "")
+            if code and (code not in codes or len(c) > len(codes[code])):
+                codes[code] = c
+    return {k: list(v.values()) for k, v in out.items()}
 
 
 def _min_gateway_fee(coupon: Dict[str, Any],
@@ -519,7 +555,7 @@ def _details_row(resp: Dict[str, Any],
         "persona": "B2C",
         "airline": airline,
         "flight_type": "DOM" if resp.get("isDomestic") else "INTL",
-        "coupon_terms": coupons,   # market-uniform: reusable for airlines seen only in search
+        "coupon_terms": coupons,   # THIS airline's terms; reused for its other fares (terms_by_airline)
         # TripCoin earn (~ base/1000 coins) — a small extra, noted but never counted
         # in the % (redemption value isn't exposed in the captures).
         "tripcoin_earn": (resp.get("points") or {}).get("earn"),

@@ -201,6 +201,25 @@ def test_run_shares_engine_and_colors_against_prev(api, monkeypatch):
     assert result["report"]["grids"]["DOM"]["best"]["BS"]["display"] == "12% net · USBA"
 
 
+def test_code_list_is_fetched_on_demand_not_shipped_with_the_run(api, monkeypatch):
+    tmp_path = _mktmp()
+    api._config["har_dir"] = str(tmp_path)
+    _sign_in(api, monkeypatch)
+    codes = [{"code": f"C{i}", "tier": "Common"} for i in range(3)]
+    monkeypatch.setattr(backend_mod, "auto_detect_hars", lambda d: {})
+    monkeypatch.setattr(backend_mod, "build_report",
+                        lambda *a, **kw: {**_report(bs="12"), "all_codes": codes})
+    monkeypatch.setattr(api, "_load_local_prev", lambda: None)
+    saved = []
+    monkeypatch.setattr(api, "_save_local_prev", saved.append)
+    result = api.run()
+    assert result["ok"]
+    assert "all_codes" not in result["report"] and result["report"]["all_codes_count"] == 3
+    assert "all_codes" not in saved[0]                       # baseline stays small
+    assert api.all_codes() == {"ok": True, "codes": codes}   # the view fetches it
+    assert api._report["all_codes"] == codes                 # export still has it
+
+
 def test_run_skip_paths_filter(api, monkeypatch):
     tmp_path = _mktmp()
     keep, skip = str(tmp_path / "a.har"), str(tmp_path / "b.har")

@@ -32,6 +32,8 @@
   td.hl-highest { background: var(--green-bg); color: var(--green-tx); font-weight: 700; }
   td.hl-second  { background: var(--blue-bg);  color: var(--blue-tx); }
   td.hl-changed { background: var(--red-bg);   color: var(--red-tx); }
+  td.tier-unclear { background: #fff2cc; color: #8a6100; }
+  td.tier-zero { background: #ededed; color: var(--muted); }
   tr.best th, tr.best td { background: var(--slate); color: #fff; font-weight: 700; }
   .banner { padding: 10px 14px; border-radius: 8px; font-size: 13px; }
   .banner.warn { background: #fff7e6; border: 1px solid #f0c36d; color: #8a6100; }
@@ -274,7 +276,9 @@
       <select id="cf-ota" onchange="drawDiscounts()" title="OTA"></select>
       <select id="cf-airline" onchange="drawDiscounts()" title="Airline"></select>
       <select id="cf-tier" onchange="drawDiscounts()" title="Common = anyone; Special = needs a card or membership">
-        <option value="">Common + special</option><option>Common</option><option>Special</option></select>
+        <option value="">Every discount (not 0% codes)</option><option>Common</option><option>Special</option>
+        <option>Unclear</option><option>Not captured</option><option>No discount</option>
+        <option value="__all__">Everything, incl. 0% codes</option></select>
       <input id="cf-text" placeholder="Find a code or card, e.g. AMEX" oninput="drawDiscounts()" style="min-width:220px">
     </div>
     <div id="grids"></div>
@@ -757,11 +761,12 @@ function renderReport(report, prevAvailable) {
   lastPrevAvailable = prevAvailable;
   const routes = report.by_route || [];
   const pref = (state && state.preferred_routes) || [];
-  const hasCodes = (report.all_codes || []).length > 0;
+  const hasCodes = (report.all_codes_count || 0) > 0;
+  allCodes = null;                    // this run's list loads when the view opens
   document.getElementById("view-switch").style.display = (routes.length || pref.length || hasCodes) ? "" : "none";
   document.getElementById("view-route").style.display = (routes.length || pref.length) ? "" : "none";
   document.getElementById("view-codes").style.display = hasCodes ? "" : "none";
-  fillCodeFilters(report.all_codes || []);
+  document.getElementById("view-codes").textContent = `All codes / discounts (${report.all_codes_count || 0})`;
   const filter = document.getElementById("route-filter");
   const keep = filter.value;
   filter.innerHTML =
@@ -772,7 +777,8 @@ function renderReport(report, prevAvailable) {
   filter.value = options.includes(keep) && keep !== "" ? keep : (pref.length ? "__preferred__" : "");
   if ((discountView === "route" && !routes.length && !pref.length) ||
       (discountView === "codes" && !hasCodes)) discountView = "summary";
-  drawDiscounts();
+  if (discountView === "codes") setDiscountView("codes");     // reloads this run's list
+  else drawDiscounts();
 }
 
 let lastPrevAvailable = false;
@@ -945,7 +951,15 @@ async function savePreferredRoutes(useForLive) {
 let discountView = "summary";
 let shownReport = null;
 
-function setDiscountView(view) {
+async function setDiscountView(view) {
+  if (view === "codes" && allCodes === null) {
+    document.getElementById("grids").innerHTML = '<p class="muted">Loading every code…</p>';
+    const r = await api().all_codes();
+    if (await handleAuthRequired(r)) return;
+    if (!r.ok) { addBanner("err", r.error); return; }
+    allCodes = r.codes || [];
+    fillCodeFilters(allCodes);
+  }
   discountView = view;
   drawDiscounts();
 }
@@ -963,7 +977,7 @@ function drawDiscounts() {
   const grids = document.getElementById("grids");
   let html = "";
   if (codes) {
-    html = codesTable(report.all_codes || []);
+    html = codesTable(allCodes || []);
   } else if (!byRoute) {
     for (const [rt, label] of [["INTL", "INTERNATIONAL"], ["DOM", "DOMESTIC"]]) {
       const block = (report.grids || {})[rt];
@@ -1000,6 +1014,9 @@ function drawDiscounts() {
 // ---- All codes / discounts: every promo code, not just each cell's best ---------
 //: Rows drawn at once; Excel's "(all codes)" sheet always holds the full list.
 const CODES_SHOWN_MAX = 600;
+let allCodes = null;                 // fetched from the backend when the view first opens
+const TIER_STYLE = { "Common": "hl-highest", "Special": "hl-second", "Not captured": "hl-changed",
+                     "Unclear": "tier-unclear", "No discount": "tier-zero" };
 
 function fillCodeFilters(codes) {
   const pref = (state && state.preferred_routes) || [];
@@ -1009,8 +1026,9 @@ function fillCodeFilters(codes) {
     if ([...el.options].some(o => o.value === keep)) el.value = keep;
   };
   const uniq = key => [...new Set(codes.map(c => c[key]).filter(Boolean))].sort();
+  const routes = uniq("route").filter(r => /^[A-Z]{3}-[A-Z]{3}$/.test(r));   // not the per-airline 0% rows
   fill("cf-route", (pref.length ? `<option value="__preferred__">My preferred routes (${pref.length})</option>` : "") +
-       '<option value="">All routes</option>', uniq("route"));
+       '<option value="">All routes</option>', routes);
   fill("cf-ota", '<option value="">All OTAs</option>', uniq("ota"));
   fill("cf-airline", '<option value="">All airlines</option>', uniq("airline"));
 }
@@ -1022,30 +1040,34 @@ function filteredCodes(codes) {
   const pref = new Set((state && state.preferred_routes) || []);
   return codes.filter(c =>
     (!route || (route === "__preferred__" ? pref.has(c.route) : c.route === route)) &&
-    (!ota || c.ota === ota) && (!airline || c.airline === airline) && (!tier || c.tier === tier) &&
+    (!ota || c.ota === ota) && (!airline || c.airline === airline) &&
+    (tier === "__all__" || (tier ? c.tier === tier : c.tier !== "No discount")) &&
     (!text || `${c.code} ${c.who} ${c.title}`.toLowerCase().includes(text)));
 }
 
 function codesTable(codes) {
   const rows = filteredCodes(codes);
   const pct = x => (x === null || x === undefined || x === "") ? "" : `${x}%`;
-  const head = `<tr><th>Route</th><th>OTA</th><th>Airline</th><th>Tier</th><th>Promo code</th>
-    <th>Who can use it</th><th>Published</th><th>Effective</th><th>Cap (BDT)</th>
-    <th>On top of automatic</th><th>Payment fee</th><th>Offer</th></tr>`;
+  const head = `<tr><th>Route</th><th>Travel date(s)</th><th>OTA</th><th>Airline</th><th>Tier</th><th>Promo code</th>
+    <th>Who can use it</th><th>Published</th><th>Effective</th><th>% of</th><th>Cap (BDT)</th>
+    <th>On top of automatic</th><th>Payment fee</th><th>Fares</th><th>Offer</th></tr>`;
   const body = rows.slice(0, CODES_SHOWN_MAX).map(c => `<tr>
-    <td>${esc(c.route || "—")}</td><td>${esc(c.ota)}</td><td>${esc(c.airline)}</td>
-    <td class="${c.tier === "Special" ? "hl-second" : "hl-highest"}">${esc(c.tier)}</td>
+    <td>${esc(c.route || "—")}</td><td>${esc(c.travel_dates)}</td><td>${esc(c.ota)}</td><td>${esc(c.airline)}</td>
+    <td class="${TIER_STYLE[c.tier] || ""}">${esc(c.tier)}</td>
     <td style="text-align:left;font-weight:700">${esc(c.code)}</td>
-    <td style="text-align:left">${esc(c.who)}</td><td>${esc(pct(c.published_pct))}</td>
-    <td title="At the fares seen, caps applied${c.seen > 1 ? ` (${c.seen} fares)` : ""}">${esc(pct(c.effective))}</td>
+    <td style="text-align:left;white-space:normal;min-width:160px">${esc(c.who)}</td><td>${esc(pct(c.published_pct))}</td>
+    <td title="At the fares seen, caps applied">${esc(pct(c.effective))}</td><td>${esc(c.basis)}</td>
     <td>${c.cap_bdt ? Number(c.cap_bdt).toLocaleString() : ""}</td><td>${esc(c.stacks)}</td>
-    <td>${esc(pct(c.fee_pct))}</td>
+    <td>${esc(pct(c.fee_pct))}</td><td>${esc(c.seen)}</td>
     <td style="text-align:left;white-space:normal;min-width:240px" class="muted">${esc(c.title)}</td></tr>`).join("");
   const more = rows.length > CODES_SHOWN_MAX
     ? `<p class="muted">Showing ${CODES_SHOWN_MAX} of ${rows.length} — pick a route, OTA or airline to narrow it. The Excel export has every row.</p>` : "";
+  const gaps = rows.filter(c => c.tier === "Not captured").length;
   const note = `<p class="muted" style="margin:0 0 8px">${rows.length} code(s). <b>Common</b> = anyone gets it;
-    <b>Special</b> = needs that card, bank or membership. <b>Effective</b> = what it was worth at the fares seen,
-    caps applied (a range when fares differed), including the automatic discount when the code goes on top of it. ShareTrip and FirstTrip % are of the base fare, GoZayaan's of the booking total.</p>`;
+    <b>Special</b> = needs that card, bank or membership; <b>Not captured</b> = ShareTrip's coupons differ by airline
+    and this airline's booking page wasn't captured${gaps ? ` (${gaps} here)` : ""}. <b>Effective</b> = what it was worth
+    at the fares seen, caps applied (a range when fares differed), including the automatic discount when the code goes
+    on top of it. <b>% of</b>: ShareTrip and FirstTrip take the % of the base fare, GoZayaan of the booking total.</p>`;
   if (!rows.length) return note + '<p class="muted">No code matches these filters.</p>';
   return note + `<div class="table-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>` + more;
 }
