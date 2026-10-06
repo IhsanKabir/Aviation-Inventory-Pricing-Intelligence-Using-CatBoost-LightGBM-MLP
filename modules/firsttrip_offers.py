@@ -202,6 +202,7 @@ def parse_har(path: str | Path, *, har: Optional[Dict[str, Any]] = None) -> Dict
     perk_offers: Dict[tuple, Dict[str, Any]] = {}
     partner_ids: Dict[int, str] = {}
     context: Dict[str, Any] = {}                   # the fare of the last eligibility check
+    answered: List[List[str]] = []                 # [market, airline] whose offer list was seen
     for e in (har.get("log") or {}).get("entries", []):
         req = e.get("request") or {}
         url = str(req.get("url") or "")
@@ -213,8 +214,11 @@ def parse_har(path: str | Path, *, har: Optional[Dict[str, Any]] = None) -> Dict
         except (json.JSONDecodeError, TypeError):
             continue
         rows = data.get("data") if isinstance(data, dict) else None
-        if url.endswith(OFFER_LIST) and isinstance(rows, list):
-            for c in coupons_from_rows(rows):
+        if url.endswith(OFFER_LIST) and isinstance(data, dict) and isinstance(body, dict):
+            key = [_market(body.get("flightType")), str(body.get("airlineCode") or "").upper()]
+            if key[1] and key not in answered:
+                answered.append(key)
+            for c in coupons_from_rows(rows if isinstance(rows, list) else []):
                 prev = coupons.get(c["code"])
                 coupons[c["code"]] = c if prev is None else merge(prev, c)
         elif url.endswith(PERK_LIST) and isinstance(rows, list):
@@ -232,7 +236,8 @@ def parse_har(path: str | Path, *, har: Optional[Dict[str, Any]] = None) -> Dict
             offer = _perk_offer(context, data["data"], partner_ids)
             if offer:
                 perk_offers[(offer["code"], offer["market"], offer["airline"])] = offer
-    return {"coupons": list(coupons.values()), "perks": perks, "perk_offers": list(perk_offers.values())}
+    return {"coupons": list(coupons.values()), "perks": perks, "perk_offers": list(perk_offers.values()),
+            "answered": answered, "failed": []}
 
 
 def merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
@@ -253,7 +258,11 @@ def merge_catalogs(catalogs: List[Dict[str, Any]]) -> Dict[str, Any]:
     coupons: Dict[str, Dict[str, Any]] = {}
     perks: Dict[str, List[str]] = {}
     perk_offers: Dict[tuple, Dict[str, Any]] = {}
+    answered: List[List[str]] = []
+    failed: List[List[str]] = []
     for cat in catalogs:
+        answered += [a for a in cat.get("answered") or [] if a not in answered]
+        failed += cat.get("failed") or []
         for c in cat.get("coupons") or []:
             coupons[c["code"]] = c if c["code"] not in coupons else merge(coupons[c["code"]], c)
         for m, names in (cat.get("perks") or {}).items():
@@ -261,7 +270,8 @@ def merge_catalogs(catalogs: List[Dict[str, Any]]) -> Dict[str, Any]:
             have += [n for n in names if n not in have]
         for p in cat.get("perk_offers") or []:
             perk_offers[(p["code"], p["market"], p["airline"])] = p
-    return {"coupons": list(coupons.values()), "perks": perks, "perk_offers": list(perk_offers.values())}
+    return {"coupons": list(coupons.values()), "perks": perks, "perk_offers": list(perk_offers.values()),
+            "answered": answered, "failed": failed}
 
 
 def perk_worth(perk: Dict[str, Any], base_fare: float) -> Optional[Dict[str, Any]]:
@@ -377,14 +387,24 @@ def fetch_catalog(fares: List[Dict[str, Any]], headers: Dict[str, str], post=Non
     calls = 0
 
     def call(path: str, body: Dict[str, Any]) -> Optional[list]:
+        """The response's data list ([] when FirstTrip answered with none); raises
+        _NoAnswer with the reason when there was no usable answer."""
         nonlocal calls
         if calls:
             sleep(OFFER_SLEEP)
         calls += 1
         r = post(f"{API}/{path}", json=body, headers=headers, timeout=30)
-        data = (r.json() or {}).get("data") if r.status_code == 200 else None
-        return data if isinstance(data, list) else None
+        if r.status_code != 200:
+            raise _NoAnswer(f"HTTP {r.status_code}")
+        try:
+            payload = r.json() or {}
+        except ValueError:
+            raise _NoAnswer("not JSON (blocked or challenged)") from None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        return data if isinstance(data, list) else []    # 'No data found' = answered, none
 
+    answered: List[List[str]] = []
+    failed: List[List[str]] = []
     for row in fares:
         req = row.get("offer_request")
         if not req or (req.get("flightType"), row.get("airline")) in done:
@@ -392,14 +412,24 @@ def fetch_catalog(fares: List[Dict[str, Any]], headers: Dict[str, str], post=Non
         done.add((req.get("flightType"), row.get("airline")))
         market = _market(req.get("flightType"))
         try:
-            cat: Dict[str, Any] = {"coupons": coupons_from_rows(call("GetOfferList", req) or []),
-                                   "perks": {}}
+            cat: Dict[str, Any] = {"coupons": coupons_from_rows(call("GetOfferList", req)), "perks": {}}
+            answered.append([market, str(row.get("airline"))])
             if market not in perk_markets:              # the partner list is per market
                 perk_markets.add(market)
-                partners = call("GetPerkOfferList", {**req, "couponType": 4}) or []
+                try:
+                    partners = call("GetPerkOfferList", {**req, "couponType": 4})
+                except _NoAnswer:
+                    partners = []
                 cat["perks"] = {market: [_partner(str(x.get("partnerName"))) for x in partners
                                          if isinstance(x, dict) and x.get("partnerName")]}
             catalogs.append(cat)
-        except Exception:  # noqa: BLE001 — a missing catalogue only drops the extra coupons
-            continue
+        except _NoAnswer as exc:
+            failed.append([market, str(row.get("airline")), str(exc)])
+        except Exception as exc:  # noqa: BLE001 — a network error drops this airline's list only
+            failed.append([market, str(row.get("airline")), f"{type(exc).__name__}: {exc}"[:120]])
+    catalogs.append({"answered": answered, "failed": failed})
     return merge_catalogs(catalogs)
+
+
+class _NoAnswer(Exception):
+    """GetOfferList gave no usable answer (HTTP error, block page)."""

@@ -302,3 +302,49 @@ def test_airline_with_no_discount_still_gets_a_row():
     entries = all_codes.merge(all_codes.firsttrip_b2c({("DAC", "CXB", "d"): [vq]}, {}, None))
     (row,) = codes_by_type.rows(entries)
     assert (row["airline"], row["notes"], any(row["cells"].values())) == ("VQ", "No discount offered", False)
+
+
+# --- which airlines' offer lists were answered decides 0 vs "not captured" -------------
+
+def test_live_catalogue_records_answered_and_failed_airlines():
+    class _R:
+        def __init__(self, status, payload):
+            self.status_code, self._p = status, payload
+
+        def json(self):
+            if self._p is None:
+                raise ValueError("html")
+            return self._p
+
+    def post(url, json=None, headers=None, timeout=None):
+        al = json["airlineCode"]
+        if al == "QR":
+            return _R(403, {})
+        if al == "EK":
+            return _R(200, None)                                  # a block page, not JSON
+        if al == "BG":
+            return _R(200, {"statusCode": 202, "message": ["No data found"], "data": None})
+        return _R(200, {"data": INTL_ROWS if url.endswith("GetOfferList") else []})
+
+    fares = [{"airline": a, "offer_request": {"flightType": 2, "airlineCode": a}} for a in ("BS", "BG", "EK", "QR")]
+    cat = fo.fetch_catalog(fares, {}, post=post, sleep=lambda s: None)
+    assert cat["answered"] == [["INTL", "BS"], ["INTL", "BG"]]           # BG answered: no coupons
+    assert [(m, a) for m, a, _w in cat["failed"]] == [("INTL", "EK"), ("INTL", "QR")]
+    assert "not JSON" in cat["failed"][0][2] and "HTTP 403" in cat["failed"][1][2]
+
+
+def test_answered_airline_reads_zero_unanswered_reads_not_captured():
+    from discount_engine import codes_by_type as cbt
+    entries = all_codes.merge([
+        all_codes._obs(market="INTL", route="BKK-DAC", ota="Firsttrip-B2C", airline=al, tier="Common",
+                       code=f"{al}INTFT", who="Anyone (automatic)", published=8, effective=8, basis="Base fare")
+        for al in ("BG", "EK")])
+    rules = cbt.uncaptured_kinds({"ft_offer_answered": ["INTL|BG"]})
+    rows = {r["airline"]: r for r in cbt.rows(entries, rules)}
+    assert rows["BG"]["empty"]["bKash"] == "0"
+    assert rows["EK"]["empty"]["bKash"] == "not captured"
+
+
+def test_payment_page_har_marks_its_airline_answered():
+    har = _har([_post(fo.OFFER_LIST, {"flightType": 1, "airlineCode": "BS"}, INTL_ROWS[:1])])
+    assert fo.parse_har(har)["answered"] == [["DOM", "BS"]]

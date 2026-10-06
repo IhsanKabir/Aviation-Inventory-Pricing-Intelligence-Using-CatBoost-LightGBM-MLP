@@ -207,6 +207,12 @@ def _firsttrip_catalog(b2c_hars: Optional[list[str]],
         except Exception as exc:  # noqa: BLE001
             print(f"  ! FT B2C live offer list failed: {exc}")
     catalog = firsttrip_offers.merge_catalogs(catalogs)
+    if live_rows_by_route:
+        asked = len(catalog["answered"]) + len(catalog["failed"])
+        print(f"  FT B2C offer lists (live): {asked} airline(s) asked, {len(catalog['answered'])} answered, "
+              f"{len(catalog['failed'])} failed")
+        for market, airline, why in catalog["failed"]:
+            print(f"  ! FT B2C offer list {airline} ({market}) failed: {why}")
     if catalog["coupons"]:
         print(f"  FT B2C offer list: {len(catalog['coupons'])} coupon(s): "
               + ", ".join(c["code"] for c in catalog["coupons"]))
@@ -872,7 +878,11 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
         "by_route": route_blocks,                   # per-route blocks (local view only)
         "all_codes": codes,                         # every promo code seen (local view only)
         # FirstTrip fares seen but no payment-page offer list: wallet/card coupons unknown
-        "ft_offer_list_missing": bool(b2c_rows_by_route) and not ft_catalog.get("coupons"),
+        "ft_offer_list_missing": bool(b2c_rows_by_route) and not ft_catalog.get("answered"),
+        # "MARKET|AIRLINE" whose offer list FirstTrip answered (live or a payment-page HAR):
+        # their empty wallet/card cells are a real 0, others' are "not captured"
+        "ft_offer_answered": sorted(f"{m}|{a}" for m, a in ft_catalog.get("answered") or []),
+        "ft_offer_failed": [f"{a} ({m}): {why}" for m, a, why in ft_catalog.get("failed") or []],
         # telco partners listed but some operators' rates not captured (needs a verified number)
         "ft_telco_uncaptured": any(
             name not in {p["operator"] for p in ft_catalog.get("perk_offers") or [] if p["market"] == m}

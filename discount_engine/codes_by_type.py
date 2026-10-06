@@ -72,15 +72,30 @@ def item_text(e: dict[str, Any], kind: str) -> str:
 NOT_CAPTURED_TEXT, NOT_SEARCHED_TEXT = "not captured", "not searched"
 
 
-def uncaptured_kinds(report: dict[str, Any]) -> dict[str, set]:
-    """{OTA: discount types this run could not see}. An empty cell of such a type means
-    'unknown', not 0: FirstTrip's wallet and card coupons come only from the payment page,
-    its telco rates only from a verified-number capture."""
-    out: dict[str, set] = {}
-    if report.get("ft_offer_list_missing"):
-        out.setdefault("Firsttrip-B2C", set()).update({BKASH, WALLETS, ANY_CARD, BANK, TELCO})
-    if report.get("ft_telco_uncaptured"):
-        out.setdefault("Firsttrip-B2C", set()).add(TELCO)
+FT_OFFER_KINDS = {BKASH, WALLETS, ANY_CARD, BANK, TELCO}
+
+
+def uncaptured_kinds(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Rules for the discount types this run could not see; an empty cell of such a type
+    means 'unknown', not 0. Each rule: {ota, kinds, except: {"MARKET|AIRLINE", ...}}.
+    FirstTrip's wallet/card coupons come from each airline's offer list (payment page or
+    live GetOfferList): airlines it answered are known (an empty cell is a real 0), the
+    rest are not. Its telco rates need a verified-number capture."""
+    rules: list[dict[str, Any]] = []
+    if "ft_offer_answered" in report or report.get("ft_offer_list_missing"):
+        rules.append({"ota": "Firsttrip-B2C", "kinds": FT_OFFER_KINDS - {TELCO},
+                      "except": set(report.get("ft_offer_answered") or [])})
+    if report.get("ft_telco_uncaptured") or report.get("ft_offer_list_missing"):
+        rules.append({"ota": "Firsttrip-B2C", "kinds": {TELCO}, "except": set()})
+    return rules
+
+
+def _unknown_for(row: dict[str, Any], rules: list[dict[str, Any]]) -> set:
+    key = f"{row['market']}|{row['airline']}"
+    out: set = set()
+    for rule in rules:
+        if rule["ota"] == row["ota"] and key not in rule["except"]:
+            out |= rule["kinds"]
     return out
 
 
@@ -96,11 +111,12 @@ def _empty_text(row: dict[str, Any], kind: str, unknown: set) -> str:
     return "0"
 
 
-def rows(entries: list[dict[str, Any]], uncaptured: Optional[dict[str, set]] = None) -> list[dict[str, Any]]:
+def rows(entries: list[dict[str, Any]], uncaptured: Optional[list[dict[str, Any]]] = None
+         ) -> list[dict[str, Any]]:
     """Regroup all-codes entries into one row per (market, route, OTA, airline, coverage).
     Each row's `empty` says what its empty type cells show: 0, or 'not captured' for a type
-    this run couldn't see (uncaptured_kinds), or 'not searched'."""
-    uncaptured = uncaptured or {}
+    this run couldn't see (uncaptured_kinds rules), or 'not searched'."""
+    uncaptured = uncaptured or []
     by_key: dict[tuple, dict[str, Any]] = {}
     for e in entries:
         kind = kind_of(e)
@@ -138,7 +154,7 @@ def rows(entries: list[dict[str, Any]], uncaptured: Optional[dict[str, set]] = N
         best_card = row["best_any"] if row["best_any"] is not best else None
         if any(cells.values()):                       # e.g. no automatic rate but a telco code
             row["notes"] = [n for n in row["notes"] if n != "No discount offered"]
-        unknown = uncaptured.get(row["ota"], set())
+        unknown = _unknown_for(row, uncaptured)
         empty = {k: _empty_text(row, k, unknown) for k, items in cells.items() if not items}
         out.append({
             "market": row["market"], "route": row["route"], "ota": row["ota"], "airline": row["airline"],

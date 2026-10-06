@@ -831,7 +831,13 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                     f"{label} refused the search, usually throttling after many searches "
                     f"(wait an hour, then re-run); 'mint_failed' = its token key changed "
                     f"(run: python tools/test_{c}_live.py --recover-key).")
-            if report.get("ft_offer_list_missing"):
+            failed = report.get("ft_offer_failed") or []
+            if failed:
+                warnings.append(
+                    f"FirstTrip didn't return its coupon list for {len(failed)} airline(s), so their "
+                    f"bKash/Nagad/card columns say 'not captured': {'; '.join(failed[:4])}"
+                    + (" …" if len(failed) > 4 else "") + ". The Run log lists every one.")
+            if report.get("ft_offer_list_missing") and not failed:
                 warnings.append(
                     "FirstTrip: only the search was captured, so its bKash, Nagad and card "
                     "coupons are missing. Open a flight's payment page on FirstTrip (passenger "
