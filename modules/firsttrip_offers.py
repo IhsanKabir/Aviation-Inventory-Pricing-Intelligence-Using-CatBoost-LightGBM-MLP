@@ -372,6 +372,62 @@ def summarize(rows: List[Dict[str, Any]], catalog: Optional[Dict[str, Any]] = No
     return out
 
 
+# --- login for the live coupon list ---------------------------------------------------
+# GetOfferList / GetPerkOfferList answer only a LOGGED-IN customer: the page sends
+# "Authorization: Bearer <token>" (seen in its CORS preflight and its JS; Chrome strips the
+# header from HAR exports), and without it FirstTrip returns HTTP 401 (field run
+# 2026-10-06: 29 of 29 refused). The token is in the site's own session response
+# (firsttrip.com/api/auth/session -> user.token, an 8-hour JWT), which a HAR saved while
+# logged in carries. Admin decision (2026-10-06): live runs use that token for these calls
+# only; it is kept in memory, never saved, logged, synced or shown.
+
+def _jwt_exp(token: str) -> Optional[int]:
+    import base64
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+        return int(claims["exp"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def login_from_har(path: str | Path, now: Optional[float] = None,
+                   har: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """{'token', 'expires' (epoch s)} from the newest FirstTrip session in a HAR saved while
+    logged in, or None when there is none or it has expired (a minute's margin)."""
+    now = time.time() if now is None else now
+    har = har if har is not None else _load(path)
+    best: Optional[Dict[str, Any]] = None
+    for e in (har.get("log") or {}).get("entries", []):
+        if not str((e.get("request") or {}).get("url") or "").endswith("firsttrip.com/api/auth/session"):
+            continue
+        try:
+            user = (json.loads(((e.get("response") or {}).get("content") or {}).get("text") or "{}")
+                    .get("user") or {})
+        except (json.JSONDecodeError, AttributeError):
+            continue
+        token = str(user.get("token") or "")
+        exp = _jwt_exp(token) if token else None
+        if exp and exp - 60 > now and (best is None or exp > best["expires"]):
+            best = {"token": token, "expires": exp}
+    return best
+
+
+def newest_login(paths: List[str], now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """The longest-valid FirstTrip login across the run's FirstTrip HARs, with its file."""
+    best: Optional[Dict[str, Any]] = None
+    for p in paths or []:
+        try:
+            login = login_from_har(p, now)
+        except Exception:  # noqa: BLE001 — an unreadable HAR just offers no login
+            continue
+        if login and (best is None or login["expires"] > best["expires"]):
+            best = {**login, "file": Path(p).name}
+    return best
+
+
 # --- live (admin runs only; same request the payment page sends) -----------------------
 
 def fetch_catalog(fares: List[Dict[str, Any]], headers: Dict[str, str], post=None,
@@ -394,6 +450,10 @@ def fetch_catalog(fares: List[Dict[str, Any]], headers: Dict[str, str], post=Non
             sleep(OFFER_SLEEP)
         calls += 1
         r = post(f"{API}/{path}", json=body, headers=headers, timeout=30)
+        if r.status_code == 401:
+            raise _NoAnswer("HTTP 401: needs a FirstTrip login (save a FirstTrip HAR while logged "
+                            "in; it stays valid about 8 hours)" if "Authorization" not in headers
+                            else "HTTP 401: the FirstTrip login has expired (save a fresh HAR)")
         if r.status_code != 200:
             raise _NoAnswer(f"HTTP {r.status_code}")
         try:

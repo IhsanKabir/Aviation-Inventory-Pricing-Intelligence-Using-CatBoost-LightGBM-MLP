@@ -348,3 +348,56 @@ def test_answered_airline_reads_zero_unanswered_reads_not_captured():
 def test_payment_page_har_marks_its_airline_answered():
     har = _har([_post(fo.OFFER_LIST, {"flightType": 1, "airlineCode": "BS"}, INTL_ROWS[:1])])
     assert fo.parse_har(har)["answered"] == [["DOM", "BS"]]
+
+
+# --- FirstTrip login for the live coupon list (admin's own, memory only) --------------
+
+def _jwt(exp: int) -> str:
+    import base64
+    enc = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
+    return f"{enc({'alg': 'HS256'})}.{enc({'exp': exp, 'sub': 'x'})}.sig"
+
+
+def _session_har(exp: int):
+    return _har([{"request": {"method": "GET", "url": "https://firsttrip.com/api/auth/session"},
+                  "response": {"content": {"text": json.dumps({"user": {"token": _jwt(exp)}})}}}])
+
+
+def test_login_is_read_from_a_logged_in_har_and_expired_ones_are_ignored():
+    now = 2_000_000_000
+    assert fo.login_from_har(_session_har(now + 3600), now=now)["expires"] == now + 3600
+    assert fo.login_from_har(_session_har(now - 10), now=now) is None
+    best = fo.newest_login([str(_session_har(now + 600)), str(_session_har(now + 7200))], now=now)
+    assert best["expires"] == now + 7200 and best["file"] == "capture.har"
+
+
+def test_live_coupon_list_sends_the_login_and_never_prints_it(monkeypatch, capsys):
+    import time as _time
+    token = _jwt(int(_time.time()) + 3600)
+    har = _har([{"request": {"method": "GET", "url": "https://firsttrip.com/api/auth/session"},
+                 "response": {"content": {"text": json.dumps({"user": {"token": token}})}}}])
+    seen = {}
+
+    def fake_fetch(fares, headers, **kw):
+        seen.update(headers)
+        return {"coupons": [], "perks": {}, "answered": [["DOM", "BS"]], "failed": []}
+
+    monkeypatch.setattr(fo, "fetch_catalog", fake_fetch)
+    monkeypatch.setattr(grid.firsttrip, "b2c_headers", lambda: {"platformtypeid": "1"})
+    cat = grid._firsttrip_catalog([str(har)], {("DAC", "CXB", "d"): [{"airline": "BS"}]})
+    assert seen["Authorization"] == f"Bearer {token}"
+    assert cat["answered"] == [["DOM", "BS"]]
+    out = capsys.readouterr().out
+    assert "using the FirstTrip login from capture.har" in out and token not in out
+
+
+def test_401_without_a_login_says_what_to_do():
+    class _R:
+        status_code = 401
+
+        def json(self):
+            return {}
+
+    cat = fo.fetch_catalog([{"airline": "BS", "offer_request": {"flightType": 1, "airlineCode": "BS"}}], {},
+                           post=lambda *a, **k: _R(), sleep=lambda s: None)
+    assert "needs a FirstTrip login" in cat["failed"][0][2]

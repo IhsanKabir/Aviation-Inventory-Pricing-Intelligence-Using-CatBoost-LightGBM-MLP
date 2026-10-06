@@ -832,7 +832,12 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                     f"(wait an hour, then re-run); 'mint_failed' = its token key changed "
                     f"(run: python tools/test_{c}_live.py --recover-key).")
             failed = report.get("ft_offer_failed") or []
-            if failed:
+            if failed and all("FirstTrip login" in f for f in failed):
+                warnings.append(
+                    "FirstTrip's coupon list (bKash, Nagad, cards, telco) is shown only to a "
+                    "logged-in customer. Log in on firsttrip.com, save any FirstTrip HAR into the "
+                    "folder (it stays valid about 8 hours), and run again.")
+            elif failed:
                 warnings.append(
                     f"FirstTrip didn't return its coupon list for {len(failed)} airline(s), so their "
                     f"bKash/Nagad/card columns say 'not captured': {'; '.join(failed[:4])}"

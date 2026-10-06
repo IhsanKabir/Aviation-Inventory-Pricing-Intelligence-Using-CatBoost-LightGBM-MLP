@@ -203,7 +203,19 @@ def _firsttrip_catalog(b2c_hars: Optional[list[str]],
     if live_rows_by_route:
         try:
             fares = [r for rows in live_rows_by_route.values() for r in rows]
-            catalogs.append(firsttrip_offers.fetch_catalog(fares, firsttrip.b2c_headers()))
+            headers = firsttrip.b2c_headers()
+            # the coupon list answers only a logged-in customer: the admin's own login from
+            # a FirstTrip HAR saved while logged in (memory only; never saved or printed)
+            login = firsttrip_offers.newest_login(b2c_hars or [])
+            if login:
+                headers["Authorization"] = f"Bearer {login['token']}"
+                until = datetime.fromtimestamp(login["expires"]).strftime("%H:%M")
+                print(f"  FT B2C offer lists: using the FirstTrip login from {login['file']} "
+                      f"(valid until {until})")
+            else:
+                print("  ! FT B2C offer lists: no valid FirstTrip login in the HAR folder; save a "
+                      "FirstTrip HAR while logged in (any page; valid about 8 hours)")
+            catalogs.append(firsttrip_offers.fetch_catalog(fares, headers))
         except Exception as exc:  # noqa: BLE001
             print(f"  ! FT B2C live offer list failed: {exc}")
     catalog = firsttrip_offers.merge_catalogs(catalogs)
