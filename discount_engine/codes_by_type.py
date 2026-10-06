@@ -35,6 +35,8 @@ def kind_of(e: dict[str, Any]) -> Optional[str]:
         return AUTO
     open_to_all = tier == ac.COMMON or (tier == ac.NOT_SEARCHED and "(card offer)" not in who)
     if open_to_all:
+        if "any card" in who:                         # broadest audience wins (FTINT26: wallets or any card)
+            return ANY_CARD
         if "bkash" in who:
             return BKASH
         if any(w in who for w in _WALLET_WORDS):
@@ -72,7 +74,11 @@ def rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_key: dict[tuple, dict[str, Any]] = {}
     for e in entries:
         kind = kind_of(e)
-        note = "Coupons not captured (booking page)" if e["tier"] == ac.NOT_CAPTURED and kind is None else ""
+        note = ""
+        if e["tier"] == ac.NOT_CAPTURED and kind is None:
+            note = "Coupons not captured (booking page)"
+        elif e["tier"] == ac.NO_DISCOUNT and e["route"] != ac.ALL_ROUTES:
+            note = "No discount offered"              # an airline searched with nothing off: keep its row
         if kind is None and not note:
             continue
         status = "Not searched" if e["tier"] == ac.NOT_SEARCHED else ""
@@ -100,6 +106,8 @@ def rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                  for k, items in row["cells"].items()}
         best = row["best_anyone"]
         best_card = row["best_any"] if row["best_any"] is not best else None
+        if any(cells.values()):                       # e.g. no automatic rate but a telco code
+            row["notes"] = [n for n in row["notes"] if n != "No discount offered"]
         out.append({
             "market": row["market"], "route": row["route"], "ota": row["ota"], "airline": row["airline"],
             "status": row["status"], "travel_dates": ac._fmt_dates(row["dates"]), "seen": row["seen"],

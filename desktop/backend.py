@@ -831,6 +831,11 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
                     f"{label} refused the search, usually throttling after many searches "
                     f"(wait an hour, then re-run); 'mint_failed' = its token key changed "
                     f"(run: python tools/test_{c}_live.py --recover-key).")
+            if report.get("ft_offer_list_missing"):
+                warnings.append(
+                    "FirstTrip: only the search was captured, so its bKash, Nagad and card "
+                    "coupons are missing. Open a flight's payment page on FirstTrip (passenger "
+                    "details, then payment), save that HAR into the folder too, and run again.")
             if routes and not travel_date and not any(rd for _o, _d, rd in routes):
                 warnings.append("No future travel date — the live FirstTrip B2C "
                                 "fetch was SKIPPED (a past date is cleared "

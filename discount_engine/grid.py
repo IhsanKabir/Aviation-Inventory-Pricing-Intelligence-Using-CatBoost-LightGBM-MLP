@@ -147,21 +147,24 @@ def _firsttrip_b2c_cell(cell: dict[str, Any], common_fee: Optional[float],
 
 
 def _ft_classify(code: str, airline: str) -> tuple[str, str]:
-    """A FirstTrip coupon NOT in the offer list, judged by its code: a wallet offer is
-    common, anything else stays special (as before the offer list was read)."""
+    """A FirstTrip coupon NOT in the offer list, judged by its code: a known bank, card or
+    telco code (FTEBLDOM07, FTCITYAMEX, FTGPSTAR) is special; a wallet offer or a general
+    promo FirstTrip auto-applies to the displayed price (FTDOM26, FTINT26) is common."""
     core = firsttrip._ft_coupon_core(code)
     if core in firsttrip._FT_WALLET_LABELS:
         return "common", f"{firsttrip._FT_WALLET_LABELS[core]} payment"
-    return "special", firsttrip._ft_coupon_label(code)
+    if core in firsttrip._FT_CARD_LABELS:
+        return "special", firsttrip._ft_coupon_label(code)
+    return "common", "Anyone (FirstTrip applies it to the price shown)"
 
 
 def _ft_summary(rows: list[dict[str, Any]], catalog: Optional[dict[str, Any]]) -> dict[str, Any]:
-    """FT B2C cells per airline: with the payment-page offer list, every coupon is judged
-    (firsttrip_offers.summarize); without it, the search's auto-applied coupon only."""
-    if catalog and (catalog.get("coupons") or catalog.get("perk_offers")):
-        return firsttrip_offers.summarize(rows, catalog, classify_code=_ft_classify,
-                                          label_of=firsttrip._ft_coupon_label)
-    return firsttrip.summarize_b2c_discounts(rows)
+    """FT B2C cells per airline (firsttrip_offers.summarize): every option the fare can get,
+    from the payment-page offer list when captured, else the search's auto-applied coupon.
+    The same rule either way, so a search-only capture agrees with FirstTrip's price
+    (BS DAC-CXB: FTDOM26 16% is the price shown to everyone, 2026-10-06)."""
+    return firsttrip_offers.summarize(rows, catalog or {}, classify_code=_ft_classify,
+                                      label_of=firsttrip._ft_coupon_label)
 
 
 def _collect_firsttrip_b2c_rows(
@@ -868,6 +871,8 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
         "grids": grids,
         "by_route": route_blocks,                   # per-route blocks (local view only)
         "all_codes": codes,                         # every promo code seen (local view only)
+        # FirstTrip fares seen but no payment-page offer list: wallet/card coupons unknown
+        "ft_offer_list_missing": bool(b2c_rows_by_route) and not ft_catalog.get("coupons"),
     }
 
 

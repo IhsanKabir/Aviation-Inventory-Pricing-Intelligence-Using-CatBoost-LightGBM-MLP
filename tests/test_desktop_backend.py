@@ -252,3 +252,15 @@ def test_run_skip_paths_filter(api, monkeypatch):
 if __name__ == "__main__":
     import subprocess
     raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"]))
+
+
+def test_run_warns_when_firsttrip_payment_page_was_not_captured(api, monkeypatch):
+    api._config["har_dir"] = str(_mktmp())
+    _sign_in(api, monkeypatch)
+    monkeypatch.setattr(backend_mod, "auto_detect_hars", lambda d: {})
+    monkeypatch.setattr(backend_mod, "build_report",
+                        lambda *a, **kw: {**_report(bs="12"), "ft_offer_list_missing": True})
+    monkeypatch.setattr(api, "_load_local_prev", lambda: None)
+    monkeypatch.setattr(api, "_save_local_prev", lambda r: None)
+    result = api.run()
+    assert any("payment page" in w for w in result["warnings"])

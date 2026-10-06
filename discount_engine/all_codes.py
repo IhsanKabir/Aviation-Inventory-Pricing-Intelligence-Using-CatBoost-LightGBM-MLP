@@ -91,8 +91,9 @@ def _sharetrip_obs(where: dict[str, Any], auto_pct: float, auto_code: Optional[s
     if auto_pct > 0:
         out = [_obs(**where, tier=COMMON, code=auto_code or NO_CODE, who="Anyone (automatic)",
                     published=auto_pct, effective=auto_pct, title=titles.get(auto_code or "", ""))]
-    else:      # e.g. the low-cost carriers' BUDGETFLY: no automatic discount at all
-        out = [_obs(**anywhere, tier=NO_DISCOUNT, code=auto_code or NO_CODE,
+    else:      # e.g. the low-cost carriers' BUDGETFLY: no automatic discount at all; kept on
+        # its route so the airline still gets a row in the by-type view
+        out = [_obs(**where, tier=NO_DISCOUNT, code=auto_code or NO_CODE,
                     who="Anyone (no automatic discount)", published=0.0, effective=None,
                     title=titles.get(auto_code or "", ""))]
     if terms is None:
@@ -251,6 +252,7 @@ def firsttrip_b2c(rows_by_route: Optional[dict], fees: Optional[dict],
                          route=_route(r), ota="Firsttrip-B2C", airline=airline, basis=BASE,
                          date=date, fare=(_route(r), date, r.get("flight_number"), round(base)))
             fee_for = {COMMON: fees.get("common"), SPECIAL: fees.get("card")}
+            before = len(out)
             if (r.get("dynamic_rate") or 0) > 0:
                 out.append(_obs(**where, tier=COMMON, code=r.get("dynamic_code") or NO_CODE,
                                 who="Anyone (automatic)", published=r["dynamic_rate"],
@@ -264,9 +266,13 @@ def firsttrip_b2c(rows_by_route: Optional[dict], fees: Optional[dict],
             if rate > 0 and code not in in_catalog:
                 tier, who = ft_tier(code, airline)
                 flat = r.get("coupon_type") == "F"
+                # uncapped: the published rate (16), not FirstTrip's floored taka amount (15.97)
+                capped = _ft_effective(rate, base, r.get("coupon_cap_bdt"))
+                full = math.floor(base * rate / 100) if base > 0 else 0
+                cap = float(r.get("coupon_cap_bdt") or 0)
                 out.append(_obs(**where, tier=tier, code=code or NO_CODE, who=who,
                                 published=None if flat else rate,
-                                effective=rate if flat else _ft_effective(rate, base, r.get("coupon_cap_bdt")),
+                                effective=rate if flat or not (cap and full > cap) else capped,
                                 cap=r.get("coupon_cap_bdt"), fee=fee_for.get(tier),
                                 title=f"Flat BDT {r['coupon_flat_bdt']:,.0f} off" if flat and r.get("coupon_flat_bdt") else ""))
             slot, slot_rate = r.get("special_code") or "", float(r.get("special_rate") or 0)
@@ -274,6 +280,10 @@ def firsttrip_b2c(rows_by_route: Optional[dict], fees: Optional[dict],
                 tier, who = ft_tier(slot, airline, special_slot=True)
                 out.append(_obs(**where, tier=tier, code=slot or NO_CODE, who=who,
                                 published=slot_rate, effective=slot_rate, fee=fee_for.get(tier)))
+            if len(out) == before:     # e.g. VQ: on sale, nothing off; keep the airline visible
+                out.append(_obs(**where, tier=NO_DISCOUNT, code="(none)", who="No discount on this fare",
+                                published=0.0, effective=None,
+                                title="FirstTrip showed this fare with no discount or coupon."))
     out += _ft_telco_obs(rows_by_route, catalog, fees)
     out += _ft_rate_table_obs(coupons, used, fees)
     out += _ft_perk_obs(catalog.get("perks") or {}, catalog.get("perk_offers") or [])

@@ -189,7 +189,8 @@ def test_zero_rates_are_no_discount_and_listed_once_per_airline(memo):
     emi = _codes(out, code="ZEROEMI")
     assert len(emi) == 1 and emi[0]["route"] == all_codes.ALL_ROUTES and emi[0]["seen"] == 3
     budget = _codes(out, code="BUDGETFLY")
-    assert [(e["tier"], e["route"]) for e in budget] == [("No discount", all_codes.ALL_ROUTES)]
+    # a 0% automatic rate stays on its route, so the airline keeps a row in the by-type view
+    assert sorted((e["tier"], e["route"]) for e in budget) == [("No discount", "DAC-DXB"), ("No discount", "DAC-JED")]
     assert not _codes(out, airline="G9", tier="Common")
 
 

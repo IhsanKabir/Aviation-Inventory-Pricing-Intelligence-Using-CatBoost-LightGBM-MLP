@@ -79,7 +79,7 @@ def coupons_from_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                             "cap": float(d.get("maximumDiscountAmount") or 0) or None}
                            for d in (r.get("dynamicConfig") or [])],
                 "valid_to": str(r.get("validTo") or "")[:10],
-                "methods": [], "open_methods": [], "bank_cards": 0,
+                "methods": [], "open_methods": [], "bank_cards": 0, "bank_ids": [],
             }
         method = str(r.get("paymentMethod") or "").strip()
         if method and method not in c["methods"]:
@@ -88,15 +88,27 @@ def coupons_from_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             c["open_methods"].append(method)
         if r.get("bankInfoId") is not None and not _is_wallet(method):
             c["bank_cards"] += 1
+            if r["bankInfoId"] not in c["bank_ids"]:
+                c["bank_ids"].append(r["bankInfoId"])
     return list(by_code.values())
+
+
+# A card coupon valid on this many banks' cards is open to practically any card holder:
+# FTDOM26 listed ~37 banks' Mastercard/VISA plus AMEX/EBL, and FirstTrip prices every
+# fare with it (BS DAC-CXB 4,349 -> 3,834, 2026-10-06), like GoZayaan's "All Card".
+BROAD_BANKS = 10
 
 
 def audience(coupon: Dict[str, Any]) -> tuple[str, str]:
     """('common'|'special', who). Open to anyone paying with a wallet or an
     unrestricted card -> common; only certain banks' cards -> special."""
     bank_only = [m for m in coupon["methods"] if m not in coupon["open_methods"]]
+    banks = len(coupon.get("bank_ids") or [])
+    if banks >= BROAD_BANKS and not coupon["open_methods"]:
+        return "common", f"Any card ({' / '.join(coupon['methods'])}, {banks} banks)"
     if coupon["open_methods"]:
-        extra = f", or {' / '.join(bank_only)} cards of listed banks" if bank_only else ""
+        extra = (f", or any card ({' / '.join(bank_only)}, {banks} banks)" if bank_only and banks >= BROAD_BANKS
+                 else f", or {' / '.join(bank_only)} cards of listed banks" if bank_only else "")
         return "common", "Pay with " + " / ".join(coupon["open_methods"]) + extra
     if coupon["methods"]:
         return "special", f"{' / '.join(coupon['methods'])} cards of listed banks"
@@ -232,6 +244,8 @@ def merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
     seen = {json.dumps(d, sort_keys=True) for d in a["config"]}
     out["config"] = a["config"] + [d for d in b["config"] if json.dumps(d, sort_keys=True) not in seen]
     out["bank_cards"] = max(a["bank_cards"], b["bank_cards"])
+    out["bank_ids"] = (a.get("bank_ids") or []) + [i for i in (b.get("bank_ids") or [])
+                                                  if i not in (a.get("bank_ids") or [])]
     return out
 
 
@@ -332,9 +346,11 @@ def summarize(rows: List[Dict[str, Any]], catalog: Optional[Dict[str, Any]] = No
                                              "special_label": None, "special_capped": False})
         for opt in fare_options(r, catalog, classify_code=classify_code):
             if opt["tier"] == "common" and opt["pct"] > cell["common_rate"]:
+                # name the coupon only when it beat a dynamic discount (FTDOM26 16 over
+                # FTBSDOM 15); a coupon that IS the base rate stays a bare number as before
                 cell.update(common_rate=opt["pct"], common_code=opt["code"] or None,
                             common_capped=opt["capped"],
-                            common_from_coupon=opt["source"] != "dynamic")
+                            common_from_coupon=opt["source"] != "dynamic" and (r.get("dynamic_rate") or 0) > 0)
             elif opt["tier"] == "special" and opt["pct"] > (cell["special_rate"] or 0):
                 cell.update(special_rate=opt["pct"], special_code=opt["code"],
                             special_label=(label_of(opt["code"]) if label_of else None) or opt["code"],

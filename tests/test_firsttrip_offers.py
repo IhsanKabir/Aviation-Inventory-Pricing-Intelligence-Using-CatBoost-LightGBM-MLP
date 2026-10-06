@@ -271,3 +271,34 @@ def test_telco_offer_listed_per_fare_and_missing_operators_flagged():
     assert [(e["airline"], e["route"], e["tier"], e["effective"]) for e in gp] == [("BS", "DAC-CXB", "Special", "14")]
     gap = next(e for e in out if e["code"] == "(telco perk)")
     assert gap["who"] == "Robi customers"          # GP's rate is known; Robi's isn't yet
+
+
+# --- 2026-10-06 field report: report vs website (BS/2A/BG/VQ DAC-CXB) ------------------
+
+def test_coupon_valid_on_many_banks_cards_counts_as_any_card():
+    rows = [_offer_row("FTDOM26", m, rate=16.0, cap=6000.0, min_sales=2000.0, bank=b,
+                       config=[_cfg("BS", "DAC", "CXB", 16.0, 6000.0)])
+            for m in ("Mastercard", "VISA") for b in range(1, 16)]       # 15 banks' cards
+    (c,) = fo.coupons_from_rows(rows)
+    assert fo.audience(c) == ("common", "Any card (Mastercard / VISA, 15 banks)")
+    few = fo.coupons_from_rows([_offer_row("BANK3", "VISA", bank=b) for b in (1, 2, 3)])[0]
+    assert fo.audience(few)[0] == "special"
+
+
+def test_search_only_auto_coupon_matches_the_price_firsttrip_shows():
+    # FirstTrip prices BS at 3,834 = 4,349 - FTDOM26 16% of 3,224: that is the common rate
+    row = {**_row("BS", 3224, dyn=15.0, dyn_amt=483, code="FTDOM26", rate=16.0, o="DAC", d="CXB"),
+           "coupon_cap_bdt": 6000.0}
+    cells = grid._collect_firsttrip_b2c_rows({("DAC", "CXB", "d"): [row]}, None, None, None)
+    assert cells[("DOM", "BS")] == "16(FTDOM26)"
+    out = all_codes.merge(all_codes.firsttrip_b2c({("DAC", "CXB", "d"): [
+        {**row, "departure": "2026-10-10T18:30", "flight_number": "141"}]}, {}, None))
+    assert next(e for e in out if e["code"] == "FTDOM26")["effective"] == "16"   # not 15.97
+
+
+def test_airline_with_no_discount_still_gets_a_row():
+    from discount_engine import codes_by_type
+    vq = {**_row("VQ", 3224, o="DAC", d="CXB"), "departure": "2026-10-10T09:00", "flight_number": "921"}
+    entries = all_codes.merge(all_codes.firsttrip_b2c({("DAC", "CXB", "d"): [vq]}, {}, None))
+    (row,) = codes_by_type.rows(entries)
+    assert (row["airline"], row["notes"], any(row["cells"].values())) == ("VQ", "No discount offered", False)
