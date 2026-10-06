@@ -69,8 +69,38 @@ def item_text(e: dict[str, Any], kind: str) -> str:
     return text
 
 
-def rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Regroup all-codes entries into one row per (market, route, OTA, airline, coverage)."""
+NOT_CAPTURED_TEXT, NOT_SEARCHED_TEXT = "not captured", "not searched"
+
+
+def uncaptured_kinds(report: dict[str, Any]) -> dict[str, set]:
+    """{OTA: discount types this run could not see}. An empty cell of such a type means
+    'unknown', not 0: FirstTrip's wallet and card coupons come only from the payment page,
+    its telco rates only from a verified-number capture."""
+    out: dict[str, set] = {}
+    if report.get("ft_offer_list_missing"):
+        out.setdefault("Firsttrip-B2C", set()).update({BKASH, WALLETS, ANY_CARD, BANK, TELCO})
+    if report.get("ft_telco_uncaptured"):
+        out.setdefault("Firsttrip-B2C", set()).add(TELCO)
+    return out
+
+
+def _empty_text(row: dict[str, Any], kind: str, unknown: set) -> str:
+    """What an empty type cell says: '0' when the OTA was fully seen and offers nothing of
+    that type; 'not captured' / 'not searched' when we simply don't know."""
+    if row["status"]:
+        return NOT_SEARCHED_TEXT
+    if kind == OTHER:
+        return ""
+    if kind in unknown or (kind != AUTO and "Coupons not captured (booking page)" in row["notes"]):
+        return NOT_CAPTURED_TEXT
+    return "0"
+
+
+def rows(entries: list[dict[str, Any]], uncaptured: Optional[dict[str, set]] = None) -> list[dict[str, Any]]:
+    """Regroup all-codes entries into one row per (market, route, OTA, airline, coverage).
+    Each row's `empty` says what its empty type cells show: 0, or 'not captured' for a type
+    this run couldn't see (uncaptured_kinds), or 'not searched'."""
+    uncaptured = uncaptured or {}
     by_key: dict[tuple, dict[str, Any]] = {}
     for e in entries:
         kind = kind_of(e)
@@ -108,11 +138,13 @@ def rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         best_card = row["best_any"] if row["best_any"] is not best else None
         if any(cells.values()):                       # e.g. no automatic rate but a telco code
             row["notes"] = [n for n in row["notes"] if n != "No discount offered"]
+        unknown = uncaptured.get(row["ota"], set())
+        empty = {k: _empty_text(row, k, unknown) for k, items in cells.items() if not items}
         out.append({
             "market": row["market"], "route": row["route"], "ota": row["ota"], "airline": row["airline"],
             "status": row["status"], "travel_dates": ac._fmt_dates(row["dates"]), "seen": row["seen"],
-            "basis": row["basis"], "cells": cells,
-            "best_anyone": item_text(best, AUTO) if best else "",
+            "basis": row["basis"], "cells": cells, "empty": empty,
+            "best_anyone": item_text(best, AUTO) if best else ("" if row["status"] else "0"),
             "best_with_card": item_text(best_card, BANK) if best_card else "",
             "notes": "; ".join(dict.fromkeys(row["notes"]))})
     ota_order = {lab: i for i, (lab, _k) in enumerate(ac.g.ROW_ORDER)}
@@ -133,7 +165,9 @@ _NOTE = ("One row per route, OTA and airline; each column is a TYPE of discount,
          "worth at the fares seen (caps applied; a range when fares differed). Automatic = no "
          "code needed. Telco on ShareTrip needs no verification (open to anyone); on FirstTrip "
          "the number is verified by OTP. % of: ShareTrip/FirstTrip base fare, GoZayaan booking "
-         "total. Coverage 'Not searched' = rates from FirstTrip's coupon table for a route this "
+         "total. 0 = the OTA offers nothing of that type on that fare; 'not captured' = this run "
+         "couldn't see that type (e.g. FirstTrip without its payment page), so it is unknown, not "
+         "0. Coverage 'Not searched' = rates from FirstTrip's coupon table for a route this "
          "run didn't search. Caps, fees and offer text: the (codes detail) sheet.")
 
 
@@ -152,8 +186,8 @@ def write_sheet(ws, report: dict[str, Any]) -> None:
         c.font, c.fill, c.alignment, c.border = st["head"], st["hdr_fill"], st["center"], st["border"]
         ws.column_dimensions[get_column_letter(ci)].width = width
     r = 4
-    for row in rows(report.get("all_codes") or []):
-        vals = {**row, **{k: "\n".join(v) for k, v in row["cells"].items()},
+    for row in rows(report.get("all_codes") or [], uncaptured_kinds(report)):
+        vals = {**row, **{k: "\n".join(v) if v else row["empty"].get(k, "") for k, v in row["cells"].items()},
                 "market": "Domestic" if row["market"] == "DOM" else "International"}
         for ci, (key, _h, _w) in enumerate(_HEAD, start=1):
             v = vals.get(key)

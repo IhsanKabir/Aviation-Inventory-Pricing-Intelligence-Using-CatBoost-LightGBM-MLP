@@ -80,3 +80,22 @@ def test_excel_all_codes_sheet_has_type_columns_and_a_detail_sheet():
     assert (first["Route"], first["OTA"], first["Automatic"], first["Best for anyone"]) == \
         ("DAC-CXB", "Firsttrip-B2C", "15% FTBSDOM", "15% FTBSDOM")
     assert "04 October (codes detail)" in wb.sheetnames
+
+
+def test_empty_type_shows_zero_and_unknown_types_say_not_captured():
+    rows = cbt.rows(ENTRIES)
+    bg_like = _row(rows, "Go Zayaan")
+    assert bg_like["empty"]["Automatic"] == "0" and bg_like["empty"]["Telco"] == "0"
+    assert "Other" not in bg_like["empty"] or bg_like["empty"]["Other"] == ""
+    # FirstTrip search only: its wallet/card/telco coupons weren't captured -> unknown
+    rows = cbt.rows(ENTRIES, cbt.uncaptured_kinds({"ft_offer_list_missing": True}))
+    ft = _row(rows, "Firsttrip-B2C")
+    assert ft["empty"].get("Any card / payment") == "not captured"
+    assert _row(rows, "Firsttrip-B2C", route="DAC-ZYL")["empty"]["Automatic"] == "not searched"
+
+
+def test_airline_with_nothing_off_reads_zero_everywhere():
+    vq = ac.merge([_e("Firsttrip-B2C", "VQ", "No discount", "(none)", "No discount on this fare", None,
+                      published=0.0)])
+    (row,) = cbt.rows(vq)
+    assert row["best_anyone"] == "0" and row["empty"]["Automatic"] == "0" and row["empty"]["bKash"] == "0"

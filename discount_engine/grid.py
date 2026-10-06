@@ -873,6 +873,10 @@ def _build_report(date: Optional[str], routes: list[tuple[str, str, Optional[str
         "all_codes": codes,                         # every promo code seen (local view only)
         # FirstTrip fares seen but no payment-page offer list: wallet/card coupons unknown
         "ft_offer_list_missing": bool(b2c_rows_by_route) and not ft_catalog.get("coupons"),
+        # telco partners listed but some operators' rates not captured (needs a verified number)
+        "ft_telco_uncaptured": any(
+            name not in {p["operator"] for p in ft_catalog.get("perk_offers") or [] if p["market"] == m}
+            for m, names in (ft_catalog.get("perks") or {}).items() for name in names),
     }
 
 

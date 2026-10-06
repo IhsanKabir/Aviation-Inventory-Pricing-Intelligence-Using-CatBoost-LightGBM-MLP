@@ -883,7 +883,8 @@ class DesktopApi(MarketApiMixin, RoutesApiMixin):
             return {"ok": False, "error": "Run the report first."}
         from discount_engine import codes_by_type
         codes = self._report.get("all_codes") or []
-        return {"ok": True, "codes": codes, "by_type": codes_by_type.rows(codes),
+        uncaptured = codes_by_type.uncaptured_kinds(self._report)
+        return {"ok": True, "codes": codes, "by_type": codes_by_type.rows(codes, uncaptured),
                 "kinds": codes_by_type.KINDS}
 
     # ------------------------------------------------------------------ export
