@@ -12,6 +12,8 @@ import { getCurrentUserSession } from "@/lib/user-auth";
 
 import { RouteSnapshotSection } from "./route-snapshot-section";
 import { RouteMonitorSection, RouteMonitorSectionFallback } from "./route-monitor-section";
+import { PausedNotice } from "@/components/paused-notice";
+import { marketDataEnabled } from "@/lib/market-pause";
 
 type PageProps = {
   searchParams?: Promise<RawSearchParams>;
@@ -162,6 +164,7 @@ function getConfiguredRouteOptions(
 }
 
 export default async function RoutesPage({ searchParams }: PageProps) {
+  if (!marketDataEnabled()) return <PausedNotice section="Routes" />; // paused: running costs
   const params = (await searchParams) ?? {};
   const selectedAirlines = manyParams(params, "airline").map((item) => item.trim().toUpperCase()).filter(Boolean);
   const selectedRoutePairs = manyParams(params, "route_pair")

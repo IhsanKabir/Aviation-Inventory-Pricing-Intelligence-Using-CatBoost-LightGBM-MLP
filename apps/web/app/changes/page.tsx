@@ -17,6 +17,8 @@ import { buildHref, firstParam, manyParams, parseLimit, removeParams, setParam, 
 import { getCurrentUserSession } from "@/lib/user-auth";
 
 import "../analytics.css";
+import { PausedNotice } from "@/components/paused-notice";
+import { marketDataEnabled } from "@/lib/market-pause";
 
 type PageProps = {
   searchParams?: Promise<RawSearchParams>;
@@ -84,6 +86,7 @@ function pct(part: number, total: number) {
 }
 
 export default async function ChangesPage({ searchParams }: PageProps) {
+  if (!marketDataEnabled()) return <PausedNotice section="Changes" />; // paused: running costs
   const params = (await searchParams) ?? {};
   const selectedAirlines = manyParams(params, "airline");
   const selectedDomains = manyParams(params, "domain");

@@ -19,6 +19,8 @@ import {
 } from "@/lib/format";
 import { firstParam, manyParams, parseLimit, type RawSearchParams } from "@/lib/query";
 import { getCurrentUserSession } from "@/lib/user-auth";
+import { PausedNotice } from "@/components/paused-notice";
+import { marketDataEnabled } from "@/lib/market-pause";
 
 type PageProps = {
   searchParams?: Promise<RawSearchParams>;
@@ -77,6 +79,7 @@ function normalizeOperationsRoutes(routes: OperationsRoute[]): OperationsRoute[]
 }
 
 export default async function OperationsPage({ searchParams }: PageProps) {
+  if (!marketDataEnabled()) return <PausedNotice section="Operations" />; // paused: running costs
   const params = (await searchParams) ?? {};
   const selectedAirlines = manyParams(params, "airline");
   const selectedRouteTypes = manyParams(params, "route_type");

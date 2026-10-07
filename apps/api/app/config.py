@@ -69,6 +69,9 @@ class Settings:
     bigquery_dataset: str | None
     forecasting_source: str
     report_access_admin_token: str | None
+    # Market Intelligence / Forecasting / GDS read BigQuery (billed per query). Paused by
+    # default since 2026-10 to save running costs; MARKET_DATA_ENABLED=true restores them.
+    market_data_enabled: bool = False
 
 
 def load_settings() -> Settings:
@@ -121,6 +124,7 @@ def load_settings() -> Settings:
         bigquery_dataset=(os.getenv("BIGQUERY_DATASET", "").strip() or None),
         forecasting_source=os.getenv("API_FORECASTING_SOURCE", "filesystem").strip().lower() or "filesystem",
         report_access_admin_token=(os.getenv("REPORT_ACCESS_ADMIN_TOKEN", "").strip() or None),
+        market_data_enabled=os.getenv("MARKET_DATA_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"},
     )
 
 

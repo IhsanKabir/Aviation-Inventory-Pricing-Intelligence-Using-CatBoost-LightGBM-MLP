@@ -22,6 +22,8 @@ import { firstParam, type RawSearchParams } from "@/lib/query";
 
 import "../analytics.css";
 import "./gds.css";
+import { PausedNotice } from "@/components/paused-notice";
+import { marketDataEnabled } from "@/lib/market-pause";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -77,6 +79,7 @@ type PageProps = {
 };
 
 export default async function GdsDashboardPage({ searchParams }: PageProps) {
+  if (!marketDataEnabled()) return <PausedNotice section="GDS" />; // paused: running costs
   const params = (await searchParams) ?? {};
 
   const load = firstParam(params, "load");

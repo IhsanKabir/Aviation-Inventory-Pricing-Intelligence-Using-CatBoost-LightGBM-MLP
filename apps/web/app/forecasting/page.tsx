@@ -4,6 +4,8 @@ import { getForecastingPayload } from "@/lib/api";
 import { formatDhakaDateTime, formatNumber, formatPercent } from "@/lib/format";
 
 import "./forecasting.css";
+import { PausedNotice } from "@/components/paused-notice";
+import { marketDataEnabled } from "@/lib/market-pause";
 
 export const revalidate = 3600;
 
@@ -123,6 +125,7 @@ function recommendAction(delta: number | null, confidenceLabel: string) {
 }
 
 export default async function ForecastingPage() {
+  if (!marketDataEnabled()) return <PausedNotice section="Forecasting" />; // paused: running costs
   const payload = await getForecastingPayload();
   const latestPrediction = payload.data?.latest_prediction_bundle ?? null;
   const latestBacktest = payload.data?.latest_backtest_bundle ?? null;

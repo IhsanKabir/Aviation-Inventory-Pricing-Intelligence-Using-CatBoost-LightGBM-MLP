@@ -9,6 +9,8 @@ import { formatDhakaDateTime, formatMoney, formatNumber, formatRouteGeo, formatR
 import { paginateRows, parsePageParam } from "@/lib/pagination";
 import { firstParam, manyParams, parseLimit, type RawSearchParams } from "@/lib/query";
 import { getCurrentUserSession } from "@/lib/user-auth";
+import { PausedNotice } from "@/components/paused-notice";
+import { marketDataEnabled } from "@/lib/market-pause";
 
 type PageProps = {
   searchParams?: Promise<RawSearchParams>;
@@ -48,6 +50,7 @@ function renderTrendStrip(timeline?: Array<Record<string, unknown>>) {
 }
 
 export default async function TaxesPage({ searchParams }: PageProps) {
+  if (!marketDataEnabled()) return <PausedNotice section="Taxes" />; // paused: running costs
   const params = (await searchParams) ?? {};
   const selectedAirlines = manyParams(params, "airline");
   const selectedRouteTypes = manyParams(params, "route_type");

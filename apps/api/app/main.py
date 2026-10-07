@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -205,6 +206,25 @@ async def request_timing_middleware(request: Request, call_next):
     return response
 
 
+# Market Intelligence / Forecasting / GDS endpoints read BigQuery, which bills per query.
+# They are paused (settings.market_data_enabled False) to save running costs: these paths
+# answer 503 "paused" without touching BigQuery. Registered AFTER the timing middleware so
+# it is the outer layer: a paused request never reaches error capture or the 5xx alert.
+MARKET_DATA_PATH_PREFIXES = ("/api/v1/reporting", "/api/v1/meta", "/gds")
+MARKET_PAUSED_MESSAGE = ("Market Intelligence, Forecasting and GDS data are paused to save running "
+                         "costs. They will be back soon.")
+
+
+@app.middleware("http")
+async def market_data_pause_middleware(request: Request, call_next):
+    path = request.url.path
+    if not settings.market_data_enabled and any(
+            path == p or path.startswith(p + "/") for p in MARKET_DATA_PATH_PREFIXES):
+        return JSONResponse(status_code=503, content={"detail": MARKET_PAUSED_MESSAGE, "paused": True},
+                            headers={"Retry-After": "86400"})
+    return await call_next(request)
+
+
 def _capture_error(request: Request, status: int, error_type: str, message: str) -> None:
     """Persist an error event best-effort (never let observability break a request)."""
     db = None
@@ -345,6 +365,17 @@ def api_root() -> JSONResponse:
 
 @app.get("/health")
 def health(db: Session | None = Depends(get_optional_db)) -> dict:
+    if not settings.market_data_enabled:
+        # Paused: the full check looks up the latest market cycle in BigQuery (a billed
+        # query on every ping), so only the database is checked.
+        database_ok = False
+        if db is not None:
+            try:
+                db.execute(text("SELECT 1"))
+                database_ok = True
+            except Exception:  # noqa: BLE001
+                database_ok = False
+        return {"database_ok": database_ok, "market_data": "paused"}
     return reporting.get_health(db)
 
 

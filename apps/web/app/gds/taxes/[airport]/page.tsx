@@ -8,6 +8,8 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getGdsTaxRates, type GdsTaxRate } from "@/lib/gds";
+import { PausedNotice } from "@/components/paused-notice";
+import { marketDataEnabled } from "@/lib/market-pause";
 
 interface Props {
   params: Promise<{ airport: string }>;
@@ -15,6 +17,7 @@ interface Props {
 }
 
 export default async function AirportTaxPage({ params, searchParams }: Props) {
+  if (!marketDataEnabled()) return <PausedNotice section="GDS airport taxes" />; // paused: running costs
   const { airport } = await params;
   const { status: statusParam } = await searchParams;
   const airportCode = airport.toUpperCase();

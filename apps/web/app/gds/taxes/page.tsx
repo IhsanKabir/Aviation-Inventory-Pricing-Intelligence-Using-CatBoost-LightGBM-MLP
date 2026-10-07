@@ -10,8 +10,11 @@
 import Link from "next/link";
 import { formatDhakaDate } from "@/lib/format";
 import { getGdsTaxAirports, type GdsTaxAirport } from "@/lib/gds";
+import { PausedNotice } from "@/components/paused-notice";
+import { marketDataEnabled } from "@/lib/market-pause";
 
 export default async function GdsTaxesIndexPage() {
+  if (!marketDataEnabled()) return <PausedNotice section="GDS airport taxes" />; // paused: running costs
   let airports: GdsTaxAirport[] = [];
   try {
     airports = await getGdsTaxAirports();

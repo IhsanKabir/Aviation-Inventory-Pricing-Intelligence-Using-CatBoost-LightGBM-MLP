@@ -4,6 +4,8 @@ import { DataPanel } from "@/components/data-panel";
 import { MetricCard } from "@/components/metric-card";
 import { getDashboardPayload } from "@/lib/api";
 import { formatDhakaDateTime } from "@/lib/format";
+import { PausedNotice } from "@/components/paused-notice";
+import { marketDataEnabled } from "@/lib/market-pause";
 
 export const revalidate = 3600;
 
@@ -86,6 +88,7 @@ function formatDate(value?: string | null) {
 }
 
 export default async function MarketIntelligencePage() {
+  if (!marketDataEnabled()) return <PausedNotice section="Market Intelligence" />; // paused: running costs
   const payload = await getDashboardPayload();
   const latestCycle = payload.latestCycle.data;
   const cycleHealth = payload.cycleHealth.data;

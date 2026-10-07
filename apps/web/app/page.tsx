@@ -4,8 +4,74 @@ import { DataPanel } from "@/components/data-panel";
 import { MetricCard } from "@/components/metric-card";
 import { getDashboardPayload } from "@/lib/api";
 import { formatDhakaDateTime, formatRouteGeo, formatRouteType } from "@/lib/format";
+import { marketDataEnabled } from "@/lib/market-pause";
 
 export const revalidate = 3600;
+
+const AVAILABLE_WORKSPACES = [
+  {
+    href: "/discount-comparison",
+    label: "OTA Discount Comparison",
+    desc: "Compare OTA discounts by airline and route: B2B commission, B2C coupons, wallets and cards.",
+  },
+  {
+    href: "/downloads",
+    label: "Downloads",
+    desc: "The OTA discount desktop app, operational workbooks and packaged utilities.",
+  },
+];
+
+/** Home page while Market Intelligence is paused: no market snapshot is requested. */
+function PausedHome() {
+  return (
+    <>
+      <section className="hero">
+        <div className="eyebrow">Aero Pulse</div>
+        <h1>OTA discount comparison, downloads and tools in one place.</h1>
+        <p>
+          Market Intelligence and Forecasting are paused because of running costs and will be back
+          soon. Everything below is working as usual.
+        </p>
+      </section>
+      <div className="section-grid">
+        <DataPanel title="Available now" copy="Open the workspace you need.">
+          <div className="stack">
+            {AVAILABLE_WORKSPACES.map(({ href, label, desc }, idx) => (
+              <Link
+                href={href}
+                className="card roadmap-step"
+                key={href}
+                style={{ textDecoration: "none", color: "inherit" }}
+              >
+                <div className="roadmap-step-header">
+                  <div className="step-number">{idx + 1}</div>
+                  <strong>{label}</strong>
+                  <div className="nav-card-arrow">{">"}</div>
+                </div>
+                <div className="roadmap-step-desc">{desc}</div>
+              </Link>
+            ))}
+          </div>
+        </DataPanel>
+        <DataPanel
+          title="Updating soon"
+          copy="Market Intelligence (routes, operations, changes, taxes, penalties, GDS) and Forecasting are temporarily paused to save costs."
+        >
+          <div className="table-list">
+            <div className="table-row">
+              <div>
+                <strong>Market Intelligence and Forecasting</strong>
+                <span>Live market data will return soon.</span>
+              </div>
+              <div className="pill warn">Paused</div>
+              <span>Running costs</span>
+            </div>
+          </div>
+        </DataPanel>
+      </div>
+    </>
+  );
+}
 
 function uniqueByKey<T>(items: T[], keyFn: (item: T) => string) {
   const seen = new Set<string>();
@@ -27,6 +93,7 @@ function formatDate(value?: string | null) {
 }
 
 export default async function HomePage() {
+  if (!marketDataEnabled()) return <PausedHome />; // paused: running costs
   const payload = await getDashboardPayload();
   const latestCycle = payload.latestCycle.data;
   const cycleHealth = payload.cycleHealth.data;

@@ -9,6 +9,8 @@ import { formatBooleanFlag, formatDhakaDateTime, formatMoney, formatRouteGeo, fo
 import { paginateRows, parsePageParam } from "@/lib/pagination";
 import { firstParam, manyParams, parseLimit, type RawSearchParams } from "@/lib/query";
 import { getCurrentUserSession } from "@/lib/user-auth";
+import { PausedNotice } from "@/components/paused-notice";
+import { marketDataEnabled } from "@/lib/market-pause";
 
 type PageProps = {
   searchParams?: Promise<RawSearchParams>;
@@ -22,6 +24,7 @@ function selectedRouteKey(origin?: string, destination?: string) {
 }
 
 export default async function PenaltiesPage({ searchParams }: PageProps) {
+  if (!marketDataEnabled()) return <PausedNotice section="Penalties" />; // paused: running costs
   const params = (await searchParams) ?? {};
   const selectedAirlines = manyParams(params, "airline");
   const origin = firstParam(params, "origin");
