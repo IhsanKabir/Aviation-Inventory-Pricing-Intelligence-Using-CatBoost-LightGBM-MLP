@@ -5,6 +5,8 @@ aircraft."""
 from __future__ import annotations
 
 import json
+
+import pytest
 import sys
 import tempfile
 from datetime import date, datetime, timedelta
@@ -29,6 +31,22 @@ def _offer(day: date, number: str, dep: str = "07:15", arr: str = "08:20",
         "departure": f"{day.isoformat()}T{dep}:00", "arrival": f"{day.isoformat()}T{arr}:00",
         "stops": stops, "via_airports": via, "price_total_bdt": 4349, "fare_amount": 3224,
         "aircraft": aircraft}, source="FirstTrip", cabin="Economy")
+
+
+class _Oct8(date):
+    """'Today' for these tests: the fixtures' run is 28 Sep - 7 Oct 2026 and the nearby
+    weeks it settles from (9 and 16 Oct) must still be in the future. Without this the
+    tests broke once the real calendar passed 9 Oct (past dates are never searched)."""
+
+    @classmethod
+    def today(cls):
+        return cls(2026, 10, 8)
+
+
+@pytest.fixture(autouse=True)
+def _fixed_today(monkeypatch):
+    import market_engine.confirm as confirm_mod
+    monkeypatch.setattr(confirm_mod, "date", _Oct8)
 
 
 def _days(n: int):
