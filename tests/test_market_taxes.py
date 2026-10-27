@@ -166,9 +166,9 @@ def test_workbook_gets_the_tax_sheets(tmp_path):
     out = write_workbook(tmp_path / "m.xlsx", table=table, best_by_route={},
                          rows=list(table.rows))
     wb = load_workbook(out)
-    assert wb.sheetnames == ["Fares", "Fare Comparison", "Missing - Re-run",
-                             "Tax Comparison", "Tax by Class", "Tax Breakdown",
-                             "YQ-YR Charges", "OTA Check", "Legend"]
+    # one site: no OTA Check (it could only say "nothing to compare")
+    assert wb.sheetnames == ["Fares", "Fare Comparison", "Fares by Class",
+                             "Missing - Re-run", "Tax Comparison"]
     values = [v for row in wb["Tax Comparison"].iter_rows(values_only=True) for v in row]
     assert T.NOT_CAPTURED in values            # QR: blank-not-zero, said in words
     fares = [v for row in wb["Fares"].iter_rows(values_only=True) for v in row]
@@ -198,10 +198,13 @@ def test_comparison_tables_sit_side_by_side(tmp_path):
     assert yq[1:4] == [618, None, 9000]                 # blank: BG via DOH has no YQ
     g4 = next(r for r in grid if r[0] == "G4")          # a transit code gets its own row
     assert g4[1:4] == [None, 2038, None]
-    # Tax Breakdown: the three airline tables share one row, a blank column between
-    titles = next(r for r in _sheet_rows(wb["Tax Breakdown"])
+    # Fares by Class: the three airline tables share one row, a blank column between
+    titles = next(r for r in _sheet_rows(wb["Fares by Class"])
                   if r and r[0] == "BS / DAC-DXB")
-    assert titles[5] == "BG / DAC-DXB" and titles[10] == "EK / DAC-DXB"
+    assert titles[7] == "BG / DAC-DXB" and titles[14] == "EK / DAC-DXB"
+    # YQ + YR and its share sit under each column (no separate YQ-YR sheet)
+    both = next(r for r in grid if r[0] == "YQ + YR")
+    assert both[1:4] == [618, 0, 9000]
     fares = _sheet_rows(wb["Fare Comparison"])
     assert next(r for r in fares if r[0] == "Airline")[1:4] == ["BS", "BG", "EK"]
 
@@ -225,8 +228,9 @@ def test_a_run_without_firsttrip_shows_totals_and_says_why(tmp_path):
     assert "Tick FirstTrip" in text and "not sent" in text and "16,307" not in text
     total = next(r for r in _sheet_rows(wb["Tax Comparison"]) if r[0] == "Total tax")
     assert 10703 in total and 16307 in total
-    ota = " ".join(str(v) for r in _sheet_rows(wb["OTA Check"]) for v in r if v)
-    assert "used only ShareTrip" in ota
+    assert "OTA Check" not in wb.sheetnames
+    missing = " ".join(str(v) for r in _sheet_rows(wb["Missing - Re-run"]) for v in r if v)
+    assert "only ShareTrip searched" in missing
 
 
 def test_fares_of_one_routing_share_a_column_even_when_a_small_code_differs():
@@ -268,7 +272,10 @@ def test_by_class_splits_a_routing_so_yq_reads_per_class():
             _row("MH", "1143", (("YQ", 7336), ("MY", 1726)), 9062.0, o="PEN", d="DAC",
                  gross=45000.0, rbd="S", clock="10:00")]
     (table,) = T.by_class(rows, LIMITS)
-    assert [(l.rbd, l.surcharge_low) for l in table.lines] == [("S", 7336), ("M", 371)]
+    assert [(l.rbd, l.surcharge) for l in table.lines] == [("S", 7336), ("M", 371)]
+    s_line = table.lines[0]                    # every figure from the same fare
+    assert s_line.base_with_yq == s_line.base + 7336
+    assert s_line.gross == 45000 and s_line.tax == 9062
 
 
 def test_site_check_compares_fares_and_explains_tax_by_class():
@@ -320,11 +327,24 @@ def test_inbound_tax_rows_show_only_the_codes_the_route_has(tmp_path):
     assert "BD" not in labels and labels.index("YQ") < labels.index("G1")
 
 
-def test_breakdown_tables_line_up_even_when_one_has_a_status_note(tmp_path):
+def test_only_sheets_with_something_to_say_are_created(tmp_path):
+    """Two sites, an itemising one included, one route both ways, nothing odd: no
+    Missing sheet; OTA Check present because the same flight is on both sites."""
+    rows = [_row(), _row(source="ShareTrip", taxes=(), total=10703.0),
+            _row(number="342", o="DXB", d="DAC"),
+            _row(number="342", o="DXB", d="DAC", source="ShareTrip", taxes=(), total=10703.0)]
+    names = _workbook(tmp_path, rows).sheetnames
+    assert names == ["Fares", "Fare Comparison", "Fares by Class", "Tax Comparison",
+                     "OTA Check"]
+
+
+def test_tax_legend_lists_only_what_the_sheet_uses(tmp_path):
     rows = [_row(), _row("6E", "1102", (("BD", 17316),), 17316.0, via="BOM")]
-    sheet = _sheet_rows(_workbook(tmp_path, rows)["Tax Breakdown"])
-    header = next(r for r in sheet if r and r[0] == "Code")
-    assert header[5] == "Code"                 # both heads on the same row
+    labels = [r[0] for r in _sheet_rows(_workbook(tmp_path, rows)["Tax Comparison"]) if r]
+    legend = labels[labels.index("Legend") + 1:]
+    assert T.ITEMISED in legend and T.NOT_ITEMISED in legend
+    assert T.TOTAL_ONLY not in legend and T.CHECK not in legend
+    assert "YQ" in legend                      # named in config/tax_codes.json
 
 
 def test_a_firsttrip_fare_with_no_codes_and_no_total_is_still_listed():
@@ -341,3 +361,32 @@ def test_refundable_left_out_by_the_site_stays_unknown():
     raw = firsttrip._normalize(offer, "Economy", None)
     assert raw["fare_refundable"] is None
     assert from_connector(raw, source="FirstTrip", cabin="Economy").refundable is None
+
+
+def test_fares_by_class_puts_upper_cabins_first_then_a_blank_line(tmp_path):
+    from dataclasses import replace
+    rows = [replace(_row(gross=36671.0, rbd="S"), cabin_class="Economy"),
+            replace(_row(gross=41000.0, rbd="Y", clock="21:00"), cabin_class="Economy"),
+            replace(_row(gross=95000.0, rbd="J", clock="22:00"), cabin_class="Business")]
+    (table,) = T.by_class(rows, LIMITS)
+    assert [l.rbd for l in table.lines] == ["J", "Y", "S"] and table.split_cabins
+    sheet = _sheet_rows(_workbook(tmp_path, rows)["Fares by Class"])
+    first = next(i for i, r in enumerate(sheet) if r and r[0] == "RBD")
+    assert [r[0] for r in sheet[first + 1:first + 5]] == ["J", None, "Y", "S"]
+    assert sheet[first][3] == "Base with YQ"
+    taxes = [r[0] for r in sheet[first + 5:] if r and r[0]]
+    assert taxes[:3] == ["Taxes (BDT)", "YQ", "BD"] and "Total" in taxes
+
+
+def test_fares_by_class_without_an_itemising_site_still_lists_classes(tmp_path):
+    rows = [_row(source="ShareTrip", taxes=(), total=10703.0, rbd="V")]
+    (table,) = T.by_class(rows, LIMITS)
+    assert table.lines[0].tax == 10703 and table.lines[0].surcharge is None
+
+
+def test_tax_blocks_line_up_across_a_band(tmp_path):
+    rows = [_row(rbd="S"), _row(gross=41000.0, rbd="Y", clock="21:00"),
+            _row("EK", "585", (("YQ", 9000), ("BD", 500)), 9500.0, rbd="K")]
+    sheet = _sheet_rows(_workbook(tmp_path, rows)["Fares by Class"])
+    row = next(r for r in sheet if r and r[0] == "Taxes (BDT)")
+    assert row[7] == "Taxes (BDT)"            # EK's block starts on the same row

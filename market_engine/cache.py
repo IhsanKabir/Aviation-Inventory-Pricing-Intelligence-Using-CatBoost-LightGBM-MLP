@@ -69,6 +69,7 @@ def _decode(blob: str) -> list[FlightRow]:
         d["rbd"] = d.get("rbd") or ""
         d.setdefault("baggage", "")
         d.setdefault("refundable", None)
+        d.setdefault("cabin_class", "")
         rows.append(FlightRow(**d))
     return rows
 

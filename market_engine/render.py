@@ -261,8 +261,14 @@ def _fare_sheets(wb, table, best_by_route: dict, rows: Optional[list], stamp: st
                       notes=notes)
     if rows is None:
         return
-    from market_engine.render_taxes import add_tax_sheets
+    from market_engine.render_taxes import add_tax_sheets, write_fares_by_class
+    classes = taxes.by_class(rows, limits)
+    if classes:
+        write_fares_by_class(wb.create_sheet("Fares by Class"), classes,
+                             f"Fares by class — {stamp}")
     groups = taxes.group(rows, limits)
-    write_missing(wb.create_sheet("Missing - Re-run"), gaps.find(table, rows, groups),
-                  f"Missing / re-run — {stamp}")
+    missing = gaps.find(table, rows, groups)
+    if missing:                       # a sheet that says "nothing missing" is no use
+        write_missing(wb.create_sheet("Missing - Re-run"), missing,
+                      f"Missing / re-run — {stamp}")
     add_tax_sheets(wb, rows, stamp, groups=groups)

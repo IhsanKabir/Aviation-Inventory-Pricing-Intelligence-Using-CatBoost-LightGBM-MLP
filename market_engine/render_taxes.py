@@ -1,5 +1,5 @@
-"""Tax sheets of the Fare Comparison workbook: Tax Comparison, Tax by Class, Tax
-Breakdown, YQ-YR Charges and Legend (the OTA Check is in render_compare).
+"""Fares by Class and Tax Comparison (with YQ + YR and a legend) sheets of the
+Fare Comparison workbook; the OTA Check is in render_compare.
 
 Comparison tables sit SIDE BY SIDE, as in the TravelportAuto fare report: one
 block per route, each airline (and each of its routings) in its own column or
@@ -13,21 +13,13 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill
 
 from market_engine import taxes as T
-from market_engine.render import (HDR_FILL, HDR_FONT, NOTE_FONT, WARN_FILL,
-                                  _header, _widths)
+from market_engine.render import HDR_FILL, HDR_FONT, NOTE_FONT, WARN_FILL, _widths
 
 SECTION_FONT = Font(bold=True, size=11, color="1F4E79")
 CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
-STATUS_NOTES = {
-    T.ITEMISED: "",
-    T.NOT_CAPTURED: "taxes not sent by the source",
-    T.NOT_ITEMISED: "whole tax filed under one code",
-    T.CHECK: "codes do not add up to the total - check",
-    T.TOTAL_ONLY: "this site sends a tax total only, no codes",
-}
 #: Code cells of a fare whose codes are unknown: said in words, never 0.
 NO_CODES = {T.NOT_CAPTURED: T.NOT_CAPTURED, T.TOTAL_ONLY: "not sent"}
 
@@ -132,8 +124,34 @@ def _route_codes(part: list) -> list:
     return list(T.SURCHARGES) + rest
 
 
-def write_comparison(ws, groups: list, title: str, note: str = "") -> None:
-    """Per route: tax codes down, airlines side by side across."""
+def _matrix_cell(g, label: str) -> tuple:
+    """(value, warn) for one Tax Comparison cell."""
+    missing = NO_CODES.get(g.status)
+    if label == "Status":
+        return g.status, g.status != T.ITEMISED
+    if label == "Fares":
+        return g.fares, False
+    if label == "Total tax":
+        return (_range((g.total_low, g.total_high)) if g.total_high else None), False
+    if label == "YQ + YR":
+        if g.status != T.ITEMISED:
+            return None, False
+        both = (g.surcharge_low, g.surcharge_high) if g.surcharge_high is not None else None
+        return _range(both), False
+    if label == "YQ + YR share":
+        # per fare, then the range: a group's highest YQ and highest total can come
+        # from different fares
+        if g.status != T.ITEMISED or g.share_high is None:
+            return None, False
+        lo, hi = round(g.share_low * 100), round(g.share_high * 100)
+        return (f"{lo}%" if lo == hi else f"{lo}-{hi}%"), False
+    return (missing or _partial(g, label)), bool(missing)
+
+
+def write_comparison(ws, groups: list, title: str, note: str = "",
+                     names: Optional[dict] = None) -> None:
+    """Per route: tax codes down, airlines side by side across; YQ + YR and its
+    share of the tax under each column, and a short legend at the end."""
     ws.cell(1, 1, title).font = Font(bold=True, size=12)
     ws.cell(2, 1, "Adult taxes per fare, BDT. Each column is one airline and routing; "
                   "a range is low-high across its fares, \"(1 of 3)\" = only some of them "
@@ -155,26 +173,21 @@ def write_comparison(ws, groups: list, title: str, note: str = "") -> None:
                 _head(ws, r, i, g.airline)
                 _head(ws, r + 1, i, _routing(g))
             r += 2
-            lines = (["Status", "Fares"] + _route_codes(gs) + ["Total tax"])
+            lines = (["Status", "Fares"] + _route_codes(gs)
+                     + ["Total tax", "YQ + YR", "YQ + YR share"])
             for label in lines:
-                ws.cell(r, 1, label).font = Font(bold=label in ("Total tax", "YQ", "YR"))
+                ws.cell(r, 1, label).font = Font(bold=label in ("Total tax", "YQ", "YR",
+                                                                "YQ + YR"))
                 for i, g in enumerate(gs, start=2):
-                    missing = NO_CODES.get(g.status)
-                    if label == "Status":
-                        _put(ws, r, i, g.status, warn=g.status != T.ITEMISED)
-                    elif label == "Fares":
-                        ws.cell(r, i, g.fares)
-                    elif label == "Total tax":
-                        cell = _put(ws, r, i, _range((g.total_low, g.total_high))
-                                    if g.total_high else None)
-                        cell.font = Font(bold=True)
-                    else:
-                        _put(ws, r, i, missing or _partial(g, label), warn=bool(missing))
+                    _put(ws, r, i, *_matrix_cell(g, label))
+                    if label == "Total tax":
+                        ws.cell(r, i).font = Font(bold=True)
                     ws.cell(r, i).alignment = Alignment(horizontal="center")
                 r += 1
             widest = max(widest, len(gs) + 1)
             r += 1
         r += 1
+    _legend(ws, r + 1, groups, names or {})
     _widths(ws, [14] + [15] * (widest - 1))
     ws.freeze_panes = "B4"
 
@@ -182,101 +195,30 @@ def write_comparison(ws, groups: list, title: str, note: str = "") -> None:
 #: Side-by-side tables per band: a route with 20 routings wraps onto new bands
 #: instead of running 100 columns wide.
 TABLES_PER_BAND = 6
-TABLE_WIDTH = 4                              # Code | Low | High | Fares
 
 
 def _bands(items: list) -> list:
     return [items[i:i + TABLES_PER_BAND] for i in range(0, len(items), TABLES_PER_BAND)]
 
 
-def write_breakdown(ws, groups: list, title: str, note: str = "") -> None:
-    """Per route: one table per airline/routing, side by side, a blank column between.
+#: Base with YQ is the column the GDS report highlights: the fare an airline
+#: controls (base + its own surcharges), before government taxes.
+YQ_FILL = PatternFill("solid", fgColor="FFFF00")
+CLASS_COLUMNS = ("RBD", "Base", "YQ+YR", "Base with YQ", "Tax", "Gross")
 
-    Every table has the same head (title, routing, status, header row) so the
-    tables of a band line up row for row."""
+
+def write_fares_by_class(ws, tables: list, title: str, note: str = "") -> None:
+    """Per route: one table per airline/routing side by side (6 per band), a line
+    per booking class - upper cabins, a blank line, then economy, highest fare
+    first - and the routing's tax codes under each table."""
     ws.cell(1, 1, title).font = Font(bold=True, size=12)
-    r = _banner(ws, 2, note)
-    r = max(r, 3)
-    if not groups:
-        ws.cell(r, 1, "No fares with taxes in this run.").font = NOTE_FONT
-    for section, part in _sections(groups):
-        ws.cell(r, 1, section).font = SECTION_FONT
-        r += 2
-        for route, gs in _by_route(part):
-            ws.cell(r, 1, f"{route} {_arrow(gs[0])}").font = Font(bold=True)
-            r += 1
-            for band in _bands(gs):
-                bottom = r
-                for k, g in enumerate(band):
-                    bottom = max(bottom, _breakdown_table(ws, r, 1 + k * (TABLE_WIDTH + 1), g))
-                r = bottom + 2
-    _widths(ws, [9, 10, 10, 7, 3] * TABLES_PER_BAND)
-
-
-def _breakdown_lines(g) -> list:
-    """(label, low, high, fares, bold) rows: YQ, YR, their subtotal, then A-Z."""
-    lines = []
-    for code in T.SURCHARGES:
-        rng = g.code_range(code)
-        if rng:
-            lines.append((code, rng[0], rng[1], g.carried_by(code), False))
-    if lines:
-        lines.append(("Charges", g.surcharge_low, g.surcharge_high, None, True))
-    for code, lo, hi, n in g.codes:
-        if code not in T.SURCHARGES:
-            lines.append((code, lo, hi, n, False))
-    return lines
-
-
-def _breakdown_table(ws, r: int, c: int, g) -> int:
-    """One airline's table at (r, c); -> the last row it used."""
-    ws.cell(r, c, f"{g.airline} / {g.route}").font = Font(bold=True)
-    ws.cell(r + 1, c, _routing(g)).font = NOTE_FONT
-    if STATUS_NOTES.get(g.status):            # always this row, so heads align
-        _put(ws, r + 2, c, STATUS_NOTES[g.status], warn=True)
-    r += 3
-    for i, label in enumerate(("Code", "Low", "High", "Fares")):
-        _head(ws, r, c + i, label)
-    r += 1
-    if g.status in NO_CODES:
-        _put(ws, r, c, NO_CODES[g.status], warn=True)
-        r += 1
-    for label, lo, hi, n, bold in _breakdown_lines(g):
-        ws.cell(r, c, label).font = Font(bold=bold)
-        if lo is not None:
-            _put(ws, r, c + 1, round(lo))
-            _put(ws, r, c + 2, round(hi))
-        if n is not None:
-            ws.cell(r, c + 3, n)
-        r += 1
-    ws.cell(r, c, "Total").font = Font(bold=True)
-    if g.total_high:
-        _put(ws, r, c + 1, round(g.total_low), warn=g.status != T.ITEMISED)
-        _put(ws, r, c + 2, round(g.total_high), warn=g.status != T.ITEMISED)
-    ws.cell(r, c + 3, g.fares)
-    if g.rbds:
-        r += 1
-        ws.cell(r, c, "RBD").font = NOTE_FONT
-        ws.cell(r, c + 1, ", ".join(g.rbds)).font = NOTE_FONT
-    if g.flight_numbers:
-        r += 1
-        ws.cell(r, c, "Flights").font = NOTE_FONT
-        ws.cell(r, c + 1, ", ".join(g.flight_numbers)).font = NOTE_FONT
-    return r
-
-
-def write_by_class(ws, tables: list, title: str, note: str = "") -> None:
-    """Per route: one table per airline/routing, a line per booking class, highest
-    fare first - YQ follows the class, which a routing-wide range hides."""
-    ws.cell(1, 1, title).font = Font(bold=True, size=12)
-    ws.cell(2, 1, "From the site that itemises taxes (FirstTrip). Gross / base = the "
-                  "class's cheapest fare; YQ+YR and tax as low-high across its "
-                  "fares.").font = NOTE_FONT
-    r = _banner(ws, 3, note)
-    r = max(r, 4)
-    if not tables:
-        ws.cell(r, 1, "No booking classes in this run.").font = NOTE_FONT
-    width = 5                                  # RBD | Gross | Base | YQ+YR | Tax
+    sites = sorted({s for t in tables for s in t.sources})
+    ws.cell(2, 1, "BDT per adult, one-way, from {}. Each line is the class's cheapest "
+                  "fare. Base with YQ = base + the airline's YQ/YR surcharges; Gross = "
+                  "what the passenger pays.".format(", ".join(sites) or "the run")
+            ).font = NOTE_FONT
+    r = max(_banner(ws, 3, note), 4)
+    width = len(CLASS_COLUMNS)
     section = None
     by_route: list = []
     for t in tables:
@@ -293,136 +235,114 @@ def write_by_class(ws, tables: list, title: str, note: str = "") -> None:
         ws.cell(r, 1, f"{route} {_arrow(ts[0])}").font = Font(bold=True)
         r += 1
         for band in _bands(ts):
+            # every table of a band gets as many class lines as its longest one,
+            # so the "Taxes (BDT)" blocks start on one row and compare across
+            depth = max(len(t.lines) + (1 if t.split_cabins else 0) for t in band)
             bottom = r
             for k, t in enumerate(band):
-                bottom = max(bottom, _class_table(ws, r, 1 + k * (width + 1), t))
+                bottom = max(bottom, _class_table(ws, r, 1 + k * (width + 1), t, depth))
             r = bottom + 2
-    _widths(ws, [6, 10, 10, 11, 12, 3] * TABLES_PER_BAND)
+    _widths(ws, [6, 10, 9, 12, 9, 10, 3] * TABLES_PER_BAND)
+    ws.freeze_panes = "A4"
 
 
-def _class_table(ws, r: int, c: int, t) -> int:
-    ws.cell(r, c, f"{t.airline} / {t.route}").font = Font(bold=True)
-    ws.cell(r + 1, c, _routing(t)).font = NOTE_FONT
+def _class_table(ws, r: int, c: int, t, depth: int = 0) -> int:
+    """One airline's table at (r, c), its class lines padded to `depth`; -> the
+    last row it used."""
+    width = len(CLASS_COLUMNS)
+    ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c + width - 1)
+    head = ws.cell(r, c, f"{t.airline} / {t.route}")
+    head.font, head.fill, head.alignment = HDR_FONT, HDR_FILL, CENTER
+    ws.merge_cells(start_row=r + 1, start_column=c, end_row=r + 1, end_column=c + width - 1)
+    sub = ws.cell(r + 1, c, "{}  ·  {} fare(s)".format(_routing(t), t.fares))
+    sub.font, sub.alignment = NOTE_FONT, CENTER
     r += 2
-    for i, label in enumerate(("RBD", "Gross", "Base", "YQ+YR", "Tax")):
+    for i, label in enumerate(CLASS_COLUMNS):
         _head(ws, r, c + i, label)
+        if label == "Base with YQ":
+            ws.cell(r, c + i).fill = YQ_FILL
+            ws.cell(r, c + i).font = Font(bold=True, size=10)
     r += 1
+    lines_end = r + depth
+    upper_done = False
     for line in t.lines:
+        if t.split_cabins and not upper_done and not T.is_upper(line.cabin):
+            upper_done = True
+            r += 1                                # the blank line between cabins
         ws.cell(r, c, line.rbd).alignment = Alignment(horizontal="center")
-        _put(ws, r, c + 1, round(line.gross_low))
-        _put(ws, r, c + 2, round(line.base_low) if line.base_low else None)
-        both = ((line.surcharge_low, line.surcharge_high)
-                if line.surcharge_high is not None else None)
-        _put(ws, r, c + 3, _range(both))
-        taxes = (line.tax_low, line.tax_high) if line.tax_high is not None else None
-        _put(ws, r, c + 4, _range(taxes))
+        for i, v in enumerate((line.base, line.surcharge, line.base_with_yq, line.tax),
+                              start=1):
+            _put(ws, r, c + i, round(v) if v is not None else None)
+        gross = _put(ws, r, c + 5, round(line.gross))
+        gross.font = Font(bold=True)
+        r += 1
+    r = max(r, lines_end)
+    if t.codes or t.total_high:
+        r += 1
+        ws.cell(r, c, "Taxes (BDT)").font = Font(bold=True, size=9)
+        r += 1
+        ordered = ([x for x in t.codes if x[0] in T.SURCHARGES]
+                   + [x for x in t.codes if x[0] not in T.SURCHARGES])
+        for code, lo, hi, n in ordered:
+            ws.cell(r, c, code).font = Font(size=9, bold=code in T.SURCHARGES)
+            _put(ws, r, c + 1, _range((lo, hi)))
+            if n < t.fares:
+                ws.cell(r, c + 2, f"{n} of {t.fares}").font = NOTE_FONT
+            r += 1
+        ws.cell(r, c, "Total").font = Font(bold=True, size=9)
+        if t.total_high is not None:
+            _put(ws, r, c + 1, _range((t.total_low, t.total_high)))
+        if not t.codes:
+            ws.cell(r, c + 2, "no tax codes sent").font = NOTE_FONT
         r += 1
     return r - 1
 
 
-def write_surcharges(ws, groups: list, title: str, note: str = "") -> None:
-    """Per route: YQ / YR / share down, airlines side by side across."""
-    ws.cell(1, 1, title).font = Font(bold=True, size=12)
-    ws.cell(2, 1, "YQ / YR are set by the airline, not by any government - the part "
-                  "of the tax an airline controls.").font = NOTE_FONT
-    r = _banner(ws, 3, note)
-    r = max(r, 4)
+STATUS_MEANING = {
+    T.ITEMISED: "codes add up to the fare's total tax",
+    T.NOT_CAPTURED: "the site sent a total but no codes - not a zero tax",
+    T.NOT_ITEMISED: "the carrier filed its whole tax under one code - not comparable",
+    T.CHECK: "the codes do not add up to the total tax",
+    T.TOTAL_ONLY: "a site that never sends codes (ShareTrip, GoZayaan): its total only",
+}
+
+
+def _legend(ws, r: int, groups: list, names: dict) -> None:
+    """Only what this sheet uses: its statuses, and the codes that have a name."""
     if not groups:
-        ws.cell(r, 1, "No fares with taxes in this run.").font = NOTE_FONT
-    widest = 1
-    for section, part in _sections(groups):
-        ws.cell(r, 1, section).font = SECTION_FONT
-        r += 2
-        for route, gs in _by_route(part):
-            ws.cell(r, 1, f"{route} {_arrow(gs[0])}").font = Font(bold=True)
-            r += 1
-            _head(ws, r, 1, "Airline")
-            _head(ws, r + 1, 1, "Routing")
-            for i, g in enumerate(gs, start=2):
-                _head(ws, r, i, g.airline)
-                _head(ws, r + 1, i, _routing(g))
-            r += 2
-            for label in ("YQ", "YR", "YQ + YR", "Total tax", "YQ + YR share"):
-                ws.cell(r, 1, label).font = Font(bold=label == "YQ + YR")
-                for i, g in enumerate(gs, start=2):
-                    ws.cell(r, i).alignment = Alignment(horizontal="center")
-                    if label == "Total tax":
-                        _put(ws, r, i, _range((g.total_low, g.total_high))
-                             if g.total_high else None)
-                    elif g.status != T.ITEMISED:
-                        # its codes are unknown or untrustworthy: say which, once
-                        if label == "YQ":
-                            _put(ws, r, i, g.status, warn=True)
-                    elif label in ("YQ", "YR"):
-                        _put(ws, r, i, _range(g.code_range(label)))
-                    elif label == "YQ + YR":
-                        both = ((g.surcharge_low, g.surcharge_high)
-                                if g.surcharge_high is not None else None)
-                        _put(ws, r, i, _range(both))
-                    elif g.share_high is not None:
-                        # per fare, then the range: a group's highest YQ and highest
-                        # total can come from different fares
-                        lo, hi = round(g.share_low * 100), round(g.share_high * 100)
-                        ws.cell(r, i, f"{lo}%" if lo == hi else f"{lo}-{hi}%")
-                r += 1
-            widest = max(widest, len(gs) + 1)
-            r += 1
-        r += 1
-    _widths(ws, [14] + [15] * (widest - 1))
-    ws.freeze_panes = "B4"
-
-
-def write_legend(ws, groups: list, names: dict) -> None:
-    ws.cell(1, 1, "Legend").font = Font(bold=True, size=12)
-    r = _header(ws, 3, ["Code", "Name"])
-    seen = sorted({c for g in groups for c, *_ in g.codes} | set(T.FIXED_CODES))
-    for code in seen:
-        ws.cell(r, 1, code)
-        name = names.get(code)
-        cell = ws.cell(r, 2, name or "(not named yet - add it in config/tax_codes.json)")
-        if not name:
-            cell.font = NOTE_FONT
-        r += 1
+        return
+    ws.cell(r, 1, "Legend").font = Font(bold=True)
     r += 1
-    ws.cell(r, 1, "Folding").font = Font(bold=True)
-    ws.cell(r, 2, "Codes are read by their first two characters (OW2 = OW, YQI = YQ, "
-                  "PZ + PZ2 summed). Codes such as E5, P7, P8 are kept as they are.")
-    r += 1
-    ws.cell(r, 1, "→ / ←").font = Font(bold=True)
-    ws.cell(r, 2, "leaving Bangladesh (or DAC) / coming back")
-    r += 2
-    ws.cell(r, 1, "Status").font = Font(bold=True)
-    r += 1
-    for status, meaning in ((T.ITEMISED, "codes add up to the fare's total tax"),
-                            (T.NOT_CAPTURED, "the source sent a total but no codes - "
-                                             "not a zero tax"),
-                            (T.NOT_ITEMISED, "the carrier filed its whole tax under one "
-                                             "code, so the codes are not comparable"),
-                            (T.CHECK, "the codes do not add up to the total tax"),
-                            (T.TOTAL_ONLY, "a site that never sends codes (ShareTrip, "
-                                           "GoZayaan): its tax total, shown only where "
-                                           "FirstTrip had no fare for that airline")):
+    for status in [s for s in STATUS_MEANING if any(g.status == s for g in groups)]:
         ws.cell(r, 1, status)
-        ws.cell(r, 2, meaning)
+        ws.cell(r, 2, STATUS_MEANING[status]).font = NOTE_FONT
         r += 1
-    _widths(ws, [14, 90])
+    used = sorted({c for g in groups for c, *_ in g.codes})
+    for code in [c for c in used if names.get(c)]:
+        ws.cell(r, 1, code)
+        ws.cell(r, 2, names[code]).font = NOTE_FONT
+        r += 1
+    ws.cell(r, 1, "Codes").font = NOTE_FONT
+    ws.cell(r, 2, "read by their first two characters (OW2 = OW, YQI = YQ; E5, P7, P8 kept "
+                  "as they are). Name other codes in config/tax_codes.json.").font = NOTE_FONT
+    r += 1
+    ws.cell(r, 1, "→ / ←").font = NOTE_FONT
+    ws.cell(r, 2, "leaving Bangladesh (or DAC) / coming back").font = NOTE_FONT
 
 
 def add_tax_sheets(wb, rows: list, stamp: str, groups: Optional[list] = None) -> None:
+    """Tax Comparison, then the OTA Check only when it has content: a sheet that
+    can only say "nothing here" is not worth a tab. (Fares by Class is written
+    with the fare sheets.)"""
     from market_engine.render_compare import write_site_check
 
     cfg = T.load_config()
     groups = T.group(rows, cfg["limits"]) if groups is None else groups
-    note = no_itemising_note(rows)
+    if not groups:
+        return
     write_comparison(wb.create_sheet("Tax Comparison"), groups,
-                     f"Tax comparison - {stamp}", note)
-    write_by_class(wb.create_sheet("Tax by Class"), T.by_class(rows, cfg["limits"]),
-                   f"Fare and tax by booking class - {stamp}", note)
-    write_breakdown(wb.create_sheet("Tax Breakdown"), groups,
-                    f"Tax breakdown - {stamp}", note)
-    write_surcharges(wb.create_sheet("YQ-YR Charges"), groups,
-                     f"YQ / YR carrier surcharges - {stamp}", note)
-    write_site_check(wb.create_sheet("OTA Check"), T.ota_check(rows),
-                     f"Same flight on each site - {stamp}",
-                     tuple(sorted({r.source for r in rows})))
-    write_legend(wb.create_sheet("Legend"), groups, cfg["names"])
+                     f"Tax comparison - {stamp}", no_itemising_note(rows), cfg["names"])
+    checks = T.ota_check(rows)
+    if checks:
+        write_site_check(wb.create_sheet("OTA Check"), checks,
+                         f"Same flight on each site - {stamp}")

@@ -412,16 +412,30 @@ def cheapest_fare_tax(rows: Iterable[FlightRow], limits: Optional[dict] = None) 
     return {k: (c.tax, c.surcharge) for k, c in cheapest_fares(rows, limits).items()}
 
 
+#: Upper cabins first, as the GDS fare report lays them out.
+CABIN_RANK = {"First": 0, "Business": 1, "Premium Economy": 2, "Premium": 2}
+
+
+def is_upper(cabin: str) -> bool:
+    return CABIN_RANK.get(cabin, 9) < 3
+
+
 @dataclass(frozen=True)
 class ClassLine:
+    """One booking class: its cheapest fare, every figure from that same fare."""
     rbd: str
-    fares: int
-    gross_low: float
-    base_low: float
-    tax_low: Optional[float]
-    tax_high: Optional[float]
-    surcharge_low: Optional[float]
-    surcharge_high: Optional[float]
+    cabin: str
+    fares: int                   # fares seen in this class
+    gross: float
+    base: Optional[float]        # None when the site hid the base
+    surcharge: Optional[float]   # YQ + YR; None when the fare's codes are unknown
+    tax: Optional[float]
+
+    @property
+    def base_with_yq(self) -> Optional[float]:
+        if self.base is None or self.surcharge is None:
+            return None
+        return self.base + self.surcharge
 
 
 @dataclass(frozen=True)
@@ -431,42 +445,62 @@ class ClassTable:
     airline: str
     via: str
     operated_by: str
-    lines: tuple                 # ClassLine, highest fare first (as the GDS report)
+    lines: tuple                 # ClassLine: upper cabins first, highest fare first
+    codes: tuple = ()            # ((code, low, high, fares carrying it), ...) folded
+    fares: int = 0
+    sources: tuple = ()
+    total_low: Optional[float] = None
+    total_high: Optional[float] = None
 
     @property
     def route(self) -> str:
         return f"{self.origin}-{self.destination}"
 
+    @property
+    def split_cabins(self) -> bool:
+        return any(is_upper(l.cabin) for l in self.lines) and any(
+            not is_upper(l.cabin) for l in self.lines)
+
 
 def by_class(rows: Iterable[FlightRow], limits: Optional[dict] = None) -> list:
-    """Per airline + routing, one line per booking class: YQ follows the class, so
-    a routing's YQ range (MH 371-7,336) only reads once it is split this way.
+    """Per airline + routing, one line per booking class (the GDS fare report's
+    layout): YQ follows the class, so a routing's YQ range (MH 371-7,336) only
+    reads once it is split this way; the routing's tax codes come with it.
 
-    From the itemising site(s) only: a class's tax is what this view is about."""
+    From the itemising site(s) when the run has one - a class's taxes are the
+    point - else from every site (totals only)."""
     rows = [r for r in rows if r.gross_bdt > 0]
     reads = read_all(rows, limits)
     itemising = {r.source for r in rows if r.taxes}
+    use = [r for r in rows if r.source in itemising] if itemising else rows
     tables: dict = {}
-    for r in rows:
-        if r.source not in itemising:
-            continue
+    for r in use:
         key = (r.origin, r.destination, r.airline, r.via, r.operated_by)
-        tables.setdefault(key, {}).setdefault(r.rbd or "?", []).append(r)
+        tables.setdefault(key, {}).setdefault((r.cabin_class, r.rbd or "?"), []).append(r)
     out = []
     for (o, d, airline, via, op), classes in tables.items():
         lines = []
-        for rbd, rs in classes.items():
-            taxes = [t for t in (tax_of(r) for r in rs) if t is not None]
-            surch = [x for x in (surcharge(reads[id(r)]) for r in rs) if x is not None]
-            bases = [r.base_bdt for r in rs if r.base_is_real]
+        for (cabin, rbd), rs in classes.items():
+            best = min(rs, key=lambda r: r.gross_bdt)
             lines.append(ClassLine(
-                rbd=rbd, fares=len(rs), gross_low=min(r.gross_bdt for r in rs),
-                base_low=min(bases) if bases else 0.0,
-                tax_low=min(taxes) if taxes else None, tax_high=max(taxes) if taxes else None,
-                surcharge_low=min(surch) if surch else None,
-                surcharge_high=max(surch) if surch else None))
-        lines.sort(key=lambda line: -line.gross_low)
-        out.append(ClassTable(o, d, airline, via, op, tuple(lines)))
+                rbd=rbd, cabin=cabin, fares=len(rs), gross=best.gross_bdt,
+                base=best.base_bdt if best.base_is_real else None,
+                surcharge=surcharge(reads[id(best)]), tax=tax_of(best)))
+        lines.sort(key=lambda l: (CABIN_RANK.get(l.cabin, 9), -l.gross))
+        every = [r for rs in classes.values() for r in rs]
+        codes: dict = {}
+        for r in every:
+            t = reads[id(r)]
+            if t.status == ITEMISED:
+                for c, a in t.codes:
+                    codes.setdefault(c, []).append(a)
+        totals = [t for t in (tax_of(r) for r in every) if t is not None]
+        out.append(ClassTable(
+            o, d, airline, via, op, tuple(lines),
+            codes=tuple((c, min(a), max(a), len(a)) for c, a in sorted(codes.items())),
+            fares=len(every), sources=tuple(sorted({r.source for r in every})),
+            total_low=min(totals) if totals else None,
+            total_high=max(totals) if totals else None))
     out.sort(key=lambda t: order_key(t.origin, t.destination, t.airline, t.via)
              + (t.operated_by,))
     return out

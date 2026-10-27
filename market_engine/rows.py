@@ -74,6 +74,9 @@ class FlightRow:
     rbd: str = ""                # booking class of the first segment, when sent
     baggage: str = ""            # checked allowance as the site wrote it ("30 KG")
     refundable: Optional[bool] = None   # None when the site does not say
+    #: Cabin the fare is actually in (an Economy search can return a Business
+    #: class); "" when the site does not say. `cabin` is the cabin searched.
+    cabin_class: str = ""
 
     @property
     def has_clock(self) -> bool:
@@ -185,6 +188,7 @@ def from_connector(raw: dict[str, Any], *, source: str, cabin: str,
         baggage=str(raw.get("baggage") or "").strip(),
         refundable=(bool(raw["fare_refundable"])
                     if raw.get("fare_refundable") is not None else None),
+        cabin_class=str(raw.get("cabin_class") or raw.get("cabin") or "").strip().title(),
     )
 
 
