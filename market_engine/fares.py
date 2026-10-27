@@ -33,6 +33,7 @@ class FareTable:
     cells: list
     refused: dict               # source -> reason it contributed nothing
     gross_only: tuple           # contributed an observed gross, but no trustworthy base
+    rows: tuple = ()            # the fare rows behind the cells (for the tax sheets)
 
 
 @dataclass(frozen=True)
@@ -156,7 +157,8 @@ def build_fares(result: CollectResult, *, requested: Optional[Iterable[str]] = N
             as_of=min(r.fetched_at for r in rs)))
 
     cells.sort(key=lambda c: (c.route, c.gross_low))
-    return FareTable(cells=cells, refused=refused, gross_only=gross_only)
+    return FareTable(cells=cells, refused=refused, gross_only=gross_only,
+                     rows=tuple(usable))
 
 
 def cheapest_by_route(cells: Iterable[FareCell]) -> dict:

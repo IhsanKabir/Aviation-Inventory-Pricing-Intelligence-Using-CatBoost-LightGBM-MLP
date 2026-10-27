@@ -34,6 +34,7 @@ datas = [
     (os.path.join(ROOT, "config", "airline_names.json"), "config"),
     (os.path.join(ROOT, "config", "seat_capacity.json"), "config"),
     (os.path.join(ROOT, "config", "market_settings.json"), "config"),
+    (os.path.join(ROOT, "config", "tax_codes.json"), "config"),
 ]
 binaries = []
 hiddenimports = ["keyring.backends.Windows"]

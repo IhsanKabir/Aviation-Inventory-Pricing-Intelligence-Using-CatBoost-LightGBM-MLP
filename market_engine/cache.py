@@ -24,15 +24,23 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Optional
 
-from market_engine.rows import FlightRow, clean_aircraft
+from market_engine.rows import FlightRow, clean_aircraft, clean_taxes
 
 #: A schedule stays meaningful for weeks; a fare does not survive the day.
 FRESH_SCHEDULE = timedelta(days=21)
 FRESH_FARE = timedelta(hours=8)
 
 
+#: Bumping a source's version here makes every row cached for it before a miss, once:
+#: FirstTrip rows cached before v0.2.27 carry no tax breakdown, routing or RBD, and
+#: would leave the tax sheets "not captured" until they aged out.
+_SOURCE_VERSION = {"FirstTrip": "t1"}
+
+
 def _key(source: str, origin: str, dest: str, day: str, cabin: str) -> str:
-    return f"{source}|{origin.upper()}|{dest.upper()}|{day}|{cabin.lower()}"
+    ver = _SOURCE_VERSION.get(source)
+    tag = f"{source}#{ver}" if ver else source
+    return f"{tag}|{origin.upper()}|{dest.upper()}|{day}|{cabin.lower()}"
 
 
 def _encode(rows: Iterable[FlightRow]) -> str:
@@ -56,6 +64,11 @@ def _decode(blob: str) -> list[FlightRow]:
         # aircraft dict stored as text. Both are repaired on the way in.
         d["aircraft"] = clean_aircraft(d.get("aircraft"))
         d.setdefault("operated_by", "")
+        d["taxes"] = clean_taxes(d.get("taxes"))
+        d.setdefault("tax_total", 0.0)
+        d["rbd"] = d.get("rbd") or ""
+        d.setdefault("baggage", "")
+        d.setdefault("refundable", None)
         rows.append(FlightRow(**d))
     return rows
 

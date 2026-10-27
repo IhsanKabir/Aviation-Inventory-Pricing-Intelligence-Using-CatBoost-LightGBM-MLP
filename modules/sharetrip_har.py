@@ -125,7 +125,8 @@ def _normalize(fl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # not the dict's text (which split one flight across timetable rows).
         "aircraft":           _aircraft_name(s0.get("aircraft")) or None,
         "baggage":            _baggage(segs),
-        "fare_refundable":    bool(fl.get("isRefundable")),
+        "fare_refundable":    (bool(fl["isRefundable"])
+                               if fl.get("isRefundable") is not None else None),
         "fare_id":            str(fl.get("sequenceCode") or fl.get("providerCode") or ""),
         "source_endpoint":    "sharetrip:available-flights",
     }

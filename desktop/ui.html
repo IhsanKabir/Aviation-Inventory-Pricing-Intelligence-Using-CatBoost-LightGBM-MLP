@@ -73,6 +73,9 @@
   /* A checkbox beside its text. The generic "label" rule stacks a label's
      children in a column (field over caption), which put every source's
      checkbox ABOVE its name. */
+  .range-extra { display: inline-flex; gap: 6px; align-items: flex-end;
+    padding-left: 8px; border-left: 2px solid var(--line); }
+  .range-extra button { padding: 4px 9px; }
   label.inline-check { display: inline-flex; flex-direction: row; align-items: center; gap: 5px;
     font-size: 12.5px; color: #111827; margin-right: 14px; }
   label.inline-check input { min-width: 0; }
@@ -295,6 +298,8 @@
       <label>Preset <select id="sch_preset" onchange="applyPreset('sch')"></select></label>
       <label>From <input id="sch_from" placeholder="YYYY-MM-DD"></label>
       <label>To <input id="sch_to" placeholder="YYYY-MM-DD"></label>
+      <span id="sch_more" style="display:contents"></span>
+      <button class="secondary" onclick="addRange('sch')" title="Search another date range in the same run, e.g. a week in November and a week in December">+ Add range</button>
       <button class="secondary" onclick="estimateMarket('schedule')">Estimate</button>
       <button class="big" id="sch-run" onclick="runMarket('schedule')">Build schedule</button>
       <button class="secondary" id="sch-cancel" style="display:none" onclick="cancelMarket()">Cancel</button>
@@ -315,6 +320,8 @@
       <label>Preset <select id="far_preset" onchange="applyPreset('far')"></select></label>
       <label>From <input id="far_from" placeholder="YYYY-MM-DD"></label>
       <label>To <input id="far_to" placeholder="YYYY-MM-DD"></label>
+      <span id="far_more" style="display:contents"></span>
+      <button class="secondary" onclick="addRange('far')" title="Search another date range in the same run, e.g. a week in November and a week in December">+ Add range</button>
       <label class="inline-check"><input type="checkbox" id="far_direct"> Nonstop only</label>
       <button class="secondary" onclick="estimateMarket('fare')">Estimate</button>
       <button class="big" id="far-run" onclick="runMarket('fare')">Compare fares</button>
@@ -1284,6 +1291,25 @@ function applyPreset(p) {
   }
 }
 
+// More date ranges in the same run ("+ Add range"): the run searches the days
+// of every range, not the span between them.
+function addRange(p) {
+  const row = document.createElement("span");
+  row.className = "range-extra";
+  const blank = document.getElementById(p + "_from").placeholder;
+  row.innerHTML = `<label>From <input class="${p}-xfrom" placeholder="${esc(blank)}"></label>
+    <label>To <input class="${p}-xto" placeholder="${esc(blank)}"></label>
+    <button class="secondary" title="Remove this range">&times;</button>`;
+  row.querySelector("button").onclick = () => row.remove();
+  document.getElementById(p + "_more").appendChild(row);
+  row.querySelector("input").focus();
+}
+
+function extraRanges(p) {
+  return [...document.querySelectorAll("#" + p + "_more .range-extra")].map(r =>
+    [r.querySelector("." + p + "-xfrom").value, r.querySelector("." + p + "-xto").value]);
+}
+
 function marketArgs(kind) {
   const p = kind === "schedule" ? "sch" : "far";
   const sources = [...document.querySelectorAll("." + p + "-src")]
@@ -1291,7 +1317,8 @@ function marketArgs(kind) {
   return [kind, document.getElementById(p + "_routes").value,
           document.getElementById(p + "_from").value,
           document.getElementById(p + "_to").value, sources, "Economy",
-          p === "far" && document.getElementById("far_direct").checked];
+          p === "far" && document.getElementById("far_direct").checked,
+          extraRanges(p)];
 }
 
 const lastEstimate = {};
@@ -1299,17 +1326,18 @@ const lastEstimate = {};
 async function estimateMarket(kind) {
   const p = kind === "schedule" ? "sch" : "far";
   const a = marketArgs(kind);
-  const r = await api().market_estimate(a[0], a[1], a[2], a[3], a[4], a[5]);
+  const r = await api().market_estimate(a[0], a[1], a[2], a[3], a[4], a[5], a[7]);
   const box = document.getElementById(p + "_estimate");
   lastEstimate[kind] = r.ok ? r : null;
   if (!r.ok) { box.textContent = r.error; return false; }
   if (r.har_only) {
     const a2 = marketArgs(kind);
     box.textContent = "Reads your HAR captures: " + (a2[1].trim() || "all routes") + " · "
-      + (a2[2].trim() ? `${a2[2]} to ${a2[3]}` : "all dates");
+      + (r.dates_label || "all dates");
     return true;
   }
-  box.textContent = `${r.queries} queries · ${r.cached} cached · ${r.to_fetch} to fetch`
+  box.textContent = `${r.dates_label} (${r.days} day${r.days === 1 ? "" : "s"}) · `
+    + `${r.queries} queries · ${r.cached} cached · ${r.to_fetch} to fetch`
     + ` · about ${Math.max(1, Math.round(r.est_seconds / 60))} min`;
   return true;
 }
@@ -1335,7 +1363,7 @@ async function runMarket(kind) {
   const finish = watchProgress(kind, kind);          // bar ids: prog-schedule / prog-fare
   let r = null;
   try {
-    r = await api().run_market(a[0], a[1], a[2], a[3], a[4], a[5], a[6]);
+    r = await api().run_market(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
   } finally {
     await finish(r || { ok: false, error: "the run stopped unexpectedly" });
     document.getElementById(p + "-run").disabled = false;

@@ -66,6 +66,14 @@ class FlightRow:
     base_is_real: bool
     seats: Optional[int]
     fetched_at: datetime
+    #: Per-passenger (adult) tax as the source itemised it: ((code, BDT), ...), raw
+    #: codes (OW2, YQI...); () when the source sends no breakdown - which is "not
+    #: captured", never a zero tax. Folding and checks live in market_engine.taxes.
+    taxes: tuple = ()
+    tax_total: float = 0.0       # adult tax total; 0.0 when the source hides it
+    rbd: str = ""                # booking class of the first segment, when sent
+    baggage: str = ""            # checked allowance as the site wrote it ("30 KG")
+    refundable: Optional[bool] = None   # None when the site does not say
 
     @property
     def has_clock(self) -> bool:
@@ -170,4 +178,43 @@ def from_connector(raw: dict[str, Any], *, source: str, cabin: str,
         base_is_real=base > 0,
         seats=raw.get("seat_available"),
         fetched_at=fetched_at or datetime.now(),
+        taxes=clean_taxes(raw.get("taxes_breakdown")),
+        tax_total=_money(raw.get("tax_total") or raw.get("tax_amount")),
+        # GoZayaan and ShareTrip live call the booking class booking_class
+        rbd=_rbd(raw.get("rbd") or raw.get("booking_class")),
+        baggage=str(raw.get("baggage") or "").strip(),
+        refundable=(bool(raw["fare_refundable"])
+                    if raw.get("fare_refundable") is not None else None),
     )
+
+
+def _rbd(value: Any) -> str:
+    """A booking class is a letter (rarely two); ShareTrip live can fall back to a
+    cabin word ("Economy"), which is not a class and is dropped."""
+    text = str(value or "").upper().strip()
+    return text if 0 < len(text) <= 2 and text.isalnum() else ""
+
+
+def _money(value: Any) -> float:
+    try:
+        return max(float(value or 0), 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def clean_taxes(value: Any) -> tuple:
+    """((CODE, amount), ...) from a source's list of pairs or {code, amount} dicts.
+
+    Also the cache's way back in: JSON turns the tuples into lists."""
+    out = []
+    for item in value or ():
+        if isinstance(item, dict):
+            code, amount = item.get("code") or item.get("category"), item.get("amount")
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            code, amount = item
+        else:
+            continue
+        code = str(code or "").upper().strip()
+        if code:
+            out.append((code, _money(amount)))
+    return tuple(out)

@@ -12,7 +12,7 @@ never burn it.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -133,12 +133,15 @@ class MarketApiMixin:
                 "sources": entries, "har_dir": har_dir}
 
     def _market_plan(self, kind: str, routes: str, date_from: str, date_to: str,
-                     sources: list, cabin: str):
+                     sources: list, cabin: str, extra_ranges: Optional[list] = None):
         """-> (plan, error_payload). Everything is validated before any network work.
 
         A HAR-only run (no live source) may leave routes and dates blank: it then
         answers for everything the captures cover. A teammate cannot know in
-        advance which days their captures hold, and a live search needs them."""
+        advance which days their captures hold, and a live search needs them.
+
+        `extra_ranges`: more [from, to] pairs after the first ("+ Add range"); the
+        run searches the days of every range, not the span between them."""
         from market_engine import sources as S
         from market_engine.collect import CollectPlan
 
@@ -156,24 +159,18 @@ class MarketApiMixin:
         if not pairs and not har_only:
             return None, {"ok": False, "error": "Enter at least one route, e.g. DAC-CGP."}
 
-        blank_dates = not str(date_from or "").strip() and not str(date_to or "").strip()
-        if har_only and blank_dates:
-            start = end = None                    # every date the captures cover
-        else:
-            try:
-                start = datetime.strptime(date_from, "%Y-%m-%d").date()
-                end = datetime.strptime(date_to, "%Y-%m-%d").date()
-            except (TypeError, ValueError):
-                return None, {"ok": False, "error": "Dates must be YYYY-MM-DD"
-                              + (" (or leave both blank for every date in your captures)."
-                                 if har_only else ".")}
-            if end < start:
-                return None, {"ok": False, "error": "The end date is before the start date."}
-        span = (end - start).days + 1 if start else 0
-        if span > self.MARKET_MAX_DAYS:
+        from market_engine import dateranges
+        pairs_in = [(date_from, date_to)] + [tuple(x or ("", ""))[:2]
+                                             for x in (extra_ranges or [])]
+        dates, bad = dateranges.parse(pairs_in)
+        if bad:
+            return None, {"ok": False, "error": bad}
+        if not dates and not har_only:          # blank = every captured date (HAR only)
+            return None, {"ok": False, "error": "Dates must be YYYY-MM-DD."}
+        if len(dates) > self.MARKET_MAX_DAYS:
             return None, {"ok": False,
-                          "error": "{} days is beyond the {}-day limit.".format(
-                              span, self.MARKET_MAX_DAYS)}
+                          "error": "{} days is beyond the {}-day limit (all ranges "
+                                   "together).".format(len(dates), self.MARKET_MAX_DAYS)}
 
         want = "schedule" if kind == "schedule" else "fare"
         chosen = list(sources or [])
@@ -191,21 +188,25 @@ class MarketApiMixin:
             return None, {"ok": False,
                           "error": "None of the chosen sources can answer a {}.".format(want)}
 
-        dates = [start + timedelta(days=i) for i in range(span)] if start else []
         return CollectPlan(routes=pairs, dates=dates, source_keys=picked,
                            cabin=cabin or "Economy", purpose=want, use_har=use_har), None
 
     # --------------------------------------------------------------- operations
     def market_estimate(self, kind: str, routes: str, date_from: str, date_to: str,
-                        sources: list, cabin: str = "Economy") -> dict:
+                        sources: list, cabin: str = "Economy",
+                        extra_ranges: Optional[list] = None) -> dict:
         """What the run will cost, before committing to it."""
+        from market_engine import dateranges
         from market_engine.collect import estimate
-        plan, err = self._market_plan(kind, routes, date_from, date_to, sources, cabin)
+        plan, err = self._market_plan(kind, routes, date_from, date_to, sources, cabin,
+                                      extra_ranges)
         if err:
             return err
         out = estimate(plan, self._market_cache())
         out["ok"] = True
         out["har_only"] = plan.use_har and not plan.source_keys
+        out["days"] = len(plan.dates)
+        out["dates_label"] = dateranges.describe(plan.dates)
         return out
 
     def cancel_market(self) -> dict:
@@ -214,17 +215,19 @@ class MarketApiMixin:
 
     def run_market(self, kind: str, routes: str, date_from: str, date_to: str,
                    sources: list, cabin: str = "Economy",
-                   direct_only: bool = False) -> dict:
+                   direct_only: bool = False, extra_ranges: Optional[list] = None) -> dict:
         """Collect once, then answer either the schedule or the fare question."""
         if getattr(self, "_busy", False):
             return {"ok": False, "error": "A run is already in progress."}
-        plan, err = self._market_plan(kind, routes, date_from, date_to, sources, cabin)
+        plan, err = self._market_plan(kind, routes, date_from, date_to, sources, cabin,
+                                      extra_ranges)
         if err:
             return err
         blocked = self._require_access()          # same wall as the discount run
         if blocked:
             return blocked
 
+        from market_engine import dateranges
         from market_engine.collect import CollectResult, collect
         from market_engine.fares import build_fares, cheapest_by_route
         from market_engine.schedule import build_schedule, weekly_pattern
@@ -256,9 +259,7 @@ class MarketApiMixin:
                 # Captures hold whatever their author searched: keep only the routes
                 # and dates asked for (blank = everything they cover).
                 har_rows, cut_note = select_rows(
-                    har_rows, routes=plan.routes,
-                    date_from=plan.dates[0] if plan.dates else None,
-                    date_to=plan.dates[-1] if plan.dates else None)
+                    har_rows, routes=plan.routes, dates=plan.dates or None)
                 if cut_note:
                     har_notes.insert(0, cut_note)
                 result.rows.extend(har_rows)
@@ -277,6 +278,7 @@ class MarketApiMixin:
                 "from_cache": result.from_cache,
                 "seconds": round(result.seconds, 1), "errors": result.errors[:20],
                 "date_from": first.isoformat(), "date_to": last.isoformat(),
+                "dates_label": dateranges.describe(plan.dates or [first, last]),
                 # The page has always rendered these; they were never sent, so a
                 # skipped capture or an empty HAR answer went unexplained.
                 "har_notes": har_notes}
@@ -286,8 +288,10 @@ class MarketApiMixin:
                 # an unseen weekday is "unknown", not "doesn't fly", unless that
                 # weekday was searched on 2+ dates - a sold-out flight drops out.
                 from market_engine.schedule import searched_dates
-                searched = searched_dates(r for r in result.rows
-                                          if r.departure_date and first <= r.departure_date <= last)
+                in_run = set(plan.dates) if plan.dates else None
+                searched = searched_dates(
+                    r for r in result.rows if r.departure_date
+                    and (r.departure_date in in_run if in_run else first <= r.departure_date <= last))
                 sched = build_schedule(result, date_from=first, date_to=last)
                 # The timetable lists every SERVICE on sale, connections included:
                 # on a long-haul market nearly every offer carries a stop, so the
@@ -312,11 +316,12 @@ class MarketApiMixin:
                     confirmed = confirm.confirmations(before, timetable)
                     patterns = weekly_pattern(
                         sched, date_from=first, date_to=last, searched=searched,
+                        days=in_run,
                         extra_searched=ev_searched,
                         extra_seen=confirm.seen_weekdays(ev_plain.legs, with_time=False))
                 else:
                     patterns = weekly_pattern(sched, date_from=first, date_to=last,
-                                              searched=searched)
+                                              searched=searched, days=in_run)
                 gaps = coverage_gaps(timetable)
                 self._market_last = {"kind": kind, "sched": sched, "patterns": patterns,
                                      "timetable": timetable, "confirmed": confirmed}
@@ -403,7 +408,9 @@ class MarketApiMixin:
                                      sched=last.get("sched"), table=last.get("table"),
                                      best_by_route=last.get("best"),
                                      timetable=last.get("timetable"),
-                                     confirmed=last.get("confirmed"))
+                                     confirmed=last.get("confirmed"),
+                                     rows=(list(last["table"].rows)
+                                           if last.get("table") is not None else None))
         except OSError as exc:
             return {"ok": False, "error": "Could not write the file: {}".format(exc)}
         self._log_usage("market_export", target=last["kind"])

@@ -1,0 +1,10 @@
+{
+  "_note": "Names shown on the Legend sheet of the Fare Comparison workbook. Only YQ/YR are named out of the box (carrier-imposed surcharges); add a name for any other code as you confirm it. itemisation_limits: a code above this BDT amount means the carrier filed its whole tax under one code, so the fare is marked 'not itemised'.",
+  "names": {
+    "YQ": "Carrier-imposed surcharge (set by the airline, not a government tax)",
+    "YR": "Carrier-imposed surcharge (set by the airline, not a government tax)"
+  },
+  "itemisation_limits": {
+    "BD": 1000
+  }
+}

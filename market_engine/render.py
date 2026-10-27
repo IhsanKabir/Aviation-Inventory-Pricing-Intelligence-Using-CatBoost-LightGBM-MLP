@@ -81,7 +81,12 @@ def write_schedule(ws, patterns, sched, title: str) -> None:
     ws.freeze_panes = ws.cell(r - len(patterns), 1)
 
 
-def write_fares(ws, table, best_by_route: dict, title: str) -> None:
+def write_fares(ws, table, best_by_route: dict, title: str,
+                cheapest_tax: Optional[dict] = None, notes: Optional[dict] = None) -> None:
+    """`cheapest_tax`: (route, airline) -> (tax, YQ+YR) of that pair's cheapest fare
+    (market_engine.taxes.cheapest_fare_tax); the columns stay blank without it.
+    `notes`: (route, airline) -> a warning for the Flags column (outliers)."""
+    cheapest_tax, notes = cheapest_tax or {}, notes or {}
     ws.cell(1, 1, title).font = Font(bold=True, size=12)
     r = 2
     if table.gross_only:
@@ -95,7 +100,8 @@ def write_fares(ws, table, best_by_route: dict, title: str) -> None:
 
     r = _header(ws, r, ["Route", "Airline", "Flights", "Nonstop", "Dates",
                         "Gross low", "Gross high", "Gross avg",
-                        "Base low", "Base high", "Base avg", "Data age (h)", "Flags"])
+                        "Base low", "Base high", "Base avg",
+                        "Tax (cheapest)", "YQ+YR (cheapest)", "Data age (h)", "Flags"])
     for c_ in table.cells:
         flags = []
         if not c_.base_available:
@@ -104,6 +110,8 @@ def write_fares(ws, table, best_by_route: dict, title: str) -> None:
             flags.append("base partly derived")
         if c_.age_hours > 24:
             flags.append(f"{c_.age_hours/24:.0f}d old")
+        if notes.get((c_.route, c_.airline)):
+            flags.append(notes[(c_.route, c_.airline)])
         ws.cell(r, 1, c_.route)
         ws.cell(r, 2, c_.airline)
         ws.cell(r, 3, c_.flights)
@@ -115,16 +123,20 @@ def write_fares(ws, table, best_by_route: dict, title: str) -> None:
             cell = ws.cell(r, i, round(v) if c_.base_available else "—")
             if c_.base_available:
                 cell.number_format = "#,##0"
-        ws.cell(r, 12, round(c_.age_hours, 1))
-        fc = ws.cell(r, 13, "; ".join(flags))
+        tax, yqyr = cheapest_tax.get((c_.route, c_.airline), (None, None))
+        for i, v in ((12, tax), (13, yqyr)):
+            if v is not None:
+                ws.cell(r, i, round(v)).number_format = "#,##0"
+        ws.cell(r, 14, round(c_.age_hours, 1))
+        fc = ws.cell(r, 15, "; ".join(flags))
         if flags:
             fc.fill = WARN_FILL
         if best_by_route.get(c_.route) == c_.airline:
-            for i in range(1, 14):
+            for i in range(1, 16):
                 if not ws.cell(r, i).fill.fgColor.rgb or ws.cell(r, i).fill.patternType is None:
                     ws.cell(r, i).fill = BEST_FILL
         r += 1
-    _widths(ws, [10, 8, 8, 9, 7, 11, 11, 11, 10, 10, 10, 13, 30])
+    _widths(ws, [10, 8, 8, 9, 7, 11, 11, 11, 10, 10, 10, 13, 15, 13, 50])
 
 
 def write_timetable(ws, rows, title: str, confirmed: Optional[list] = None) -> None:
@@ -212,7 +224,9 @@ def write_timetable(ws, rows, title: str, confirmed: Optional[list] = None) -> N
 
 def write_workbook(path: Path, *, patterns=None, sched=None, table=None,
                    best_by_route: Optional[dict] = None, timetable=None,
-                   title: str = "", confirmed: Optional[list] = None) -> Path:
+                   title: str = "", confirmed: Optional[list] = None,
+                   rows: Optional[list] = None) -> Path:
+    """`rows`: the fare rows behind `table`; with them the tax sheets are added."""
     wb = Workbook()
     wb.remove(wb.active)
     stamp = title or datetime.now().strftime("%d %b %Y %H:%M")
@@ -223,9 +237,32 @@ def write_workbook(path: Path, *, patterns=None, sched=None, table=None,
         write_timetable(wb.create_sheet("Timetable"), timetable,
                         f"Schedule timetable — {stamp}", confirmed=confirmed)
     if table is not None:
-        write_fares(wb.create_sheet("Fares"), table, best_by_route or {},
-                    f"Fare comparison — {stamp}")
+        _fare_sheets(wb, table, best_by_route or {}, rows, stamp)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(path))
     return path
+
+
+def _fare_sheets(wb, table, best_by_route: dict, rows: Optional[list], stamp: str) -> None:
+    """Fares, Fare Comparison, Missing / Re-run, then the tax sheets (with rows)."""
+    from market_engine import gaps, taxes
+    from market_engine.render_compare import write_fare_matrix, write_missing
+
+    limits = taxes.load_config()["limits"]
+    cheapest = taxes.cheapest_fares(rows or [], limits)
+    notes = gaps.outliers(table.cells)
+    write_fares(wb.create_sheet("Fares"), table, best_by_route,
+                f"Fare comparison — {stamp}",
+                cheapest_tax={k: (c.tax, c.surcharge) for k, c in cheapest.items()},
+                notes=notes)
+    write_fare_matrix(wb.create_sheet("Fare Comparison"), table, best_by_route,
+                      f"Fare comparison side by side — {stamp}", cheapest=cheapest,
+                      notes=notes)
+    if rows is None:
+        return
+    from market_engine.render_taxes import add_tax_sheets
+    groups = taxes.group(rows, limits)
+    write_missing(wb.create_sheet("Missing - Re-run"), gaps.find(table, rows, groups),
+                  f"Missing / re-run — {stamp}")
+    add_tax_sheets(wb, rows, stamp, groups=groups)

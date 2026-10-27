@@ -64,6 +64,27 @@ def _baggage_label(segment: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _tax_breakdown(offer: Dict[str, Any]) -> tuple:
+    """-> (codes, total). `codes` is the adult fare's [(code, BDT), ...] exactly as the
+    supplier itemised it (OW2, UT3, YQI... - folding is the report's job), or [] when it
+    sent none; `total` is the adult tax the price is built from."""
+    adt = ((offer.get("passengerFares") or {}).get("adt") or {})
+    codes = []
+    for t in adt.get("taxesBreakdown") or []:
+        code = str((t or {}).get("category") or "").upper().strip()
+        try:
+            amount = float((t or {}).get("amount") or 0)
+        except (TypeError, ValueError):
+            continue
+        if code:
+            codes.append((code, amount))
+    try:
+        total = float(adt.get("taxes") or offer.get("finalTaxPrice") or offer.get("taxes") or 0)
+    except (TypeError, ValueError):
+        total = 0.0
+    return codes, total
+
+
 def _normalize(offer: Dict[str, Any], requested_cabin: str,
                 airline_filter: Optional[str]) -> Optional[Dict[str, Any]]:
     carrier = str(offer.get("marketingCarrierCode") or "").upper().strip()
@@ -114,6 +135,7 @@ def _normalize(offer: Dict[str, Any], requested_cabin: str,
     price      = float(offer.get("finalTotalPrice") or offer.get("totalPrice") or 0)
     base_price = float(offer.get("finalBasePrice") or offer.get("basePrice") or 0)
     tax        = float(offer.get("finalTaxPrice") or offer.get("taxes") or 0)
+    tax_codes, tax_total = _tax_breakdown(offer)
 
     if not origin or not destination or not departure or price <= 0:
         return None
@@ -134,6 +156,8 @@ def _normalize(offer: Dict[str, Any], requested_cabin: str,
         "price_total_bdt":      price,
         "fare_amount":          base_price,
         "tax_amount":           tax,
+        "taxes_breakdown":      tax_codes,
+        "tax_total":            tax_total,
         "currency":             "BDT",
         "duration_min":         dur_min,
         "stops":                stops,
@@ -143,7 +167,8 @@ def _normalize(offer: Dict[str, Any], requested_cabin: str,
         "baggage":              baggage,
         "seat_available":       seats,
         "seat_capacity":        None,
-        "fare_refundable":      bool(offer.get("refundable")),
+        "fare_refundable":      (bool(offer["refundable"])
+                                 if offer.get("refundable") is not None else None),
         "adt_count":            1,
         "chd_count":            0,
         "inf_count":            0,
@@ -434,6 +459,16 @@ def _b2c_rows_from_offers(offers: List[Dict[str, Any]], cabin: str = "Economy",
             "destination": base["destination"],
             "departure": base["departure"],
             "flight_number": base["flight_number"],
+            # routing + taxes for the Fare Comparison tax sheets; a connection used to
+            # arrive here with no stops at all and was counted as a nonstop
+            "arrival": base["arrival"],
+            "stops": base["stops"],
+            "via_airports": base["via_airports"],
+            "operating_airline": base["operating_airline"],
+            "aircraft": base["aircraft"],
+            "rbd": base["rbd"],
+            "taxes_breakdown": base["taxes_breakdown"],
+            "tax_total": base["tax_total"],
             "gross_total_bdt": round(gross),
             "base_fare_bdt": round(base_fare),
             "coupon_code": o.get("couponCode") or "",

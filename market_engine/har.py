@@ -108,7 +108,7 @@ def collect_har_rows(har_dir: Path, *, purpose: str = "fare",
 
 
 def select_rows(rows: list, *, routes: Optional[Iterable[tuple]] = None,
-                date_from=None, date_to=None) -> tuple:
+                date_from=None, date_to=None, dates=None) -> tuple:
     """-> (rows asked for, note or None).
 
     A capture holds whatever its author searched, so HAR rows must be cut to the
@@ -118,9 +118,12 @@ def select_rows(rows: list, *, routes: Optional[Iterable[tuple]] = None,
     the note says what the captures DO cover, so an empty table explains itself.
     """
     wanted = {(o.upper(), d.upper()) for o, d in (routes or [])}
+    days = set(dates) if dates else None    # several ranges: only their days
     kept = []
     for r in rows:
         if wanted and (r.origin, r.destination) not in wanted:
+            continue
+        if days is not None and r.departure_date not in days:
             continue
         if date_from and date_to and (r.departure_date is None
                                       or not date_from <= r.departure_date <= date_to):

@@ -129,21 +129,25 @@ def build_schedule(result: CollectResult, *, requested: Optional[Iterable[str]] 
                     include_itineraries=include_itineraries)
 
 
-def _complete_weeks(date_from: Optional[date], date_to: Optional[date]) -> set:
+def _complete_weeks(date_from: Optional[date], date_to: Optional[date],
+                    days: Optional[Iterable[date]] = None) -> set:
     """ISO (year, week) keys whose whole Mon-Sun sits inside the range.
 
     A partial week at either edge is an artefact of where the operator cut the
-    range, not a schedule change, so it must never feed the variance test.
+    range, not a schedule change, so it must never feed the variance test. With
+    several ranges (`days`), a week the gap between them cuts is partial too.
     """
-    if not date_from or not date_to:
+    if days is not None:
+        span = sorted(set(days))
+    elif date_from and date_to:
+        span = [date_from + timedelta(days=i) for i in range((date_to - date_from).days + 1)]
+    else:
         return set()
     seen: dict = {}
-    cur = date_from
-    while cur <= date_to:
+    for cur in span:
         iso = cur.isocalendar()
         k = (iso[0], iso[1])
         seen[k] = seen.get(k, 0) + 1
-        cur += timedelta(days=1)
     return {k for k, n in seen.items() if n == 7}
 
 
@@ -151,11 +155,13 @@ def weekly_pattern(sched: sv.ScheduleResult, *, date_from: Optional[date] = None
                    date_to: Optional[date] = None,
                    searched: Optional[dict] = None,
                    extra_seen: Optional[dict] = None,
-                   extra_searched: Optional[dict] = None) -> list:
+                   extra_searched: Optional[dict] = None,
+                   days: Optional[Iterable[date]] = None) -> list:
     """Collapse per-date legs into one row per flight, with honest flags.
     `searched` = searched_dates(rows): lets an unseen weekday read as unknown
     rather than "doesn't operate" when the data can't support that."""
-    full_weeks = _complete_weeks(date_from or sched.date_from, date_to or sched.date_to)
+    full_weeks = _complete_weeks(date_from or sched.date_from, date_to or sched.date_to,
+                                 days)
     groups: dict = {}
     for leg in sched.legs:
         groups.setdefault(
