@@ -109,3 +109,7 @@ apps/web/tsconfig.tsbuildinfo
 *.egg-info/
 dist/
 build/
+
+# AI assistant tool configs (kept locally, not published)
+/.claude/
+/.qwen/
