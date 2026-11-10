@@ -30,13 +30,13 @@ logging.basicConfig(
 API_BASE = os.getenv("SHARETRIP_API_BASE", "https://api.sharetrip.net").rstrip("/")
 INIT_URL = f"{API_BASE}/api/v2/flight/search/initialize"
 SEARCH_URL_TMPL = f"{API_BASE}/api/v2/flight/search/available-flights"
-DEFAULT_ACCESS_TOKEN = "$2b$10$Fzhdo.0wIriRI9BfMIBKsuEZapnZdFAurXYwqDesf7DiFAHPmF6zm"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/145.0.0.0 Safari/537.36"
 )
 
+# Set via environment only; never commit the token.
 ENV_ACCESS_TOKEN = "SHARETRIP_ACCESS_TOKEN"
 ENV_COOKIES_PATH = "SHARETRIP_COOKIES_PATH"
 ENV_PROXY_URL = "SHARETRIP_PROXY_URL"
@@ -201,7 +201,7 @@ def _trip_type_to_sharetrip(trip_type: str = "OW") -> str:
 
 
 def _default_headers() -> Dict[str, str]:
-    token = str(os.getenv(ENV_ACCESS_TOKEN, DEFAULT_ACCESS_TOKEN)).strip() or DEFAULT_ACCESS_TOKEN
+    token = str(os.getenv(ENV_ACCESS_TOKEN, "")).strip()
     origin = str(os.getenv(ENV_ORIGIN, "https://sharetrip.net")).strip() or "https://sharetrip.net"
     referer = str(os.getenv(ENV_REFERER, "https://sharetrip.net/")).strip() or "https://sharetrip.net/"
     return {
@@ -852,7 +852,7 @@ def check_source_health(*, dry_run: bool = True, **_: Any) -> Dict[str, Any]:
         "sharetrip",
         message="OTA connector configured; live rate-limit/session health is measured per extraction attempt",
         api_base=API_BASE,
-        has_access_token=bool(os.getenv(ENV_ACCESS_TOKEN) or DEFAULT_ACCESS_TOKEN),
+        has_access_token=bool(os.getenv(ENV_ACCESS_TOKEN)),
     )
 
 
