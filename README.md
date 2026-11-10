@@ -1,22 +1,14 @@
-# Aero Pulse Intelligence Platform
+# Aero Pulse
 
-Multi-airline fare, inventory, benchmarking, reporting, and forecasting platform for thesis-grade aviation intelligence work.
+Airline fare and inventory analytics for the Bangladesh market. It collects public fares from airline and OTA websites, stores cycle snapshots in PostgreSQL, builds monitoring reports, and serves results through a FastAPI API and a Next.js dashboard. Forecasting with CatBoost, LightGBM and an MLP is experimental.
 
-## Why This Repository Is Strong
+Live dashboard: https://aviation-inventory-pricing-intellig.vercel.app
 
-This repository is an end-to-end airline intelligence pipeline, from data collection and normalization to reporting, forecasting, API delivery, and hosted analytics.
-
-End-to-end pipeline:
+Pipeline:
 
 `Airline + OTA collection -> normalization -> PostgreSQL cycle snapshots -> Excel/report outputs -> ML/DL forecasting -> BigQuery hot cache -> FastAPI -> Next.js web app`
 
-It is built around:
-
-1. Clear architecture
-2. Modular code
-3. Reproducibility
-4. Deployment capability
-5. Documentation
+A personal project, built with AI-assisted development.
 
 ## What This Project Does
 
