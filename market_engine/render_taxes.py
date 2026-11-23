@@ -205,20 +205,35 @@ def _bands(items: list) -> list:
 #: controls (base + its own surcharges), before government taxes.
 YQ_FILL = PatternFill("solid", fgColor="FFFF00")
 CLASS_COLUMNS = ("RBD", "Base", "YQ+YR", "Base with YQ", "Tax", "Gross")
+#: Next to the one-way columns when the run searched round trips, as the GDS
+#: fare report shows OW and RT side by side.
+RT_COLUMNS = ("RT Base", "RT Base with YQ", "RT Gross")
+CLASS_WIDTHS = [6, 10, 9, 12, 9, 10]
+RT_WIDTHS = [10, 15, 10]
 
 
-def write_fares_by_class(ws, tables: list, title: str, note: str = "") -> None:
+def write_fares_by_class(ws, tables: list, title: str, note: str = "",
+                         stay: Optional[int] = None) -> None:
     """Per route: one table per airline/routing side by side (6 per band), a line
     per booking class - upper cabins, a blank line, then economy, highest fare
-    first - and the routing's tax codes under each table."""
+    first - and the routing's tax codes under each table. With round trips, each
+    line also carries the class's cheapest round trip (RT columns)."""
     ws.cell(1, 1, title).font = Font(bold=True, size=12)
     sites = sorted({s for t in tables for s in t.sources})
-    ws.cell(2, 1, "BDT per adult, one-way, from {}. Each line is the class's cheapest "
+    rt = any(t.has_round_trip for t in tables)
+    ws.cell(2, 1, "BDT per adult, {} from {}. Each line is the class's cheapest "
                   "fare. Base with YQ = base + the airline's YQ/YR surcharges; Gross = "
-                  "what the passenger pays.".format(", ".join(sites) or "the run")
+                  "what the passenger pays.{}".format(
+                      "one-way and round trip," if rt else "one-way,",
+                      ", ".join(sites) or "the run",
+                      " RT = the class's cheapest round trip{} with both flights in that "
+                      "class; its figures cover both flights.".format(
+                          f", returning {stay} day(s) later" if stay is not None else "")
+                      if rt else "")
             ).font = NOTE_FONT
     r = max(_banner(ws, 3, note), 4)
-    width = len(CLASS_COLUMNS)
+    cols = CLASS_COLUMNS + (RT_COLUMNS if rt else ())
+    width = len(cols)
     section = None
     by_route: list = []
     for t in tables:
@@ -240,26 +255,30 @@ def write_fares_by_class(ws, tables: list, title: str, note: str = "") -> None:
             depth = max(len(t.lines) + (1 if t.split_cabins else 0) for t in band)
             bottom = r
             for k, t in enumerate(band):
-                bottom = max(bottom, _class_table(ws, r, 1 + k * (width + 1), t, depth))
+                bottom = max(bottom, _class_table(ws, r, 1 + k * (width + 1), t, depth,
+                                                  cols))
             r = bottom + 2
-    _widths(ws, [6, 10, 9, 12, 9, 10, 3] * TABLES_PER_BAND)
+    _widths(ws, (CLASS_WIDTHS + (RT_WIDTHS if rt else []) + [3]) * TABLES_PER_BAND)
     ws.freeze_panes = "A4"
 
 
-def _class_table(ws, r: int, c: int, t, depth: int = 0) -> int:
+def _class_table(ws, r: int, c: int, t, depth: int = 0, cols: tuple = CLASS_COLUMNS) -> int:
     """One airline's table at (r, c), its class lines padded to `depth`; -> the
     last row it used."""
-    width = len(CLASS_COLUMNS)
+    width = len(cols)
     ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c + width - 1)
     head = ws.cell(r, c, f"{t.airline} / {t.route}")
     head.font, head.fill, head.alignment = HDR_FONT, HDR_FILL, CENTER
     ws.merge_cells(start_row=r + 1, start_column=c, end_row=r + 1, end_column=c + width - 1)
-    sub = ws.cell(r + 1, c, "{}  ·  {} fare(s)".format(_routing(t), t.fares))
+    counts = ", ".join(x for x in (
+        "{} fare(s)".format(t.fares) if t.codes_trip == "OW" else "",
+        "{} round trip(s)".format(t.rt_fares) if t.rt_fares else "") if x)
+    sub = ws.cell(r + 1, c, "{}  ·  {}".format(_routing(t), counts))
     sub.font, sub.alignment = NOTE_FONT, CENTER
     r += 2
-    for i, label in enumerate(CLASS_COLUMNS):
+    for i, label in enumerate(cols):
         _head(ws, r, c + i, label)
-        if label == "Base with YQ":
+        if label in ("Base with YQ", "RT Base with YQ"):
             ws.cell(r, c + i).fill = YQ_FILL
             ws.cell(r, c + i).font = Font(bold=True, size=10)
     r += 1
@@ -273,13 +292,19 @@ def _class_table(ws, r: int, c: int, t, depth: int = 0) -> int:
         for i, v in enumerate((line.base, line.surcharge, line.base_with_yq, line.tax),
                               start=1):
             _put(ws, r, c + i, round(v) if v is not None else None)
-        gross = _put(ws, r, c + 5, round(line.gross))
-        gross.font = Font(bold=True)
+        if line.gross is not None:
+            _put(ws, r, c + 5, round(line.gross)).font = Font(bold=True)
+        if len(cols) > len(CLASS_COLUMNS):
+            for i, v in enumerate((line.rt_base, line.rt_base_with_yq), start=6):
+                _put(ws, r, c + i, round(v) if v is not None else None)
+            if line.rt_gross is not None:
+                _put(ws, r, c + 8, round(line.rt_gross)).font = Font(bold=True)
         r += 1
     r = max(r, lines_end)
     if t.codes or t.total_high:
         r += 1
-        ws.cell(r, c, "Taxes (BDT)").font = Font(bold=True, size=9)
+        ws.cell(r, c, "Taxes (BDT)" if t.codes_trip == "OW"
+                else "Taxes (BDT, round trip)").font = Font(bold=True, size=9)
         r += 1
         ordered = ([x for x in t.codes if x[0] in T.SURCHARGES]
                    + [x for x in t.codes if x[0] not in T.SURCHARGES])

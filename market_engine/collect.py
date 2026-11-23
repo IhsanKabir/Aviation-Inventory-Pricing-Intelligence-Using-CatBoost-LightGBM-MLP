@@ -39,14 +39,38 @@ class CollectPlan:
     #: cover the days they were captured on, not the requested range, so they
     #: supplement live rows rather than standing in for them.
     use_har: bool = False
+    #: Round trip: also search each date returning this many days later (the
+    #: one-way search still runs, so both can be compared). None = one-way only.
+    stay: Optional[int] = None
 
     @property
     def max_age(self) -> timedelta:
         return FRESH_SCHEDULE if self.purpose == "schedule" else FRESH_FARE
 
-    def queries(self) -> list[tuple[str, str, str, str]]:
-        return [(k, o, d, day.isoformat())
-                for k in self.source_keys for (o, d) in self.routes for day in self.dates]
+    def queries(self) -> list[tuple[str, str, str, str, str]]:
+        """(source, origin, dest, day, return day or "") for every search to run.
+        A source that cannot search a round trip gets the one-way searches only."""
+        out = []
+        for k in self.source_keys:
+            rt = self.stay is not None and S.LIVE[k].round_trip
+            for (o, d) in self.routes:
+                for day in self.dates:
+                    out.append((k, o, d, day.isoformat(), ""))
+                    if rt:
+                        out.append((k, o, d, day.isoformat(),
+                                    (day + timedelta(days=self.stay)).isoformat()))
+        return out
+
+    def no_round_trip(self) -> list[str]:
+        """Labels of the chosen live sources that cannot search a round trip."""
+        if self.stay is None:
+            return []
+        return [S.LIVE[k].label for k in self.source_keys if not S.LIVE[k].round_trip]
+
+
+def cache_day(day: str, return_day: str) -> str:
+    """The cache's day key: a round trip is its own search ("2026-11-17>2026-11-24")."""
+    return f"{day}>{return_day}" if return_day else day
 
 
 @dataclass
@@ -90,8 +114,8 @@ def estimate(plan: CollectPlan, cache: Optional[CacheStore]) -> dict:
     qs = plan.queries()
     cached = 0
     if cache is not None:
-        for key, o, d, day in qs:
-            if cache.get(S.LIVE[key].label, o, d, day, plan.cabin,
+        for key, o, d, day, ret in qs:
+            if cache.get(S.LIVE[key].label, o, d, cache_day(day, ret), plan.cabin,
                          max_age=plan.max_age) is not None:
                 cached += 1
     to_fetch = len(qs) - cached
@@ -117,32 +141,35 @@ def collect(plan: CollectPlan, cache: Optional[CacheStore] = None,
     for key in plan.source_keys:
         src = S.LIVE[key]
         fetcher = S.LiveFetcher(key)
-        todo = [(o, d, day) for k, o, d, day in qs if k == key]
+        todo = [(o, d, day, ret) for k, o, d, day, ret in qs if k == key]
 
-        def one(job: tuple[str, str, str]) -> None:
+        def one(job: tuple[str, str, str, str]) -> None:
             nonlocal done
-            o, d, day = job
+            o, d, day, ret = job
+            when = cache_day(day, ret)
             if should_cancel and should_cancel():
                 return
-            hit = cache.get(src.label, o, d, day, plan.cabin,
+            hit = cache.get(src.label, o, d, when, plan.cabin,
                             max_age=plan.max_age) if cache else None
             if hit is not None:
                 res.rows.extend(hit)
                 res.from_cache += 1
             else:
-                rows, reason = fetcher(o, d, day, plan.cabin)
+                rows, reason = fetcher(o, d, day, plan.cabin, return_day=ret)
                 if rows:
                     res.rows.extend(rows)
                     if cache:
-                        cache.put(src.label, o, d, day, plan.cabin, rows)
+                        cache.put(src.label, o, d, when, plan.cabin, rows)
                 elif reason:
-                    res.errors.append(f"{src.label} {o}-{d} {day}: {reason}")
+                    trip = f" return {ret}" if ret else ""
+                    res.errors.append(f"{src.label} {o}-{d} {day}{trip}: {reason}")
                 res.fetched += 1
                 if src.sleep_s:
                     time.sleep(src.sleep_s)
             done += 1
             if progress:
-                progress(f"{src.label} {o}-{d} {day}", done, len(qs))
+                progress(f"{src.label} {o}-{d} {day}" + (f" ⇄ {ret}" if ret else ""),
+                         done, len(qs))
 
         if src.workers > 1:
             with ThreadPoolExecutor(max_workers=src.workers) as pool:

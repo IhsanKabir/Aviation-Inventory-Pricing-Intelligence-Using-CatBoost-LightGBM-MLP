@@ -221,7 +221,7 @@ def group(rows: Iterable[FlightRow], limits: Optional[dict] = None) -> list:
     rather than leaving the airline out. A site that never itemises (ShareTrip)
     is not "not captured": its tax total is shown as "total only", and only for an
     airline + route no itemising source covered - otherwise the codes say more."""
-    rows = list(rows)
+    rows = [r for r in rows if not r.is_round_trip]     # one-way sheet
     reads = read_all(rows, limits)
     itemising = {r.source for r in rows if r.taxes}
     covered = {(r.origin, r.destination, r.airline) for r in rows if r.source in itemising}
@@ -329,7 +329,7 @@ def ota_check(rows: Iterable[FlightRow], reference: str = "FirstTrip") -> list:
 
     The reference is FirstTrip when present (it itemises), else the first site
     that itemises, else the first by name."""
-    rows = list(rows)
+    rows = [r for r in rows if not r.is_round_trip]     # one-way prices only
     flights: dict = {}
     for r in rows:
         if not (r.flight_number and r.departure_date and r.has_clock) or r.gross_bdt <= 0:
@@ -374,6 +374,8 @@ class CheapestFare:
     baggage: str
     refundable: Optional[bool]
     source: str
+    back: str = ""               # round trip: the return flight ("BS 146 10:25")
+    back_day: object = None
 
 
 def cheapest_fares(rows: Iterable[FlightRow], limits: Optional[dict] = None) -> dict:
@@ -401,9 +403,12 @@ def cheapest_fares(rows: Iterable[FlightRow], limits: Optional[dict] = None) -> 
             twin = itemised.get((key, r.flight_number, r.departure_date))
             yq = surcharge(reads[id(twin)]) if twin is not None else None
         flight = " ".join(x for x in (r.airline, r.flight_number, r.departure_time) if x)
+        back = (" ".join(x for x in (r.return_airline or r.airline, r.return_flight,
+                                     r.return_time) if x) if r.is_round_trip else "")
         out[key] = CheapestFare(tax=tax_of(r), surcharge=yq, flight=flight,
                                 day=r.departure_date, rbd=r.rbd, baggage=r.baggage,
-                                refundable=r.refundable, source=r.source)
+                                refundable=r.refundable, source=r.source,
+                                back=back, back_day=r.return_date)
     return out
 
 
@@ -426,16 +431,27 @@ class ClassLine:
     rbd: str
     cabin: str
     fares: int                   # fares seen in this class
-    gross: float
+    gross: Optional[float]       # None: the class was only seen as a round trip
     base: Optional[float]        # None when the site hid the base
     surcharge: Optional[float]   # YQ + YR; None when the fare's codes are unknown
     tax: Optional[float]
+    #: The class's cheapest ROUND TRIP (both flights in this class), same rules.
+    rt_gross: Optional[float] = None
+    rt_base: Optional[float] = None
+    rt_surcharge: Optional[float] = None
+    rt_fares: int = 0
 
     @property
     def base_with_yq(self) -> Optional[float]:
         if self.base is None or self.surcharge is None:
             return None
         return self.base + self.surcharge
+
+    @property
+    def rt_base_with_yq(self) -> Optional[float]:
+        if self.rt_base is None or self.rt_surcharge is None:
+            return None
+        return self.rt_base + self.rt_surcharge
 
 
 @dataclass(frozen=True)
@@ -451,10 +467,18 @@ class ClassTable:
     sources: tuple = ()
     total_low: Optional[float] = None
     total_high: Optional[float] = None
+    #: "RT" when only round trips were seen: the codes and totals are then a
+    #: round trip's (both legs), and are labelled so.
+    codes_trip: str = "OW"
+    rt_fares: int = 0
 
     @property
     def route(self) -> str:
         return f"{self.origin}-{self.destination}"
+
+    @property
+    def has_round_trip(self) -> bool:
+        return any(l.rt_gross is not None for l in self.lines)
 
     @property
     def split_cabins(self) -> bool:
@@ -462,32 +486,48 @@ class ClassTable:
             not is_upper(l.cabin) for l in self.lines)
 
 
-def by_class(rows: Iterable[FlightRow], limits: Optional[dict] = None) -> list:
+def round_trip_limits(limits: Optional[dict]) -> dict:
+    """Itemisation ceilings for a round trip: its codes add both flights' (a code
+    over twice the one-way ceiling still holds a whole tax)."""
+    return {c: v * 2 for c, v in (limits or {}).items()}
+
+
+def _class_rows(rows: list) -> list:
+    """The rows a class table is built from: the itemising site(s) when there is
+    one - a class's taxes are the point - else every site (totals only)."""
+    itemising = {r.source for r in rows if r.taxes}
+    return [r for r in rows if r.source in itemising] if itemising else rows
+
+
+def by_class(rows: Iterable[FlightRow], limits: Optional[dict] = None,
+             rt_rows: Iterable[FlightRow] = ()) -> list:
     """Per airline + routing, one line per booking class (the GDS fare report's
     layout): YQ follows the class, so a routing's YQ range (MH 371-7,336) only
     reads once it is split this way; the routing's tax codes come with it.
 
-    From the itemising site(s) when the run has one - a class's taxes are the
-    point - else from every site (totals only)."""
+    `rt_rows`: round-trip fares; each class line then also carries the class's
+    cheapest round trip with BOTH flights in that class (a G out / O back fare is
+    neither class's), keyed on the outbound routing."""
     rows = [r for r in rows if r.gross_bdt > 0]
-    reads = read_all(rows, limits)
-    itemising = {r.source for r in rows if r.taxes}
-    use = [r for r in rows if r.source in itemising] if itemising else rows
+    trips = [r for r in rt_rows if r.gross_bdt > 0 and not r.mixed_carrier
+             and r.return_rbd in ("", r.rbd)]
+    reads = {**read_all(rows, limits), **read_all(trips, round_trip_limits(limits))}
     tables: dict = {}
-    for r in use:
-        key = (r.origin, r.destination, r.airline, r.via, r.operated_by)
-        tables.setdefault(key, {}).setdefault((r.cabin_class, r.rbd or "?"), []).append(r)
+    for kind, use in (("ow", _class_rows(rows)), ("rt", _class_rows(trips))):
+        for r in use:
+            key = (r.origin, r.destination, r.airline, r.via, r.operated_by)
+            cls = tables.setdefault(key, {}).setdefault((r.cabin_class, r.rbd or "?"),
+                                                        {"ow": [], "rt": []})
+            cls[kind].append(r)
     out = []
     for (o, d, airline, via, op), classes in tables.items():
-        lines = []
-        for (cabin, rbd), rs in classes.items():
-            best = min(rs, key=lambda r: r.gross_bdt)
-            lines.append(ClassLine(
-                rbd=rbd, cabin=cabin, fares=len(rs), gross=best.gross_bdt,
-                base=best.base_bdt if best.base_is_real else None,
-                surcharge=surcharge(reads[id(best)]), tax=tax_of(best)))
-        lines.sort(key=lambda l: (CABIN_RANK.get(l.cabin, 9), -l.gross))
-        every = [r for rs in classes.values() for r in rs]
+        lines = [_class_line(cabin, rbd, got["ow"], got["rt"], reads)
+                 for (cabin, rbd), got in classes.items()]
+        lines.sort(key=lambda l: (CABIN_RANK.get(l.cabin, 9),
+                                  -(l.gross if l.gross is not None else l.rt_gross)))
+        ow = [r for got in classes.values() for r in got["ow"]]
+        rt = [r for got in classes.values() for r in got["rt"]]
+        every = ow or rt                 # a round trip's codes only when nothing else
         codes: dict = {}
         for r in every:
             t = reads[id(r)]
@@ -498,9 +538,27 @@ def by_class(rows: Iterable[FlightRow], limits: Optional[dict] = None) -> list:
         out.append(ClassTable(
             o, d, airline, via, op, tuple(lines),
             codes=tuple((c, min(a), max(a), len(a)) for c, a in sorted(codes.items())),
-            fares=len(every), sources=tuple(sorted({r.source for r in every})),
+            fares=len(every), sources=tuple(sorted({r.source for r in ow + rt})),
             total_low=min(totals) if totals else None,
-            total_high=max(totals) if totals else None))
+            total_high=max(totals) if totals else None,
+            codes_trip="OW" if ow else "RT", rt_fares=len(rt)))
     out.sort(key=lambda t: order_key(t.origin, t.destination, t.airline, t.via)
              + (t.operated_by,))
     return out
+
+
+def _class_line(cabin: str, rbd: str, ow: list, rt: list, reads: dict) -> ClassLine:
+    """A class's line: its cheapest one-way fare and its cheapest round trip,
+    every figure of each from that same fare."""
+    best = min(ow, key=lambda r: r.gross_bdt) if ow else None
+    back = min(rt, key=lambda r: r.gross_bdt) if rt else None
+    return ClassLine(
+        rbd=rbd, cabin=cabin, fares=len(ow),
+        gross=best.gross_bdt if best else None,
+        base=best.base_bdt if best and best.base_is_real else None,
+        surcharge=surcharge(reads[id(best)]) if best else None,
+        tax=tax_of(best) if best else None,
+        rt_gross=back.gross_bdt if back else None,
+        rt_base=back.base_bdt if back and back.base_is_real else None,
+        rt_surcharge=surcharge(reads[id(back)]) if back else None,
+        rt_fares=len(rt))

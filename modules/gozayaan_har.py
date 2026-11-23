@@ -108,6 +108,9 @@ def _normalize_fare(fare: Dict[str, Any], legs_by_hash: Dict[str, Dict],
     if not origin or not destination or not departure:
         return None
 
+    back = _return_fields(leg_hashes, legs_by_hash, segs_by_hash, marketing)
+    if back is None:
+        return None                      # multi-city, or the return leg is missing
     return {
         "airline":            marketing,
         "operating_airline":  _alias(seg0.get("operating_carrier") or marketing),
@@ -134,6 +137,36 @@ def _normalize_fare(fare: Dict[str, Any], legs_by_hash: Dict[str, Dict],
         "baggage":            None,  # not in legs payload
         "fare_id":            str(fare.get("id") or fare.get("hash") or ""),
         "source_endpoint":    "gozayaan:search/legs",
+        **back,
+    }
+
+
+def _leg_segments(leg: Dict[str, Any], segs_by_hash: Dict[str, Dict]) -> list:
+    return [s for s in (segs_by_hash.get(str(h)) for h in leg.get("segment_hashes") or []) if s]
+
+
+def _return_fields(leg_hashes: list, legs_by_hash: Dict[str, Dict],
+                   segs_by_hash: Dict[str, Dict], marketing: str) -> Optional[Dict[str, Any]]:
+    """{} for a one-way fare; the return_* fields of a round-trip fare (two
+    leg_hashes, the second back to the start; its price covers both); None when
+    the fare is neither (multi-city, or a leg missing from the response)."""
+    if len(leg_hashes) == 1:
+        return {}
+    if len(leg_hashes) != 2:
+        return None
+    out = _leg_segments(legs_by_hash.get(str(leg_hashes[0])) or {}, segs_by_hash)
+    leg = legs_by_hash.get(str(leg_hashes[1])) or {}
+    segs = _leg_segments(leg, segs_by_hash)
+    if (not out or not segs or segs[0].get("origin") != out[-1].get("destination")
+            or segs[-1].get("destination") != out[0].get("origin")):
+        return None
+    return {
+        "trip_type": "RT",
+        "return_departure": leg.get("departure_date_time") or segs[0].get("departure_date_time"),
+        "return_flight_number": str(segs[0].get("flight_number") or "").strip(),
+        "return_via_airports": "|".join(str(s.get("destination") or "") for s in segs[:-1]) or None,
+        "return_airline": _alias(leg.get("marketing_carrier") or segs[0].get("marketing_carrier")
+                                 or marketing),
     }
 
 
@@ -498,6 +531,8 @@ def import_hars(paths: List[str | Path]) -> Dict[str, Any]:
     buckets: Dict[str, List[Dict[str, Any]]] = {}
     for p in paths:
         for row in parse_har(p):
+            if row.get("trip_type") == "RT":
+                continue                    # a one-way cache: a round trip's price is both legs'
             key = _cache_key(row["origin"], row["destination"],
                              row["departure_date"], row.get("cabin_class", "economy"))
             buckets.setdefault(key, []).append(row)

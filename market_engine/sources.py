@@ -35,15 +35,19 @@ class Source:
     workers: int = 1          # max parallel queries (family rule)
     sleep_s: float = 0.0      # pause between queries
     note: str = ""
+    #: Can search a round trip (and its response's return leg is parsed).
+    round_trip: bool = False
 
 
 #: Live connectors. FirstTrip is the backbone: one call returns every airline on
 #: the route with real clocks and both gross and base fares.
 LIVE: dict[str, Source] = {
     "firsttrip": Source("firsttrip", "FirstTrip", "live", True, True,
-                        workers=3, sleep_s=0.0, note="Backbone — all airlines, gross + base."),
+                        workers=3, sleep_s=0.0, note="Backbone — all airlines, gross + base.",
+                        round_trip=True),
     "sharetrip": Source("sharetrip", "ShareTrip", "live", True, True,
-                        workers=1, sleep_s=3.0, note="Private plugin; single-threaded by policy."),
+                        workers=1, sleep_s=3.0, note="Private plugin; single-threaded by policy.",
+                        round_trip=True),
     "biman": Source("biman", "Biman (direct)", "live", True, True,
                     workers=1, sleep_s=1.5, note="BG only; slow (Sabre)."),
     "amy": Source("amy", "Amy", "live", True, True,
@@ -156,30 +160,45 @@ class LiveFetcher:
         self.source = LIVE[key]
         self._token: Optional[str] = None
 
-    def __call__(self, origin: str, dest: str, day: str,
-                 cabin: str = "Economy") -> tuple[list[FlightRow], str]:
-        """-> (rows, reason). `reason` is '' on success, else why it returned nothing."""
+    def __call__(self, origin: str, dest: str, day: str, cabin: str = "Economy",
+                 return_day: str = "") -> tuple[list[FlightRow], str]:
+        """-> (rows, reason). `reason` is '' on success, else why it returned nothing.
+        With `return_day`, a round-trip search: rows priced for both legs."""
+        if return_day and not self.source.round_trip:
+            return [], "cannot search a round trip"
         try:
-            raw, reason = self._raw(origin, dest, day, cabin)
+            raw, reason = self._raw(origin, dest, day, cabin, return_day)
         except Exception as exc:            # noqa: BLE001 — one bad query must not kill a run
             return [], f"{type(exc).__name__}: {exc}"
         now = datetime.now()
         rows = [r for r in (from_connector(x, source=self.source.label, cabin=cabin,
                                            fetched_at=now) for x in raw) if r]
+        if return_day:
+            # only the trip asked for: a stray one-way offer is not its answer
+            rows = [r for r in rows if r.is_round_trip]
         if not rows and not reason:
             reason = "no flights returned"
         return rows, reason
 
-    def _raw(self, origin: str, dest: str, day: str, cabin: str) -> tuple[list[dict], str]:
+    def _raw(self, origin: str, dest: str, day: str, cabin: str,
+             return_day: str = "") -> tuple[list[dict], str]:
         if self.key == "sharetrip":
             st = sharetrip_live_module()
             if st is None:
                 return [], "ShareTrip live plugin not installed"
-            res = st.fetch_live(origin, dest, day, cabin=cabin, token=self._token)
+            if return_day:
+                try:
+                    res = st.fetch_live(origin, dest, day, cabin=cabin, token=self._token,
+                                        return_date=return_day)
+                except TypeError:             # a plugin from before round trips
+                    return [], "update the ShareTrip plugin to search round trips"
+            else:
+                res = st.fetch_live(origin, dest, day, cabin=cabin, token=self._token)
             self._token = res.get("token") or self._token   # reuse across queries
             return list(res.get("rows") or []), str(res.get("reason") or "")
         mod = {"firsttrip": "modules.firsttrip", "biman": "modules.biman",
                "amy": "modules.amyweb"}[self.key]
         fetch = __import__(mod, fromlist=["fetch_flights"]).fetch_flights
-        res = fetch(origin, dest, day, cabin=cabin) or {}
+        res = (fetch(origin, dest, day, cabin=cabin, return_date=return_day) if return_day
+               else fetch(origin, dest, day, cabin=cabin)) or {}
         return list(res.get("rows") or []), str(res.get("reason") or res.get("error") or "")

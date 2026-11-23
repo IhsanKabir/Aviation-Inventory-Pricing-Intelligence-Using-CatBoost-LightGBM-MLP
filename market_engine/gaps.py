@@ -123,3 +123,22 @@ def find(table, rows: list, groups: list) -> list:
         o, d = g.route.split("-", 1)
         return (0,) + T.order_key(o, d, g.airline or "") + (g.kind,)
     return sorted(gaps, key=key)
+
+
+def round_trip(table, rt_table) -> list:
+    """What a round-trip run could not price: an airline with one-way fares on a
+    route but no round trip there, and the combos left out (another airline back)."""
+    if rt_table is None:
+        return []
+    have = {(c.route, c.airline) for c in rt_table.cells}
+    stay = f" returning {rt_table.stay} day(s) later" if rt_table.stay is not None else ""
+    out = [Gap(c.route, c.airline, "no round trip",
+               f"one-way fares found but no round trip{stay}: re-run, or add a "
+               "round-trip HAR for this route")
+           for c in table.cells if (c.route, c.airline) not in have]
+    if rt_table.mixed:
+        out.append(Gap("", "", "mixed round trips",
+                       f"{rt_table.mixed} round trip(s) flying out on one airline and back "
+                       "on another (e.g. a BS + 2A combo) are not one airline's fare and "
+                       "were left out"))
+    return out

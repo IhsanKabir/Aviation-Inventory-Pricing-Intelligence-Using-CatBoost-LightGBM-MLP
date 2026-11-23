@@ -61,10 +61,46 @@ def _baggage(segs: list) -> Optional[str]:
     return None
 
 
+def _code(place: Any) -> str:
+    return str((place or {}).get("code") or "").upper() if isinstance(place, dict) else ""
+
+
+def _is_return(legs: list) -> bool:
+    """Two legs, the second the first reversed: a round trip (tripType RETURN)."""
+    return (len(legs) == 2 and _code(legs[1].get("origin")) == _code(legs[0].get("destination"))
+            and _code(legs[1].get("destination")) == _code(legs[0].get("origin")))
+
+
+def _return_fields(leg: Dict[str, Any]) -> Dict[str, Any]:
+    """return_* row fields from a round trip's second leg."""
+    segs = leg.get("segments") or []
+    s0 = segs[0] if segs else {}
+    dep = leg.get("departureDateTime") or {}
+    return {
+        "trip_type": "RT",
+        "return_departure": f"{dep.get('date')}T{dep.get('time')}" if dep.get("date") else None,
+        "return_flight_number": str(s0.get("flightNumber") or "").strip(),
+        "return_rbd": str(s0.get("resBookDesigCode") or s0.get("cabinCode") or "").upper().strip(),
+        "return_via_airports": "|".join(leg.get("layoverIataList") or []) or None,
+        "return_airline": _alias(leg.get("marketingAirline")
+                                 or (leg.get("airlines") or {}).get("code") or ""),
+    }
+
+
 def _normalize(fl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """One offer -> a row. A round trip (2 legs, out and back) is ONE row: the
+    outbound leg's details, the price of both legs, and return_* fields. Other
+    multi-leg offers (multi-city) are skipped: they used to be read as one flight
+    from the first origin to the last destination - DAC-DAC for a round trip."""
     legs = fl.get("legs") or []
     if not legs:
         return None
+    back: Dict[str, Any] = {}
+    if len(legs) > 1:
+        if not _is_return(legs):
+            return None
+        back = _return_fields(legs[1])
+        legs = legs[:1]
     leg0, legL = legs[0], legs[-1]
     segs: list = []
     for lg in legs:
@@ -129,6 +165,7 @@ def _normalize(fl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                                if fl.get("isRefundable") is not None else None),
         "fare_id":            str(fl.get("sequenceCode") or fl.get("providerCode") or ""),
         "source_endpoint":    "sharetrip:available-flights",
+        **back,
     }
 
 
@@ -719,6 +756,8 @@ def import_hars(paths: List[str | Path]) -> Dict[str, Any]:
     buckets: Dict[str, List[Dict[str, Any]]] = {}
     for p in paths:
         for row in parse_har(p):
+            if row.get("trip_type") == "RT":
+                continue                    # a one-way cache: a round trip's price is both legs'
             key = _cache_key(row["origin"], row["destination"],
                              row["departure_date"], row.get("cabin_class", "economy"))
             buckets.setdefault(key, []).append(row)

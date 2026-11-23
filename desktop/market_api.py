@@ -32,12 +32,27 @@ def _bundled(rel: str) -> Optional[Path]:
     return None
 
 
+def _cells(table, best: dict) -> list:
+    """A fare table's cells as the page renders them."""
+    return [{"route": c.route, "airline": c.airline, "flights": c.flights,
+             "nonstop": c.nonstop, "dates": c.dates,
+             "gross_low": c.gross_low, "gross_high": c.gross_high,
+             "gross_avg": c.gross_avg, "base_low": c.base_low,
+             "base_high": c.base_high, "base_avg": c.base_avg,
+             "base_available": c.base_available, "base_derived": c.base_derived,
+             "age_hours": round(c.age_hours, 1),
+             "cheapest": best.get(c.route) == c.airline}
+            for c in table.cells]
+
+
 class MarketApiMixin:
     """Schedule and fare views over live sources."""
 
     #: A month is the usual ask; the ceiling stops a typo becoming hours of live
     #: queries. The estimate is shown before anything runs regardless.
     MARKET_MAX_DAYS = 62
+    #: Longest round trip a run accepts (days between the flights).
+    MARKET_MAX_STAY = 90
 
     # ------------------------------------------------------------------ helpers
     def _live_ok(self) -> bool:
@@ -133,7 +148,8 @@ class MarketApiMixin:
                 "sources": entries, "har_dir": har_dir}
 
     def _market_plan(self, kind: str, routes: str, date_from: str, date_to: str,
-                     sources: list, cabin: str, extra_ranges: Optional[list] = None):
+                     sources: list, cabin: str, extra_ranges: Optional[list] = None,
+                     stay: Any = None):
         """-> (plan, error_payload). Everything is validated before any network work.
 
         A HAR-only run (no live source) may leave routes and dates blank: it then
@@ -141,7 +157,11 @@ class MarketApiMixin:
         advance which days their captures hold, and a live search needs them.
 
         `extra_ranges`: more [from, to] pairs after the first ("+ Add range"); the
-        run searches the days of every range, not the span between them."""
+        run searches the days of every range, not the span between them.
+
+        `stay` (Fare tab, "Round trip"): days between the outbound and the return
+        flight; each date is also searched as a round trip returning that many
+        days later. None / "" = one-way only."""
         from market_engine import sources as S
         from market_engine.collect import CollectPlan
 
@@ -188,18 +208,31 @@ class MarketApiMixin:
             return None, {"ok": False,
                           "error": "None of the chosen sources can answer a {}.".format(want)}
 
+        nights = None
+        if want == "fare" and stay not in (None, ""):
+            try:
+                nights = int(str(stay).strip())
+            except ValueError:
+                nights = -1
+            if not 0 <= nights <= self.MARKET_MAX_STAY:
+                return None, {"ok": False,
+                              "error": "Stay must be a number of days from 0 to {} (the "
+                                       "return flight's day after departure).".format(
+                                           self.MARKET_MAX_STAY)}
+
         return CollectPlan(routes=pairs, dates=dates, source_keys=picked,
-                           cabin=cabin or "Economy", purpose=want, use_har=use_har), None
+                           cabin=cabin or "Economy", purpose=want, use_har=use_har,
+                           stay=nights), None
 
     # --------------------------------------------------------------- operations
     def market_estimate(self, kind: str, routes: str, date_from: str, date_to: str,
                         sources: list, cabin: str = "Economy",
-                        extra_ranges: Optional[list] = None) -> dict:
+                        extra_ranges: Optional[list] = None, stay: Any = None) -> dict:
         """What the run will cost, before committing to it."""
         from market_engine import dateranges
         from market_engine.collect import estimate
         plan, err = self._market_plan(kind, routes, date_from, date_to, sources, cabin,
-                                      extra_ranges)
+                                      extra_ranges, stay)
         if err:
             return err
         out = estimate(plan, self._market_cache())
@@ -207,6 +240,8 @@ class MarketApiMixin:
         out["har_only"] = plan.use_har and not plan.source_keys
         out["days"] = len(plan.dates)
         out["dates_label"] = dateranges.describe(plan.dates)
+        out["stay"] = plan.stay
+        out["no_round_trip"] = plan.no_round_trip()     # one-way only for these
         return out
 
     def cancel_market(self) -> dict:
@@ -215,12 +250,14 @@ class MarketApiMixin:
 
     def run_market(self, kind: str, routes: str, date_from: str, date_to: str,
                    sources: list, cabin: str = "Economy",
-                   direct_only: bool = False, extra_ranges: Optional[list] = None) -> dict:
-        """Collect once, then answer either the schedule or the fare question."""
+                   direct_only: bool = False, extra_ranges: Optional[list] = None,
+                   stay: Any = None) -> dict:
+        """Collect once, then answer either the schedule or the fare question.
+        With `stay`, the fare question is asked one-way AND round trip."""
         if getattr(self, "_busy", False):
             return {"ok": False, "error": "A run is already in progress."}
         plan, err = self._market_plan(kind, routes, date_from, date_to, sources, cabin,
-                                      extra_ranges)
+                                      extra_ranges, stay)
         if err:
             return err
         blocked = self._require_access()          # same wall as the discount run
@@ -259,7 +296,8 @@ class MarketApiMixin:
                 # Captures hold whatever their author searched: keep only the routes
                 # and dates asked for (blank = everything they cover).
                 har_rows, cut_note = select_rows(
-                    har_rows, routes=plan.routes, dates=plan.dates or None)
+                    har_rows, routes=plan.routes, dates=plan.dates or None,
+                    stay=plan.stay, schedule=kind == "schedule")
                 if cut_note:
                     har_notes.insert(0, cut_note)
                 result.rows.extend(har_rows)
@@ -348,20 +386,21 @@ class MarketApiMixin:
             else:
                 table = build_fares(result, direct_only=direct_only)
                 best = cheapest_by_route(table.cells)
-                self._market_last = {"kind": kind, "table": table, "best": best}
+                rt_table = (build_fares(result, direct_only=direct_only, trip="RT",
+                                        stay=plan.stay) if plan.stay is not None else None)
+                rt_best = cheapest_by_route(rt_table.cells) if rt_table is not None else {}
+                self._market_last = {"kind": kind, "table": table, "best": best,
+                                     "rt_table": rt_table}
                 payload.update({
-                    "cells": [{"route": c.route, "airline": c.airline, "flights": c.flights,
-                               "nonstop": c.nonstop, "dates": c.dates,
-                               "gross_low": c.gross_low, "gross_high": c.gross_high,
-                               "gross_avg": c.gross_avg, "base_low": c.base_low,
-                               "base_high": c.base_high, "base_avg": c.base_avg,
-                               "base_available": c.base_available,
-                               "base_derived": c.base_derived,
-                               "age_hours": round(c.age_hours, 1),
-                               "cheapest": best.get(c.route) == c.airline}
-                              for c in table.cells],
+                    "cells": _cells(table, best),
                     "gross_only": list(table.gross_only),
                     "refused": dict(table.refused or {})})
+                if rt_table is not None:
+                    payload.update({
+                        "stay": plan.stay, "rt_cells": _cells(rt_table, rt_best),
+                        "rt_mixed": rt_table.mixed,
+                        # chosen live sources that searched one-way only
+                        "no_round_trip": plan.no_round_trip()})
 
             self._log_usage("market_" + kind, count=len(result.rows),
                             target="{}..{}".format(first, last))
@@ -410,7 +449,8 @@ class MarketApiMixin:
                                      timetable=last.get("timetable"),
                                      confirmed=last.get("confirmed"),
                                      rows=(list(last["table"].rows)
-                                           if last.get("table") is not None else None))
+                                           if last.get("table") is not None else None),
+                                     rt_table=last.get("rt_table"))
         except OSError as exc:
             return {"ok": False, "error": "Could not write the file: {}".format(exc)}
         self._log_usage("market_export", target=last["kind"])

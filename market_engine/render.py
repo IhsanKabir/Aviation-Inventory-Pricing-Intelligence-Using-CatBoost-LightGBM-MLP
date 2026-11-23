@@ -81,11 +81,27 @@ def write_schedule(ws, patterns, sched, title: str) -> None:
     ws.freeze_panes = ws.cell(r - len(patterns), 1)
 
 
+FARE_COLUMNS = ["Route", "Airline", "Flights", "Nonstop", "Dates",
+                "Gross low", "Gross high", "Gross avg",
+                "Base low", "Base high", "Base avg",
+                "Tax (cheapest)", "YQ+YR (cheapest)", "Data age (h)", "Flags"]
+
+
+def round_trip_label(table) -> str:
+    """'Round trip - return 7 days after departure (price of both flights)'."""
+    stay = getattr(table, "stay", None)
+    when = f" - return {stay} day(s) after departure" if stay is not None else ""
+    return f"ROUND TRIP{when} (price of both flights)"
+
+
 def write_fares(ws, table, best_by_route: dict, title: str,
-                cheapest_tax: Optional[dict] = None, notes: Optional[dict] = None) -> None:
+                cheapest_tax: Optional[dict] = None, notes: Optional[dict] = None,
+                rt_table=None, rt_best: Optional[dict] = None,
+                rt_cheapest_tax: Optional[dict] = None) -> None:
     """`cheapest_tax`: (route, airline) -> (tax, YQ+YR) of that pair's cheapest fare
     (market_engine.taxes.cheapest_fare_tax); the columns stay blank without it.
-    `notes`: (route, airline) -> a warning for the Flags column (outliers)."""
+    `notes`: (route, airline) -> a warning for the Flags column (outliers).
+    `rt_table` (round trips) is listed under the one-way fares, same columns."""
     cheapest_tax, notes = cheapest_tax or {}, notes or {}
     ws.cell(1, 1, title).font = Font(bold=True, size=12)
     r = 2
@@ -98,11 +114,24 @@ def write_fares(ws, table, best_by_route: dict, title: str,
         r += 1
     r += 1
 
-    r = _header(ws, r, ["Route", "Airline", "Flights", "Nonstop", "Dates",
-                        "Gross low", "Gross high", "Gross avg",
-                        "Base low", "Base high", "Base avg",
-                        "Tax (cheapest)", "YQ+YR (cheapest)", "Data age (h)", "Flags"])
-    for c_ in table.cells:
+    if rt_table is not None and rt_table.cells:
+        ws.cell(r - 1, 1, "ONE WAY").font = Font(bold=True, color="1F4E79")
+    r = _header(ws, r, FARE_COLUMNS)
+    if rt_table is not None and rt_table.cells and not table.cells:
+        ws.cell(r, 1, "No one-way fares in this run (the captures held round trips only).").font = NOTE_FONT
+        r += 1
+    r = _fare_rows(ws, r, table.cells, best_by_route, cheapest_tax, notes)
+    if rt_table is not None and rt_table.cells:
+        ws.cell(r + 1, 1, round_trip_label(rt_table)).font = Font(bold=True, color="1F4E79")
+        r = _header(ws, r + 2, FARE_COLUMNS)
+        _fare_rows(ws, r, rt_table.cells, rt_best or {}, rt_cheapest_tax or {}, {})
+    _widths(ws, [10, 8, 8, 9, 7, 11, 11, 11, 10, 10, 10, 13, 15, 13, 50])
+
+
+def _fare_rows(ws, r: int, cells: list, best_by_route: dict, cheapest_tax: dict,
+               notes: dict) -> int:
+    """One line per (route, airline) cell from row r; -> the next free row."""
+    for c_ in cells:
         flags = []
         if not c_.base_available:
             flags.append("base unavailable")
@@ -136,7 +165,7 @@ def write_fares(ws, table, best_by_route: dict, title: str,
                 if not ws.cell(r, i).fill.fgColor.rgb or ws.cell(r, i).fill.patternType is None:
                     ws.cell(r, i).fill = BEST_FILL
         r += 1
-    _widths(ws, [10, 8, 8, 9, 7, 11, 11, 11, 10, 10, 10, 13, 15, 13, 50])
+    return r
 
 
 def write_timetable(ws, rows, title: str, confirmed: Optional[list] = None) -> None:
@@ -225,8 +254,9 @@ def write_timetable(ws, rows, title: str, confirmed: Optional[list] = None) -> N
 def write_workbook(path: Path, *, patterns=None, sched=None, table=None,
                    best_by_route: Optional[dict] = None, timetable=None,
                    title: str = "", confirmed: Optional[list] = None,
-                   rows: Optional[list] = None) -> Path:
-    """`rows`: the fare rows behind `table`; with them the tax sheets are added."""
+                   rows: Optional[list] = None, rt_table=None) -> Path:
+    """`rows`: the fare rows behind `table`; with them the tax sheets are added.
+    `rt_table`: the run's round-trip fares (fares.build_fares(trip="RT"))."""
     wb = Workbook()
     wb.remove(wb.active)
     stamp = title or datetime.now().strftime("%d %b %Y %H:%M")
@@ -237,37 +267,48 @@ def write_workbook(path: Path, *, patterns=None, sched=None, table=None,
         write_timetable(wb.create_sheet("Timetable"), timetable,
                         f"Schedule timetable — {stamp}", confirmed=confirmed)
     if table is not None:
-        _fare_sheets(wb, table, best_by_route or {}, rows, stamp)
+        _fare_sheets(wb, table, best_by_route or {}, rows, stamp, rt_table)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(path))
     return path
 
 
-def _fare_sheets(wb, table, best_by_route: dict, rows: Optional[list], stamp: str) -> None:
-    """Fares, Fare Comparison, Missing / Re-run, then the tax sheets (with rows)."""
+def _fare_sheets(wb, table, best_by_route: dict, rows: Optional[list], stamp: str,
+                 rt_table=None) -> None:
+    """Fares, Fare Comparison, Missing / Re-run, then the tax sheets (with rows).
+    Round trips (`rt_table`) go under the one-way figures and into the RT columns
+    of Fares by Class; the tax sheets stay one-way (a round trip's codes are both
+    flights' added together)."""
     from market_engine import gaps, taxes
+    from market_engine.fares import cheapest_by_route
     from market_engine.render_compare import write_fare_matrix, write_missing
 
     limits = taxes.load_config()["limits"]
     cheapest = taxes.cheapest_fares(rows or [], limits)
     notes = gaps.outliers(table.cells)
+    rt_rows = list(rt_table.rows) if rt_table is not None else []
+    rt_cheapest = taxes.cheapest_fares(rt_rows, limits) if rt_rows else {}
+    rt_best = cheapest_by_route(rt_table.cells) if rt_table is not None else {}
     write_fares(wb.create_sheet("Fares"), table, best_by_route,
                 f"Fare comparison — {stamp}",
                 cheapest_tax={k: (c.tax, c.surcharge) for k, c in cheapest.items()},
-                notes=notes)
+                notes=notes, rt_table=rt_table, rt_best=rt_best,
+                rt_cheapest_tax={k: (c.tax, c.surcharge) for k, c in rt_cheapest.items()})
     write_fare_matrix(wb.create_sheet("Fare Comparison"), table, best_by_route,
                       f"Fare comparison side by side — {stamp}", cheapest=cheapest,
-                      notes=notes)
+                      notes=notes, rt_table=rt_table, rt_best=rt_best,
+                      rt_cheapest=rt_cheapest)
     if rows is None:
         return
     from market_engine.render_taxes import add_tax_sheets, write_fares_by_class
-    classes = taxes.by_class(rows, limits)
+    classes = taxes.by_class(rows, limits, rt_rows=rt_rows)
     if classes:
         write_fares_by_class(wb.create_sheet("Fares by Class"), classes,
-                             f"Fares by class — {stamp}")
+                             f"Fares by class — {stamp}",
+                             stay=getattr(rt_table, "stay", None))
     groups = taxes.group(rows, limits)
-    missing = gaps.find(table, rows, groups)
+    missing = gaps.find(table, rows, groups) + gaps.round_trip(table, rt_table)
     if missing:                       # a sheet that says "nothing missing" is no use
         write_missing(wb.create_sheet("Missing - Re-run"), missing,
                       f"Missing / re-run — {stamp}")

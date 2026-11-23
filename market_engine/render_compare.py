@@ -47,20 +47,47 @@ def travel_dates(rows: list) -> str:
 
 
 def write_fare_matrix(ws, table, best_by_route: dict, title: str,
-                      cheapest: Optional[dict] = None, notes: Optional[dict] = None) -> None:
+                      cheapest: Optional[dict] = None, notes: Optional[dict] = None,
+                      rt_table=None, rt_best: Optional[dict] = None,
+                      rt_cheapest: Optional[dict] = None) -> None:
     """Per route: airlines across, figures down; the cheapest airline is green.
 
     `cheapest`: (route, airline) -> taxes.CheapestFare; `notes`: (route, airline) ->
-    a warning (outliers), shown in a Check row."""
-    cheapest, notes = cheapest or {}, notes or {}
+    a warning (outliers), shown in a Check row. `rt_table`: round trips, in the
+    same layout under the one-way figures."""
+    from market_engine.render import round_trip_label
+
+    rows = list(getattr(table, "rows", ()) or ())
+    rt = rt_table is not None and bool(rt_table.cells)
+    ws.cell(1, 1, title).font = Font(bold=True, size=12)
+    when = travel_dates(rows + (list(rt_table.rows) if rt else []))
+    ws.cell(2, 1, ("Travel {}. ".format(when) if when else "")
+            + ("BDT per adult: one-way, then round trip (both flights) below. " if rt
+               else "BDT per adult, one-way. ")
+            + "Green = cheapest airline on the route. "
+              "Base shows — when the site does not give it.").font = NOTE_FONT
+    r, widest = 4, 1
+    if rt:
+        ws.cell(r, 1, "ONE WAY").font = Font(bold=True, size=12, color="1F4E79")
+        r += 2
+        if not table.cells:
+            ws.cell(r - 1, 1, "No one-way fares in this run (the captures held round trips only).").font = NOTE_FONT
+    r, widest = _matrix(ws, r, table, best_by_route, cheapest or {}, notes or {})
+    if rt:
+        ws.cell(r + 1, 1, round_trip_label(rt_table)).font = Font(bold=True, size=12,
+                                                                  color="1F4E79")
+        r, w = _matrix(ws, r + 3, rt_table, rt_best or {}, rt_cheapest or {}, {})
+        widest = max(widest, w)
+    _widths(ws, [18] + [14] * (widest - 1))
+    ws.freeze_panes = "B4"
+
+
+def _matrix(ws, r: int, table, best_by_route: dict, cheapest: dict, notes: dict) -> tuple:
+    """One table's routes from row r, sectioned Domestic / International; ->
+    (next free row, widest route in columns)."""
     rows = list(getattr(table, "rows", ()) or ())
     lows = site_lows(rows)
-    sites = sorted({r.source for r in rows})
-    ws.cell(1, 1, title).font = Font(bold=True, size=12)
-    when = travel_dates(rows)
-    ws.cell(2, 1, ("Travel {}. ".format(when) if when else "")
-            + "BDT per adult, one-way. Green = cheapest airline on the route. "
-              "Base shows — when the site does not give it.").font = NOTE_FONT
+    sites = sorted({r_.source for r_ in rows})
     by_route: dict = {}
     for c_ in table.cells:
         by_route.setdefault(c_.route, []).append(c_)
@@ -69,16 +96,18 @@ def write_fare_matrix(ws, table, best_by_route: dict, title: str,
              ("Gross high", "gross_high"), ("Gross avg", "gross_avg"),
              ("Base low", "base_low"), ("Base avg", "base_avg"),
              ("Tax (cheapest)", "tax"), ("YQ+YR (cheapest)", "surcharge"),
-             ("Cheapest flight", "flight"), ("Date", "day"), ("Class (RBD)", "rbd"),
+             ("Cheapest flight", "flight"), ("Date", "day"),
+             ("Return flight", "back"), ("Return date", "back_day"), ("Class (RBD)", "rbd"),
              ("Baggage", "baggage"), ("Refundable", "refundable")]
     if len(sites) > 1:
         lines += [(f"Lowest on {_short(s)}", ("site", s)) for s in sites]
         lines += [("Cheapest site", "cheapest_site")]
     lines += [("Sites", "sources"), ("Check", "note")]
     #: shown only when a column on the route has something to say
-    optional = {"note", "flight", "day", "rbd", "baggage", "refundable", "cheapest_site"}
+    optional = {"note", "flight", "day", "back", "back_day", "rbd", "baggage", "refundable",
+                "cheapest_site"}
 
-    r, widest, section = 4, 1, None
+    widest, section = 1, None
     for route in sorted(by_route, key=_route_key):
         o, d = route.split("-", 1)
         now = "DOMESTIC" if is_domestic(o, d) else "INTERNATIONAL"
@@ -114,8 +143,7 @@ def write_fare_matrix(ws, table, best_by_route: dict, title: str,
             r += 1
         widest = max(widest, len(cells) + 1)
         r += 1
-    _widths(ws, [18] + [14] * (widest - 1))
-    ws.freeze_panes = "B4"
+    return r, widest
 
 
 def _value(c_, attr, fare, lows: dict, note: Optional[str]):
@@ -129,11 +157,12 @@ def _value(c_, attr, fare, lows: dict, note: Optional[str]):
         return _short(min(lows, key=lows.get)) if len(lows) > 1 else None
     if isinstance(attr, tuple):                     # ("site", name)
         return lows.get(attr[1])
-    if attr in ("tax", "surcharge", "flight", "day", "rbd", "baggage", "refundable"):
+    if attr in ("tax", "surcharge", "flight", "day", "back", "back_day", "rbd", "baggage",
+                "refundable"):
         if fare is None:
             return None
         value = getattr(fare, attr)
-        if attr == "day":
+        if attr in ("day", "back_day"):
             return value.strftime("%d %b") if value else None
         if attr == "refundable":
             return None if value is None else ("yes" if value else "no")

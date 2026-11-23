@@ -77,6 +77,33 @@ class FlightRow:
     #: Cabin the fare is actually in (an Economy search can return a Business
     #: class); "" when the site does not say. `cabin` is the cabin searched.
     cabin_class: str = ""
+    #: "RT" when the price is a round trip's: gross/base/tax then cover BOTH legs,
+    #: and the outbound leg is the one described above. "OW" otherwise.
+    trip: str = "OW"
+    return_date: Optional[date] = None
+    return_time: str = ""        # "HH:MM" of the return departure, "" when unknown
+    return_flight: str = ""
+    return_rbd: str = ""
+    return_via: str = ""
+    #: Marketing carrier of the return leg. A combo can fly out on one airline and
+    #: back on another (BS out, 2A back) - not one airline's round-trip fare.
+    return_airline: str = ""
+
+    @property
+    def is_round_trip(self) -> bool:
+        return self.trip == "RT"
+
+    @property
+    def stay_days(self) -> Optional[int]:
+        """Days between the outbound and the return departure (RT only)."""
+        if not (self.is_round_trip and self.return_date and self.departure_date):
+            return None
+        return (self.return_date - self.departure_date).days
+
+    @property
+    def mixed_carrier(self) -> bool:
+        return bool(self.is_round_trip and self.return_airline
+                    and self.return_airline != self.airline)
 
     @property
     def has_clock(self) -> bool:
@@ -157,6 +184,12 @@ def from_connector(raw: dict[str, Any], *, source: str, cabin: str,
 
     dep_d, dep_t = _split_dt(raw.get("departure"))
     arr_d, arr_t = _split_dt(raw.get("arrival"))
+    ret_d, ret_t = _split_dt(raw.get("return_departure"))
+    # A round trip needs its return day: without it the fare cannot be told from
+    # a one-way one, and it is dropped rather than shown as a one-way price.
+    round_trip = str(raw.get("trip_type") or "").upper() == "RT"
+    if round_trip and ret_d is None:
+        return None
     base = float(raw.get("fare_amount") or raw.get("base_fare_bdt")
                  or raw.get("base_fare") or 0)
     stops = raw.get("stops")
@@ -189,6 +222,14 @@ def from_connector(raw: dict[str, Any], *, source: str, cabin: str,
         refundable=(bool(raw["fare_refundable"])
                     if raw.get("fare_refundable") is not None else None),
         cabin_class=str(raw.get("cabin_class") or raw.get("cabin") or "").strip().title(),
+        trip="RT" if round_trip else "OW",
+        return_date=ret_d if round_trip else None,
+        return_time=("" if ret_t == MIDNIGHT else ret_t) if round_trip else "",
+        return_flight=str(raw.get("return_flight_number") or "").strip() if round_trip else "",
+        return_rbd=_rbd(raw.get("return_rbd")) if round_trip else "",
+        return_via=str(raw.get("return_via_airports") or "") if round_trip else "",
+        return_airline=(str(raw.get("return_airline") or "").upper().strip()
+                        if round_trip else ""),
     )
 
 

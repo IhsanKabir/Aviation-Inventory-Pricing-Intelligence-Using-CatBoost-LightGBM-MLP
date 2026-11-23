@@ -85,6 +85,31 @@ def _tax_breakdown(offer: Dict[str, Any]) -> tuple:
     return codes, total
 
 
+def _return_leg(offer: Dict[str, Any], carrier: str) -> Dict[str, Any]:
+    """The return leg of a round-trip offer (tripTypeId 2: directions[1]) as the
+    return_* row fields; {} for a one-way offer. The offer's prices then cover
+    both legs. A combo (isComboFare) can come back on another airline: its
+    carrier is in returnMarketingCarrierCode."""
+    directions = offer.get("directions") or []
+    if len(directions) < 2 or not directions[1]:
+        return {}
+    segs = (directions[1][0] or {}).get("segments") or []
+    if not segs:
+        return {}
+    s0 = segs[0]
+    back = str(offer.get("returnMarketingCarrierCode") or s0.get("marketingCarrierCode")
+               or s0.get("operatingCarrierCode") or carrier).upper().strip()
+    return {
+        "trip_type": "RT",
+        "return_departure": s0.get("departureTime"),
+        "return_arrival": segs[-1].get("arrivalTime"),
+        "return_flight_number": str(s0.get("flightNumber") or "").strip(),
+        "return_rbd": str(s0.get("rbd") or "").upper().strip(),
+        "return_via_airports": "|".join(s["destinationAirportCode"] for s in segs[:-1]) or None,
+        "return_airline": back,
+    }
+
+
 def _normalize(offer: Dict[str, Any], requested_cabin: str,
                 airline_filter: Optional[str]) -> Optional[Dict[str, Any]]:
     carrier = str(offer.get("marketingCarrierCode") or "").upper().strip()
@@ -174,6 +199,7 @@ def _normalize(offer: Dict[str, Any], requested_cabin: str,
         "inf_count":            0,
         "source_endpoint":      API_SEARCH,
         "inventory_confidence": None,
+        **_return_leg(offer, carrier),
     }
 
 
@@ -470,6 +496,8 @@ def _b2c_rows_from_offers(offers: List[Dict[str, Any]], cabin: str = "Economy",
             "cabin": base["cabin"],
             "taxes_breakdown": base["taxes_breakdown"],
             "tax_total": base["tax_total"],
+            # a round-trip search: the price covers both legs (return_* fields)
+            **{k: v for k, v in base.items() if k == "trip_type" or k.startswith("return_")},
             "gross_total_bdt": round(gross),
             "base_fare_bdt": round(base_fare),
             "coupon_code": o.get("couponCode") or "",

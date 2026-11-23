@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -47,7 +48,7 @@ def _encode(rows: Iterable[FlightRow]) -> str:
     out = []
     for r in rows:
         d = asdict(r)
-        for k in ("departure_date", "arrival_date"):
+        for k in ("departure_date", "arrival_date", "return_date"):
             d[k] = d[k].isoformat() if d[k] else None
         d["fetched_at"] = d["fetched_at"].isoformat()
         out.append(d)
@@ -57,8 +58,8 @@ def _encode(rows: Iterable[FlightRow]) -> str:
 def _decode(blob: str) -> list[FlightRow]:
     rows = []
     for d in json.loads(blob):
-        for k in ("departure_date", "arrival_date"):
-            d[k] = date.fromisoformat(d[k]) if d[k] else None
+        for k in ("departure_date", "arrival_date", "return_date"):
+            d[k] = date.fromisoformat(d[k]) if d.get(k) else None
         d["fetched_at"] = datetime.fromisoformat(d["fetched_at"])
         # Rows cached by older versions: no aircraft at all, or ShareTrip's
         # aircraft dict stored as text. Both are repaired on the way in.
@@ -70,6 +71,10 @@ def _decode(blob: str) -> list[FlightRow]:
         d.setdefault("baggage", "")
         d.setdefault("refundable", None)
         d.setdefault("cabin_class", "")
+        d.setdefault("trip", "OW")
+        for k in ("return_time", "return_flight", "return_rbd", "return_via",
+                  "return_airline"):
+            d.setdefault(k, "")
         rows.append(FlightRow(**d))
     return rows
 
@@ -81,6 +86,10 @@ class CacheStore:
         self.path = Path(path)
         self.hits = 0
         self.misses = 0
+        # One connection, used by every worker of a source (FirstTrip runs 3): two
+        # writes at once failed, the failure was swallowed, and the result was
+        # never cached - the next run searched it again.
+        self._lock = threading.Lock()
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._db: Optional[sqlite3.Connection] = sqlite3.connect(
@@ -97,8 +106,9 @@ class CacheStore:
         if self._db is None:
             return None
         try:
-            row = self._db.execute("select fetched_at, payload from q where k=?",
-                                   (_key(source, origin, dest, day, cabin),)).fetchone()
+            with self._lock:
+                row = self._db.execute("select fetched_at, payload from q where k=?",
+                                       (_key(source, origin, dest, day, cabin),)).fetchone()
             if not row:
                 self.misses += 1
                 return None
@@ -116,11 +126,13 @@ class CacheStore:
         if self._db is None:
             return
         try:
-            self._db.execute(
-                "insert or replace into q (k, fetched_at, payload) values (?,?,?)",
-                (_key(source, origin, dest, day, cabin),
-                 datetime.now().isoformat(), _encode(rows)))
-            self._db.commit()
+            payload = _encode(rows)
+            with self._lock:
+                self._db.execute(
+                    "insert or replace into q (k, fetched_at, payload) values (?,?,?)",
+                    (_key(source, origin, dest, day, cabin),
+                     datetime.now().isoformat(), payload))
+                self._db.commit()
         except Exception:                 # noqa: BLE001
             pass
 
@@ -128,7 +140,8 @@ class CacheStore:
         n = 0
         if self._db is not None:
             try:
-                n = int(self._db.execute("select count(*) from q").fetchone()[0])
+                with self._lock:
+                    n = int(self._db.execute("select count(*) from q").fetchone()[0])
             except Exception:             # noqa: BLE001
                 n = 0
         return {"entries": n, "hits": self.hits, "misses": self.misses}

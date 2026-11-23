@@ -34,6 +34,11 @@ class FareTable:
     refused: dict               # source -> reason it contributed nothing
     gross_only: tuple           # contributed an observed gross, but no trustworthy base
     rows: tuple = ()            # the fare rows behind the cells (for the tax sheets)
+    trip: str = "OW"            # "RT": every figure is a round trip's (both legs)
+    #: Round trips out on one airline and back on another (a BS + 2A combo): not
+    #: one airline's fare, so counted here instead of in a cell.
+    mixed: int = 0
+    stay: Optional[int] = None  # RT: days between the flights
 
 
 @dataclass(frozen=True)
@@ -92,10 +97,12 @@ def resolve_base(row: FlightRow, model: dict) -> tuple:
 
 
 def cheapest_per_flight(rows: Iterable[FlightRow]) -> list:
-    """Collapse fare classes: one row per (airline, flight, date, route)."""
+    """Collapse fare classes: one row per (airline, flight, date, route) - and,
+    for a round trip, per return flight and day too."""
     best: dict = {}
     for r in rows:
-        k = (r.airline, r.flight_number, r.departure_date, r.origin, r.destination)
+        k = (r.airline, r.flight_number, r.departure_date, r.origin, r.destination,
+             r.return_flight, r.return_date)
         cur = best.get(k)
         if cur is None or r.gross_bdt < cur.gross_bdt:
             best[k] = r
@@ -103,15 +110,21 @@ def cheapest_per_flight(rows: Iterable[FlightRow]) -> list:
 
 
 def build_fares(result: CollectResult, *, requested: Optional[Iterable[str]] = None,
-                direct_only: bool = False) -> FareTable:
-    """One cell per (route, airline).
+                direct_only: bool = False, trip: str = "OW",
+                stay: Optional[int] = None) -> FareTable:
+    """One cell per (route, airline), of one-way fares or (trip="RT") round-trip ones.
 
     A source that hides the base fare is NOT discarded: its gross is fully
     observed and gross is the number a market comparison is actually about.
     Such a source contributes gross only, and cells that rest on it say their
     base is unavailable rather than showing a figure modelled from nothing.
+
+    One-way and round-trip fares never share a cell: a round trip's price
+    covers both legs. `stay` keeps only round trips returning that many days on.
     """
-    quality = fq.judge(result.tallies())
+    # judged on this trip's rows: a round trip's doubled base must not decide
+    # whether a source's one-way base is trusted, or the other way round
+    quality = fq.judge(CollectResult(rows=[r for r in result.rows if r.trip == trip]).tallies())
     accepted, refused = sv.choose_sources(
         quality, list(requested) if requested is not None else None, purpose="fare")
     ok = set(accepted)
@@ -122,9 +135,16 @@ def build_fares(result: CollectResult, *, requested: Optional[Iterable[str]] = N
     for name in gross_only:
         refused.pop(name, None)
 
-    usable = [r for r in result.rows if r.source in contributing and r.gross_bdt > 0]
+    usable = [r for r in result.rows if r.source in contributing and r.gross_bdt > 0
+              and r.trip == trip]
+    if trip == "RT" and stay is not None:
+        usable = [r for r in usable if r.stay_days == stay]
+    mixed = sum(1 for r in usable if r.mixed_carrier)
+    usable = [r for r in usable if not r.mixed_carrier]
     if direct_only:
-        usable = [r for r in usable if (r.stops or 0) == 0]
+        # a round trip is nonstop when both of its flights are
+        usable = [r for r in usable if (r.stops or 0) == 0
+                  and not (r.is_round_trip and r.return_via)]
     # Tax is learned only where base is trustworthy.
     model = learn_tax([r for r in usable if r.source in ok])
 
@@ -158,7 +178,8 @@ def build_fares(result: CollectResult, *, requested: Optional[Iterable[str]] = N
 
     cells.sort(key=lambda c: (c.route, c.gross_low))
     return FareTable(cells=cells, refused=refused, gross_only=gross_only,
-                     rows=tuple(usable))
+                     rows=tuple(usable), trip=trip, mixed=mixed,
+                     stay=stay if trip == "RT" else None)
 
 
 def cheapest_by_route(cells: Iterable[FareCell]) -> dict:
