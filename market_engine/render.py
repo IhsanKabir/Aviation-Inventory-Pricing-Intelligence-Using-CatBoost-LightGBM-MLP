@@ -22,6 +22,8 @@ HDR_FONT = Font(color="FFFFFF", bold=True, size=10)
 NOTE_FONT = Font(color="9C6500", size=9, italic=True)
 BEST_FILL = PatternFill("solid", fgColor="C6EFCE")
 WARN_FILL = PatternFill("solid", fgColor="FFF2CC")
+#: A round-trip line, under its one-way line in the same columns.
+RT_FONT = Font(color="1F4E79", italic=True)
 
 
 def _header(ws, row: int, labels: Iterable[str]) -> int:
@@ -101,10 +103,18 @@ def write_fares(ws, table, best_by_route: dict, title: str,
     """`cheapest_tax`: (route, airline) -> (tax, YQ+YR) of that pair's cheapest fare
     (market_engine.taxes.cheapest_fare_tax); the columns stay blank without it.
     `notes`: (route, airline) -> a warning for the Flags column (outliers).
-    `rt_table` (round trips) is listed under the one-way fares, same columns."""
+    `rt_table` (round trips): each airline's round trip is the line right under its
+    one-way line, in the same columns, with a Trip column saying which is which."""
+    from market_engine.fares import pair_trips
+
     cheapest_tax, notes = cheapest_tax or {}, notes or {}
+    rt = rt_table is not None and bool(rt_table.cells)
     ws.cell(1, 1, title).font = Font(bold=True, size=12)
     r = 2
+    if rt:
+        ws.cell(r, 1, "OW = one-way; RT = {}, under the airline's one-way line."
+                      .format(round_trip_label(rt_table).lower())).font = NOTE_FONT
+        r += 1
     if table.gross_only:
         ws.cell(r, 1, "gross only (base not trustworthy from these sources): "
                       + ", ".join(table.gross_only)).font = NOTE_FONT
@@ -114,58 +124,53 @@ def write_fares(ws, table, best_by_route: dict, title: str,
         r += 1
     r += 1
 
-    if rt_table is not None and rt_table.cells:
-        ws.cell(r - 1, 1, "ONE WAY").font = Font(bold=True, color="1F4E79")
-    r = _header(ws, r, FARE_COLUMNS)
-    if rt_table is not None and rt_table.cells and not table.cells:
-        ws.cell(r, 1, "No one-way fares in this run (the captures held round trips only).").font = NOTE_FONT
+    cols = FARE_COLUMNS[:2] + ["Trip"] + FARE_COLUMNS[2:] if rt else FARE_COLUMNS
+    r = _header(ws, r, cols)
+    by_trip = {"OW": (best_by_route, cheapest_tax, notes),
+               "RT": (rt_best or {}, rt_cheapest_tax or {}, {})}
+    for trip, c_ in pair_trips(table.cells, rt_table.cells if rt else ()):
+        best, taxes_, notes_ = by_trip[trip]
+        _fare_row(ws, r, c_, best, taxes_, notes_, trip if rt else None)
         r += 1
-    r = _fare_rows(ws, r, table.cells, best_by_route, cheapest_tax, notes)
-    if rt_table is not None and rt_table.cells:
-        ws.cell(r + 1, 1, round_trip_label(rt_table)).font = Font(bold=True, color="1F4E79")
-        r = _header(ws, r + 2, FARE_COLUMNS)
-        _fare_rows(ws, r, rt_table.cells, rt_best or {}, rt_cheapest_tax or {}, {})
-    _widths(ws, [10, 8, 8, 9, 7, 11, 11, 11, 10, 10, 10, 13, 15, 13, 50])
+    widths = [10, 8, 8, 9, 7, 11, 11, 11, 10, 10, 10, 13, 15, 13, 50]
+    _widths(ws, widths[:2] + [6] + widths[2:] if rt else widths)
 
 
-def _fare_rows(ws, r: int, cells: list, best_by_route: dict, cheapest_tax: dict,
-               notes: dict) -> int:
-    """One line per (route, airline) cell from row r; -> the next free row."""
-    for c_ in cells:
-        flags = []
-        if not c_.base_available:
-            flags.append("base unavailable")
-        elif c_.base_derived:
-            flags.append("base partly derived")
-        if c_.age_hours > 24:
-            flags.append(f"{c_.age_hours/24:.0f}d old")
-        if notes.get((c_.route, c_.airline)):
-            flags.append(notes[(c_.route, c_.airline)])
-        ws.cell(r, 1, c_.route)
-        ws.cell(r, 2, c_.airline)
-        ws.cell(r, 3, c_.flights)
-        ws.cell(r, 4, c_.nonstop)
-        ws.cell(r, 5, c_.dates)
-        for i, v in enumerate((c_.gross_low, c_.gross_high, c_.gross_avg), start=6):
-            ws.cell(r, i, round(v)).number_format = "#,##0"
-        for i, v in enumerate((c_.base_low, c_.base_high, c_.base_avg), start=9):
-            cell = ws.cell(r, i, round(v) if c_.base_available else "—")
-            if c_.base_available:
-                cell.number_format = "#,##0"
-        tax, yqyr = cheapest_tax.get((c_.route, c_.airline), (None, None))
-        for i, v in ((12, tax), (13, yqyr)):
-            if v is not None:
-                ws.cell(r, i, round(v)).number_format = "#,##0"
-        ws.cell(r, 14, round(c_.age_hours, 1))
-        fc = ws.cell(r, 15, "; ".join(flags))
-        if flags:
-            fc.fill = WARN_FILL
-        if best_by_route.get(c_.route) == c_.airline:
-            for i in range(1, 16):
-                if not ws.cell(r, i).fill.fgColor.rgb or ws.cell(r, i).fill.patternType is None:
-                    ws.cell(r, i).fill = BEST_FILL
-        r += 1
-    return r
+def _fare_row(ws, r: int, c_, best_by_route: dict, cheapest_tax: dict, notes: dict,
+              trip: Optional[str]) -> None:
+    """One (route, airline) cell on row r; `trip` ("OW"/"RT") fills the Trip
+    column, None when the sheet has none."""
+    flags = []
+    if not c_.base_available:
+        flags.append("base unavailable")
+    elif c_.base_derived:
+        flags.append("base partly derived")
+    if c_.age_hours > 24:
+        flags.append(f"{c_.age_hours/24:.0f}d old")
+    if notes.get((c_.route, c_.airline)):
+        flags.append(notes[(c_.route, c_.airline)])
+    money = lambda v: round(v) if v is not None else None          # noqa: E731
+    base = lambda v: round(v) if c_.base_available else "—"  # noqa: E731
+    tax, yqyr = cheapest_tax.get((c_.route, c_.airline), (None, None))
+    values = ([c_.route, c_.airline] + ([trip] if trip else [])
+              + [c_.flights, c_.nonstop, c_.dates,
+                 money(c_.gross_low), money(c_.gross_high), money(c_.gross_avg),
+                 base(c_.base_low), base(c_.base_high), base(c_.base_avg),
+                 money(tax), money(yqyr), round(c_.age_hours, 1), "; ".join(flags)])
+    first_money = len(values) - 9            # Gross low .. YQ+YR are the money columns
+    for i, v in enumerate(values, start=1):
+        cell = ws.cell(r, i, v)
+        if first_money <= i < first_money + 8 and isinstance(v, (int, float)):
+            cell.number_format = "#,##0"
+    if trip == "RT":
+        for i in range(1, len(values) + 1):
+            ws.cell(r, i).font = RT_FONT
+    if flags:
+        ws.cell(r, len(values)).fill = WARN_FILL
+    if best_by_route.get(c_.route) == c_.airline:
+        for i in range(1, len(values) + 1):
+            if ws.cell(r, i).fill.patternType is None:
+                ws.cell(r, i).fill = BEST_FILL
 
 
 def write_timetable(ws, rows, title: str, confirmed: Optional[list] = None) -> None:

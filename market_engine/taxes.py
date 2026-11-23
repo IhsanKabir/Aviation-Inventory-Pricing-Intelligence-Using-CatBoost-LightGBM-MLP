@@ -439,6 +439,7 @@ class ClassLine:
     rt_gross: Optional[float] = None
     rt_base: Optional[float] = None
     rt_surcharge: Optional[float] = None
+    rt_tax: Optional[float] = None
     rt_fares: int = 0
 
     @property
@@ -561,4 +562,5 @@ def _class_line(cabin: str, rbd: str, ow: list, rt: list, reads: dict) -> ClassL
         rt_gross=back.gross_bdt if back else None,
         rt_base=back.base_bdt if back and back.base_is_real else None,
         rt_surcharge=surcharge(reads[id(back)]) if back else None,
+        rt_tax=tax_of(back) if back else None,
         rt_fares=len(rt))

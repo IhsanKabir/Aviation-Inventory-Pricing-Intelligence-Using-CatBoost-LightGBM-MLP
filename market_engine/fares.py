@@ -190,3 +190,22 @@ def cheapest_by_route(cells: Iterable[FareCell]) -> dict:
         if cur is None or c.gross_low < cur.gross_low:
             out[c.route] = c
     return {r: c.airline for r, c in out.items()}
+
+
+def pair_trips(ow_cells: Iterable[FareCell], rt_cells: Iterable[FareCell]) -> list:
+    """One-way and round-trip cells as one list of (trip, cell): each airline's
+    round trip right under its one-way line, so the two read down one column; a
+    route's airlines seen only as round trips follow its one-way ones."""
+    ow_cells, rt_cells = list(ow_cells), list(rt_cells)
+    rt_by = {(c.route, c.airline): c for c in rt_cells}
+    out: list = []
+    for route in sorted({c.route for c in ow_cells} | {c.route for c in rt_cells}):
+        paired = set()
+        for c in (x for x in ow_cells if x.route == route):
+            out.append(("OW", c))
+            back = rt_by.get((route, c.airline))
+            if back is not None:
+                out.append(("RT", back))
+                paired.add(c.airline)
+        out += [("RT", c) for c in rt_cells if c.route == route and c.airline not in paired]
+    return out

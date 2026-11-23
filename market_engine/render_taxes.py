@@ -205,19 +205,16 @@ def _bands(items: list) -> list:
 #: controls (base + its own surcharges), before government taxes.
 YQ_FILL = PatternFill("solid", fgColor="FFFF00")
 CLASS_COLUMNS = ("RBD", "Base", "YQ+YR", "Base with YQ", "Tax", "Gross")
-#: Next to the one-way columns when the run searched round trips, as the GDS
-#: fare report shows OW and RT side by side.
-RT_COLUMNS = ("RT Base", "RT Base with YQ", "RT Gross")
-CLASS_WIDTHS = [6, 10, 9, 12, 9, 10]
-RT_WIDTHS = [10, 15, 10]
+CLASS_WIDTHS = [7, 10, 9, 12, 9, 10]
 
 
 def write_fares_by_class(ws, tables: list, title: str, note: str = "",
                          stay: Optional[int] = None) -> None:
     """Per route: one table per airline/routing side by side (6 per band), a line
     per booking class - upper cabins, a blank line, then economy, highest fare
-    first - and the routing's tax codes under each table. With round trips, each
-    line also carries the class's cheapest round trip (RT columns)."""
+    first - and the routing's tax codes under each table. With round trips, a
+    class's cheapest round trip is the line right under its one-way line ("Q RT"),
+    in the same columns."""
     ws.cell(1, 1, title).font = Font(bold=True, size=12)
     sites = sorted({s for t in tables for s in t.sources})
     rt = any(t.has_round_trip for t in tables)
@@ -226,14 +223,14 @@ def write_fares_by_class(ws, tables: list, title: str, note: str = "",
                   "what the passenger pays.{}".format(
                       "one-way and round trip," if rt else "one-way,",
                       ", ".join(sites) or "the run",
-                      " RT = the class's cheapest round trip{} with both flights in that "
-                      "class; its figures cover both flights.".format(
+                      " An RT line (under the class's one-way line) = the class's "
+                      "cheapest round trip{} with both flights in that class; its "
+                      "figures cover both flights.".format(
                           f", returning {stay} day(s) later" if stay is not None else "")
                       if rt else "")
             ).font = NOTE_FONT
     r = max(_banner(ws, 3, note), 4)
-    cols = CLASS_COLUMNS + (RT_COLUMNS if rt else ())
-    width = len(cols)
+    width = len(CLASS_COLUMNS)
     section = None
     by_route: list = []
     for t in tables:
@@ -252,19 +249,34 @@ def write_fares_by_class(ws, tables: list, title: str, note: str = "",
         for band in _bands(ts):
             # every table of a band gets as many class lines as its longest one,
             # so the "Taxes (BDT)" blocks start on one row and compare across
-            depth = max(len(t.lines) + (1 if t.split_cabins else 0) for t in band)
+            depth = max(len(_class_rows(t)) + (1 if t.split_cabins else 0) for t in band)
             bottom = r
             for k, t in enumerate(band):
-                bottom = max(bottom, _class_table(ws, r, 1 + k * (width + 1), t, depth,
-                                                  cols))
+                bottom = max(bottom, _class_table(ws, r, 1 + k * (width + 1), t, depth))
             r = bottom + 2
-    _widths(ws, (CLASS_WIDTHS + (RT_WIDTHS if rt else []) + [3]) * TABLES_PER_BAND)
+    _widths(ws, (CLASS_WIDTHS + [3]) * TABLES_PER_BAND)
     ws.freeze_panes = "A4"
 
 
-def _class_table(ws, r: int, c: int, t, depth: int = 0, cols: tuple = CLASS_COLUMNS) -> int:
-    """One airline's table at (r, c), its class lines padded to `depth`; -> the
-    last row it used."""
+def _class_rows(t) -> list:
+    """(line, trip) per printed row: each class's one-way line, then its round
+    trip right under it; a class seen only one way (or only as a round trip) has
+    one row."""
+    out = []
+    for line in t.lines:
+        if line.gross is not None:
+            out.append((line, "OW"))
+        if line.rt_gross is not None:
+            out.append((line, "RT"))
+    return out
+
+
+def _class_table(ws, r: int, c: int, t, depth: int = 0) -> int:
+    """One airline's table at (r, c), its rows padded to `depth`; -> the last row
+    it used."""
+    from market_engine.render import RT_FONT
+
+    cols = CLASS_COLUMNS
     width = len(cols)
     ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c + width - 1)
     head = ws.cell(r, c, f"{t.airline} / {t.route}")
@@ -278,27 +290,28 @@ def _class_table(ws, r: int, c: int, t, depth: int = 0, cols: tuple = CLASS_COLU
     r += 2
     for i, label in enumerate(cols):
         _head(ws, r, c + i, label)
-        if label in ("Base with YQ", "RT Base with YQ"):
+        if label == "Base with YQ":
             ws.cell(r, c + i).fill = YQ_FILL
             ws.cell(r, c + i).font = Font(bold=True, size=10)
     r += 1
     lines_end = r + depth
     upper_done = False
-    for line in t.lines:
+    for line, trip in _class_rows(t):
         if t.split_cabins and not upper_done and not T.is_upper(line.cabin):
             upper_done = True
             r += 1                                # the blank line between cabins
-        ws.cell(r, c, line.rbd).alignment = Alignment(horizontal="center")
-        for i, v in enumerate((line.base, line.surcharge, line.base_with_yq, line.tax),
-                              start=1):
+        rt = trip == "RT"
+        figures = ((line.rt_base, line.rt_surcharge, line.rt_base_with_yq, line.rt_tax,
+                    line.rt_gross) if rt else
+                   (line.base, line.surcharge, line.base_with_yq, line.tax, line.gross))
+        ws.cell(r, c, f"{line.rbd} RT" if rt else line.rbd).alignment = Alignment(
+            horizontal="center")
+        for i, v in enumerate(figures, start=1):
             _put(ws, r, c + i, round(v) if v is not None else None)
-        if line.gross is not None:
-            _put(ws, r, c + 5, round(line.gross)).font = Font(bold=True)
-        if len(cols) > len(CLASS_COLUMNS):
-            for i, v in enumerate((line.rt_base, line.rt_base_with_yq), start=6):
-                _put(ws, r, c + i, round(v) if v is not None else None)
-            if line.rt_gross is not None:
-                _put(ws, r, c + 8, round(line.rt_gross)).font = Font(bold=True)
+        ws.cell(r, c + 5).font = Font(bold=True, italic=rt, color=RT_FONT.color if rt else None)
+        if rt:
+            for i in range(5):
+                ws.cell(r, c + i).font = RT_FONT
         r += 1
     r = max(r, lines_end)
     if t.codes or t.total_high:

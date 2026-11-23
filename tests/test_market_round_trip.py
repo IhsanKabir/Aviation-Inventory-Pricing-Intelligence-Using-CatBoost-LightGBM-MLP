@@ -249,7 +249,7 @@ def _sheet(wb, name):
     return [list(r) for r in wb[name].iter_rows(values_only=True)]
 
 
-def test_the_workbook_puts_round_trips_next_to_one_way(tmp_path):
+def test_the_workbook_puts_each_round_trip_under_its_one_way_line(tmp_path):
     from openpyxl import load_workbook
 
     from market_engine.render import write_workbook
@@ -258,20 +258,58 @@ def test_the_workbook_puts_round_trips_next_to_one_way(tmp_path):
     ow, rt = build_fares(res), build_fares(res, trip="RT", stay=9)
     wb = load_workbook(write_workbook(tmp_path / "rt.xlsx", table=ow, best_by_route={},
                                       rows=list(ow.rows), rt_table=rt))
+    # Fares by Class: same six columns; the class's RT line right under it
     cls = _sheet(wb, "Fares by Class")
     head = next(r for r in cls if r and r[0] == "RBD")
-    assert head[:9] == ["RBD", "Base", "YQ+YR", "Base with YQ", "Tax", "Gross",
-                        "RT Base", "RT Base with YQ", "RT Gross"]
-    q = cls[cls.index(head) + 1]
-    assert q[0] == "Q" and q[5] == 4849 and q[8] == 9698
+    assert head[:7] == ["RBD", "Base", "YQ+YR", "Base with YQ", "Tax", "Gross", None]
+    q, q_rt = cls[cls.index(head) + 1], cls[cls.index(head) + 2]
+    assert q[0] == "Q" and q[5] == 4849
+    assert q_rt[0] == "Q RT" and q_rt[5] == 9698 and q_rt[3] == 6448 + 1000
+    # Fare Comparison: no separate block; "(RT)" lines under the one-way ones
     cmp_ = _sheet(wb, "Fare Comparison")
     labels = [r[0] for r in cmp_ if r and r[0]]
-    assert "ONE WAY" in labels and any(str(x).startswith("ROUND TRIP - return 9") for x in labels)
+    assert "ONE WAY" not in labels and not any(str(x).startswith("ROUND TRIP") for x in labels)
+    i = labels.index("Gross low")
+    assert labels[i + 1] == "Gross low (RT)"
+    gross = next(r for r in cmp_ if r and r[0] == "Gross low (RT)")
+    airlines = next(r for r in cmp_ if r and r[0] == "Airline")
+    assert gross[airlines.index("BS")] == 9698 and gross[airlines.index("2A")] is None
     back = next(r for r in cmp_ if r and r[0] == "Return flight")
-    assert back[1] == "BS 142 18:35"
+    assert back[airlines.index("BS")] == "BS 142 18:35"
+    # Fares: one table with a Trip column, the RT line under its airline's OW line
+    fares = _sheet(wb, "Fares")
+    head = next(r for r in fares if r and r[0] == "Route")
+    assert head[:3] == ["Route", "Airline", "Trip"]
+    body = [tuple(r[1:3]) for r in fares[fares.index(head) + 1:] if r and r[0]]
+    assert body.index(("BS", "RT")) == body.index(("BS", "OW")) + 1
+    assert ("2A", "RT") not in body
     missing = [(r[1], r[2]) for r in _sheet(wb, "Missing - Re-run")[4:] if r and r[2]]
     assert ("2A", "no round trip") in missing and ("all", "mixed round trips") in missing
     assert "Tax Comparison" in wb.sheetnames     # the tax sheets stay one-way
+
+
+def test_one_way_only_sheets_have_no_trip_column(tmp_path):
+    from openpyxl import load_workbook
+
+    from market_engine.render import write_workbook
+    ow = build_fares(CollectResult(rows=[_row()]))
+    wb = load_workbook(write_workbook(tmp_path / "ow.xlsx", table=ow, best_by_route={},
+                                      rows=list(ow.rows)))
+    head = next(r for r in _sheet(wb, "Fares") if r and r[0] == "Route")
+    assert head[:3] == ["Route", "Airline", "Flights"]
+    labels = [r[0] for r in _sheet(wb, "Fare Comparison") if r and r[0]]
+    assert not any("(RT)" in str(x) for x in labels)
+
+
+def test_pair_trips_puts_round_trips_under_their_one_way_cells():
+    from market_engine.fares import pair_trips
+    res = CollectResult(rows=[_row(), _row("2A", "441", gross=4000.0), _rt()])
+    ow, rt = build_fares(res), build_fares(res, trip="RT", stay=9)
+    order = [(t, c.airline) for t, c in pair_trips(ow.cells, rt.cells)]
+    assert order == [("OW", "2A"), ("OW", "BS"), ("RT", "BS")]
+    # an airline seen only as a round trip still gets its line, after the route's one-way ones
+    only_rt = [(t, c.airline) for t, c in pair_trips([], rt.cells)]
+    assert only_rt == [("RT", "BS")]
 
 
 def test_cached_round_trips_survive_the_encoding():

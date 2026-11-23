@@ -53,6 +53,8 @@
   .flag { background: #fff2cc; color: #8a6100; padding: 1px 7px; border-radius: 4px;
     font-size: 11px; margin-right: 4px; white-space: nowrap; }
   .cheapest { background: #c6efce; color: #006100; font-weight: 700; }
+  tr.rt td { font-style: italic; color: #1f4e79; }
+  tr.rt.cheapest td { color: #006100; }
   .estimate { font-size: 12px; color: var(--muted); margin-top: 6px; }
   #status { font-size: 13px; color: var(--muted); }
   .grid-title { display: flex; justify-content: space-between; align-items: baseline; margin: 4px 0 8px; }
@@ -1459,32 +1461,54 @@ function renderFares(r) {
   if (r.rt_mixed)
     extra.push(`${r.rt_mixed} round trip(s) out on one airline and back on another were left out — not one airline's fare`);
   document.getElementById("far_notes").innerHTML = marketNotes(r, extra);
-  const ow = fareTable(r.cells, "No fares for these routes and dates from the chosen sources.");
-  if (r.stay === undefined || r.stay === null) {
-    document.getElementById("far_result").innerHTML = ow;
-    return;
-  }
-  const rt = fareTable(r.rt_cells, "No round-trip fares for these routes, dates and stay.");
-  document.getElementById("far_result").innerHTML =
-    `<h3>One way</h3>${ow}<h3 style="margin-top:14px">Round trip — back ${r.stay} day${r.stay === 1 ? "" : "s"} later (price of both flights)</h3>${rt}`;
+  const rt = r.stay !== undefined && r.stay !== null;
+  const note = rt
+    ? `<div class="muted">RT = round trip, back ${r.stay} day${r.stay === 1 ? "" : "s"} later (price of both flights), under the airline's one-way line.</div>`
+    : "";
+  document.getElementById("far_result").innerHTML = note + fareTable(
+    pairTrips(r.cells, rt ? r.rt_cells : []), rt,
+    "No fares for these routes and dates from the chosen sources.");
 }
 
-function fareTable(cells, empty) {
+// One-way and round-trip cells in one list: each airline's round trip right under
+// its one-way line; a route's round-trip-only airlines after its one-way ones.
+// (market_engine.fares.pair_trips does the same for the workbook.)
+function pairTrips(ow, rt) {
+  ow = ow || []; rt = rt || [];
+  const key = c => c.route + "|" + c.airline;
+  const rtBy = new Map(rt.map(c => [key(c), c]));
+  const routes = [...new Set([...ow, ...rt].map(c => c.route))].sort();
+  const out = [];
+  for (const route of routes) {
+    const paired = new Set();
+    for (const c of ow.filter(c => c.route === route)) {
+      out.push(["OW", c]);
+      const back = rtBy.get(key(c));
+      if (back) { out.push(["RT", back]); paired.add(c.airline); }
+    }
+    for (const c of rt.filter(c => c.route === route && !paired.has(c.airline))) out.push(["RT", c]);
+  }
+  return out;
+}
+
+function fareTable(pairs, withTrip, empty) {
   const money = v => Math.round(v).toLocaleString();
-  const rows = (cells || []).map(c => {
+  const rows = pairs.map(([trip, c]) => {
     const f = [];
     if (!c.base_available) f.push('<span class="flag">base unavailable</span>');
     else if (c.base_derived) f.push('<span class="flag">base partly derived</span>');
     if (c.age_hours > 24) f.push(`<span class="flag">${Math.round(c.age_hours / 24)}d old</span>`);
     const b = c.base_available;
-    return `<tr class="${c.cheapest ? "cheapest" : ""}"><td>${esc(c.route)}</td><td>${esc(c.airline)}</td>
+    const cls = [c.cheapest ? "cheapest" : "", trip === "RT" ? "rt" : ""].join(" ").trim();
+    return `<tr class="${cls}"><td>${esc(c.route)}</td><td>${esc(c.airline)}</td>
+      ${withTrip ? `<td>${trip}</td>` : ""}
       <td>${c.flights}</td><td>${c.nonstop}</td><td>${c.dates}</td>
       <td>${money(c.gross_low)}</td><td>${money(c.gross_high)}</td><td>${money(c.gross_avg)}</td>
       <td>${b ? money(c.base_low) : "—"}</td><td>${b ? money(c.base_high) : "—"}</td>
       <td>${b ? money(c.base_avg) : "—"}</td><td>${f.join(" ")}</td></tr>`;
   }).join("");
   return rows
-    ? `<table><thead><tr><th>Route</th><th>Airline</th><th>Flights</th><th>Nonstop</th><th>Dates</th><th>Gross low</th><th>Gross high</th><th>Gross avg</th><th>Base low</th><th>Base high</th><th>Base avg</th><th>Flags</th></tr></thead><tbody>${rows}</tbody></table>`
+    ? `<table><thead><tr><th>Route</th><th>Airline</th>${withTrip ? "<th>Trip</th>" : ""}<th>Flights</th><th>Nonstop</th><th>Dates</th><th>Gross low</th><th>Gross high</th><th>Gross avg</th><th>Base low</th><th>Base high</th><th>Base avg</th><th>Flags</th></tr></thead><tbody>${rows}</tbody></table>`
     : `<div class="muted">${esc(empty)}</div>`;
 }
 </script>
