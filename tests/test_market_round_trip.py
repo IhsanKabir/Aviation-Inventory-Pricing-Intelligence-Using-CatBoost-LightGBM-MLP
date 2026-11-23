@@ -280,13 +280,18 @@ def test_the_workbook_puts_each_round_trip_under_its_one_way_line(tmp_path):
     assert gross[ta] == 4849 and gross[ta + 1] is None              # 2A: one-way only
     back = next(r for r in cmp_ if r and r[0] == "Return flight")
     assert back[bs] is None and back[bs + 1] == "BS 142 18:35"
-    # Fares: one table with a Trip column, the RT line under its airline's OW line
+    # Fares: one line per airline, OW figures then RT figures under OW | RT
     fares = _sheet(wb, "Fares")
     head = next(r for r in fares if r and r[0] == "Route")
-    assert head[:3] == ["Route", "Airline", "Trip"]
-    body = [tuple(r[1:3]) for r in fares[fares.index(head) + 1:] if r and r[0]]
-    assert body.index(("BS", "RT")) == body.index(("BS", "OW")) + 1
-    assert ("2A", "RT") not in body
+    figures = ["Flights", "Nonstop", "Dates", "Gross low", "Gross high", "Gross avg",
+               "Base low", "Base high", "Base avg", "Tax (cheapest)", "YQ+YR (cheapest)"]
+    assert head == ["Route", "Airline"] + figures + figures + ["Data age (h)", "Flags"]
+    group = fares[fares.index(head) - 1]
+    assert group[2] == "OW" and group[13] == "RT"
+    body = {r[1]: r for r in fares[fares.index(head) + 1:] if r and r[0]}
+    assert set(body) == {"BS", "2A"}
+    assert body["BS"][5] == 4849 and body["BS"][16] == 9698
+    assert body["2A"][5] == 4849 and body["2A"][16] is None        # no round trip
     missing = [(r[1], r[2]) for r in _sheet(wb, "Missing - Re-run")[4:] if r and r[2]]
     assert ("2A", "no round trip") in missing and ("all", "mixed round trips") in missing
     assert "Tax Comparison" in wb.sheetnames     # the tax sheets stay one-way
@@ -306,16 +311,14 @@ def test_one_way_only_sheets_have_no_trip_column(tmp_path):
     assert cmp_[cmp_.index(head) + 1][0] == "Flights"            # no OW / RT row
 
 
-def test_pair_trips_puts_round_trips_under_their_one_way_cells():
-    from market_engine.fares import pair_trips
+def test_by_airline_joins_one_way_and_round_trip_cells():
+    from market_engine.fares import by_airline
     res = CollectResult(rows=[_row(), _row("2A", "441", gross=4000.0), _rt()])
     ow, rt = build_fares(res), build_fares(res, trip="RT", stay=9)
-    order = [(t, c.airline) for t, c in pair_trips(ow.cells, rt.cells)]
-    assert order == [("OW", "2A"), ("OW", "BS"), ("RT", "BS")]
-    # an airline seen only as a round trip still gets its line, after the route's one-way ones
-    only_rt = [(t, c.airline) for t, c in pair_trips([], rt.cells)]
-    assert only_rt == [("RT", "BS")]
-
+    got = [(o and o.airline, b and b.airline) for o, b in by_airline(ow.cells, rt.cells)]
+    assert got == [("2A", None), ("BS", "BS")]
+    # an airline seen only as a round trip still gets its line
+    assert [(o, b.airline) for o, b in by_airline([], rt.cells)] == [(None, "BS")]
 
 def test_cached_round_trips_survive_the_encoding():
     (back,) = C._decode(C._encode([_rt()]))

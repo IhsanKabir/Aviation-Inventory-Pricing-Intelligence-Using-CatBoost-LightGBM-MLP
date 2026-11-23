@@ -285,7 +285,7 @@ def _class_table(ws, r: int, c: int, t, depth: int = 0, trips: tuple = ("OW",)) 
     """One airline's table at (r, c), its class lines padded to `depth`; with
     round trips an OW | RT row heads the figure groups. -> the last row it used."""
     from market_engine.render import RT_FONT
-    from market_engine.render_compare import SUB_FILL, SUB_FONT
+    from market_engine.render import SUB_FILL, SUB_FONT
 
     trips = list(trips)
     n = len(FIGURES)

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Font
 
-from market_engine.render import (BEST_FILL, HDR_FILL, HDR_FONT, NOTE_FONT, RT_FONT, WARN_FILL,
+from market_engine.render import (BEST_FILL, HDR_FILL, HDR_FONT, NOTE_FONT, RT_FONT, SUB_FILL,
+                                  SUB_FONT, WARN_FILL,
                                   _header, _widths)
 from market_engine.taxes import _outbound, is_domestic, order_key
 
@@ -139,10 +140,6 @@ def _matrix(ws, r: int, trips: list) -> tuple:
         widest = max(widest, len(cols) + 1)
         r += 1
     return r, widest
-
-
-SUB_FILL = PatternFill("solid", fgColor="DDEBF7")
-SUB_FONT = Font(bold=True, size=10, color="1F4E79")
 
 
 def _airline_header(ws, r: int, names: list, trips: list) -> int:

@@ -53,8 +53,9 @@
   .flag { background: #fff2cc; color: #8a6100; padding: 1px 7px; border-radius: 4px;
     font-size: 11px; margin-right: 4px; white-space: nowrap; }
   .cheapest { background: #c6efce; color: #006100; font-weight: 700; }
-  tr.rt td { font-style: italic; color: #1f4e79; }
-  tr.rt.cheapest td { color: #006100; }
+  td.rt { font-style: italic; color: #1f4e79; }
+  td.rt.cheapest { color: #006100; }
+  th.trip { background: #ddebf7; color: #1f4e79; text-align: center; }
   .estimate { font-size: 12px; color: var(--muted); margin-top: 6px; }
   #status { font-size: 13px; color: var(--muted); }
   .grid-title { display: flex; justify-content: space-between; align-items: baseline; margin: 4px 0 8px; }
@@ -1461,55 +1462,79 @@ function renderFares(r) {
   if (r.rt_mixed)
     extra.push(`${r.rt_mixed} round trip(s) out on one airline and back on another were left out — not one airline's fare`);
   document.getElementById("far_notes").innerHTML = marketNotes(r, extra);
-  const rt = r.stay !== undefined && r.stay !== null;
+  const rt = r.stay !== undefined && r.stay !== null && (r.rt_cells || []).length > 0;
+  const trips = [];
+  if ((r.cells || []).length || !rt) trips.push("OW");
+  if (rt) trips.push("RT");
   const note = rt
-    ? `<div class="muted">RT = round trip, back ${r.stay} day${r.stay === 1 ? "" : "s"} later (price of both flights), under the airline's one-way line.</div>`
+    ? `<div class="muted">OW = one-way; RT = round trip, back ${r.stay} day${r.stay === 1 ? "" : "s"} later (price of both flights).</div>`
     : "";
   document.getElementById("far_result").innerHTML = note + fareTable(
-    pairTrips(r.cells, rt ? r.rt_cells : []), rt,
-    "No fares for these routes and dates from the chosen sources.");
+    byAirline(r.cells, rt ? r.rt_cells : []), trips,
+    r.stay !== undefined && r.stay !== null
+      ? "No fares for these routes, dates and stay from the chosen sources."
+      : "No fares for these routes and dates from the chosen sources.");
 }
 
-// One-way and round-trip cells in one list: each airline's round trip right under
-// its one-way line; a route's round-trip-only airlines after its one-way ones.
-// (market_engine.fares.pair_trips does the same for the workbook.)
-function pairTrips(ow, rt) {
+// One-way and round-trip cells joined per route/airline -> [[ow, rt]], either
+// null when the airline has no fare of that trip there.
+// (market_engine.fares.by_airline does the same for the workbook.)
+function byAirline(ow, rt) {
   ow = ow || []; rt = rt || [];
   const key = c => c.route + "|" + c.airline;
   const rtBy = new Map(rt.map(c => [key(c), c]));
   const routes = [...new Set([...ow, ...rt].map(c => c.route))].sort();
   const out = [];
   for (const route of routes) {
-    const paired = new Set();
+    const seen = new Set();
     for (const c of ow.filter(c => c.route === route)) {
-      out.push(["OW", c]);
-      const back = rtBy.get(key(c));
-      if (back) { out.push(["RT", back]); paired.add(c.airline); }
+      out.push([c, rtBy.get(key(c)) || null]);
+      seen.add(c.airline);
     }
-    for (const c of rt.filter(c => c.route === route && !paired.has(c.airline))) out.push(["RT", c]);
+    for (const c of rt.filter(c => c.route === route && !seen.has(c.airline))) out.push([null, c]);
   }
   return out;
 }
 
-function fareTable(pairs, withTrip, empty) {
+const FARE_FIGURES = ["Flights", "Nonstop", "Dates", "Gross low", "Gross high", "Gross avg",
+                      "Base low", "Base high", "Base avg"];
+
+function fareFigures(c, isRt) {
+  const blank = FARE_FIGURES.map(() => `<td class="${isRt ? "rt" : ""}"></td>`).join("");
+  if (!c) return blank;
   const money = v => Math.round(v).toLocaleString();
-  const rows = pairs.map(([trip, c]) => {
-    const f = [];
-    if (!c.base_available) f.push('<span class="flag">base unavailable</span>');
-    else if (c.base_derived) f.push('<span class="flag">base partly derived</span>');
-    if (c.age_hours > 24) f.push(`<span class="flag">${Math.round(c.age_hours / 24)}d old</span>`);
-    const b = c.base_available;
-    const cls = [c.cheapest ? "cheapest" : "", trip === "RT" ? "rt" : ""].join(" ").trim();
-    return `<tr class="${cls}"><td>${esc(c.route)}</td><td>${esc(c.airline)}</td>
-      ${withTrip ? `<td>${trip}</td>` : ""}
-      <td>${c.flights}</td><td>${c.nonstop}</td><td>${c.dates}</td>
-      <td>${money(c.gross_low)}</td><td>${money(c.gross_high)}</td><td>${money(c.gross_avg)}</td>
-      <td>${b ? money(c.base_low) : "—"}</td><td>${b ? money(c.base_high) : "—"}</td>
-      <td>${b ? money(c.base_avg) : "—"}</td><td>${f.join(" ")}</td></tr>`;
+  const b = c.base_available;
+  const cls = [c.cheapest ? "cheapest" : "", isRt ? "rt" : ""].join(" ").trim();
+  return [c.flights, c.nonstop, c.dates, money(c.gross_low), money(c.gross_high),
+          money(c.gross_avg), b ? money(c.base_low) : "—", b ? money(c.base_high) : "—",
+          b ? money(c.base_avg) : "—"].map(v => `<td class="${cls}">${v}</td>`).join("");
+}
+
+function fareFlags(c) {
+  const f = [];
+  if (!c) return f;
+  if (!c.base_available) f.push("base unavailable");
+  else if (c.base_derived) f.push("base partly derived");
+  if (c.age_hours > 24) f.push(`${Math.round(c.age_hours / 24)}d old`);
+  return f;
+}
+
+function fareTable(pairs, trips, empty) {
+  if (!pairs.length) return `<div class="muted">${esc(empty)}</div>`;
+  const both = trips.length > 1;
+  const rows = pairs.map(([ow, back]) => {
+    const first = ow || back;
+    const cells = {OW: ow, RT: back};
+    const flags = trips.flatMap(t => fareFlags(cells[t]).map(x => (both ? `${t}: ` : "") + x))
+      .map(x => `<span class="flag">${esc(x)}</span>`).join(" ");
+    return `<tr><td>${esc(first.route)}</td><td>${esc(first.airline)}</td>${
+      trips.map(t => fareFigures(cells[t], both && t === "RT")).join("")}<td>${flags}</td></tr>`;
   }).join("");
-  return rows
-    ? `<table><thead><tr><th>Route</th><th>Airline</th>${withTrip ? "<th>Trip</th>" : ""}<th>Flights</th><th>Nonstop</th><th>Dates</th><th>Gross low</th><th>Gross high</th><th>Gross avg</th><th>Base low</th><th>Base high</th><th>Base avg</th><th>Flags</th></tr></thead><tbody>${rows}</tbody></table>`
-    : `<div class="muted">${esc(empty)}</div>`;
+  const n = FARE_FIGURES.length;
+  const group = trips.length === 1 && trips[0] === "OW" ? "" :
+    `<tr><th colspan="2"></th>${trips.map(t => `<th colspan="${n}" class="trip">${t}</th>`).join("")}<th></th></tr>`;
+  const heads = trips.map(() => FARE_FIGURES.map(h => `<th>${h}</th>`).join("")).join("");
+  return `<table><thead>${group}<tr><th>Route</th><th>Airline</th>${heads}<th>Flags</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 </script>
 </body>
