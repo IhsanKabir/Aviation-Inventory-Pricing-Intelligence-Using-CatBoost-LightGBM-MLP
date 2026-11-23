@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill
 
 from market_engine.render import (BEST_FILL, HDR_FILL, HDR_FONT, NOTE_FONT, RT_FONT, WARN_FILL,
                                   _header, _widths)
@@ -54,8 +54,7 @@ def write_fare_matrix(ws, table, best_by_route: dict, title: str,
 
     `cheapest`: (route, airline) -> taxes.CheapestFare; `notes`: (route, airline) ->
     a warning (outliers), shown in a Check row. `rt_table`: round trips - each
-    figure's round-trip line ("Gross low (RT)") sits right under its one-way line,
-    in the same airline column."""
+    airline then has an OW and an RT column under its name."""
     from market_engine.render import round_trip_label
 
     rows = list(getattr(table, "rows", ()) or ())
@@ -63,11 +62,13 @@ def write_fare_matrix(ws, table, best_by_route: dict, title: str,
     ws.cell(1, 1, title).font = Font(bold=True, size=12)
     when = travel_dates(rows + (list(rt_table.rows) if rt else []))
     ws.cell(2, 1, ("Travel {}. ".format(when) if when else "")
-            + ("BDT per adult, one-way; (RT) lines = {}. ".format(
+            + ("BDT per adult. OW = one-way; RT = {}. ".format(
                 round_trip_label(rt_table).lower()) if rt else "BDT per adult, one-way. ")
             + "Green = cheapest airline on the route. "
               "Base shows — when the site does not give it.").font = NOTE_FONT
-    trips = [("OW", table, best_by_route, cheapest or {}, notes or {})]
+    trips = []
+    if table.cells or not rt:      # a round-trips-only capture has no OW column
+        trips.append(("OW", table, best_by_route, cheapest or {}, notes or {}))
     if rt:
         trips.append(("RT", rt_table, rt_best or {}, rt_cheapest or {}, {}))
     r, widest = _matrix(ws, 4, trips)
@@ -83,15 +84,15 @@ LINES = [("Flights", "flights"), ("Nonstop", "nonstop"), ("Gross low", "gross_lo
          ("Cheapest flight", "flight"), ("Date", "day"),
          ("Return flight", "back"), ("Return date", "back_day"), ("Class (RBD)", "rbd"),
          ("Baggage", "baggage"), ("Refundable", "refundable")]
-#: figures only a round trip has, labelled as they are
-RT_ONLY = {"back", "back_day"}
 
 
 def _matrix(ws, r: int, trips: list) -> tuple:
     """Every route of the run from row r, sectioned Domestic / International.
     `trips`: (trip, table, best_by_route, cheapest, notes) for "OW" and, with round
-    trips, "RT"; a figure's RT line is printed right under its OW line. A line
-    with nothing to show is left out. -> (next free row, widest route in columns)."""
+    trips, "RT". Each airline gets one column per trip - OW | RT under its name -
+    so a figure's one-way and round-trip values sit side by side on one line. A
+    line with nothing to show is left out. -> (next free row, widest route in
+    columns)."""
     per = []
     for trip, table, best, cheapest, notes in trips:
         rows = list(getattr(table, "rows", ()) or ())
@@ -108,6 +109,7 @@ def _matrix(ws, r: int, trips: list) -> tuple:
     for _, cells, *_ in per:
         for route, airline in cells:
             airlines.setdefault(route, set()).add(airline)
+    split = len(per) > 1
 
     widest, section = 1, None
     for route in sorted(airlines, key=_route_key):
@@ -118,53 +120,68 @@ def _matrix(ws, r: int, trips: list) -> tuple:
             ws.cell(r, 1, section).font = SECTION_FONT
             r += 2
         names = sorted(airlines[route], key=lambda a: order_key(o, d, a))
-        ws.cell(r, 1, "{} {}".format(route, "→" if _outbound(o, d) else "←")).font = Font(bold=True)
-        r += 1
-        hdr = ws.cell(r, 1, "Airline")
-        hdr.fill, hdr.font = HDR_FILL, HDR_FONT
-        for i, a in enumerate(names, start=2):
-            h = ws.cell(r, i, a)
-            h.fill, h.font, h.alignment = HDR_FILL, HDR_FONT, CENTER
-        r += 1
+        ws.cell(r, 1, "{} {}".format(route, "\u2192" if _outbound(o, d) else "\u2190")).font = Font(bold=True)
+        r = _airline_header(ws, r + 1, names, [p_[0] for p_ in per])
+        # one column per (airline, trip), airline by airline
+        cols = [(a, p_) for a in names for p_ in per]
         for label, attr in lines:
-            for trip, cells, lows, best, cheapest, notes in per:
-                if (attr in RT_ONLY and trip == "OW") or (attr == "note" and trip == "RT"):
-                    continue
-                values = [_value(cells.get((route, a)), attr, cheapest.get((route, a)),
-                                 lows.get((route, a), {}), notes.get((route, a)))
-                          for a in names]
-                if all(v in (None, "") for v in values):
-                    continue
-                r = _line(ws, r, label if trip == "OW" or attr in RT_ONLY
-                          else _rt_label(label), attr, trip, names, values,
-                          best.get(route))
-        widest = max(widest, len(names) + 1)
+            values = [_value(cells.get((route, a)), attr, cheapest.get((route, a)),
+                             lows.get((route, a), {}), notes.get((route, a)))
+                      for a, (_, cells, lows, _b, cheapest, notes) in cols]
+            if all(v in (None, "") for v in values):
+                continue
+            ws.cell(r, 1, label).font = Font(bold=label == "Gross low")
+            for i, ((a, p_), value) in enumerate(zip(cols, values), start=2):
+                trip, cells, best = p_[0], p_[1], p_[3]
+                _put_value(ws, r, i, attr, value, trip == "RT" and split,
+                           best.get(route) == a and (route, a) in cells)
+            r += 1
+        widest = max(widest, len(cols) + 1)
         r += 1
     return r, widest
 
 
-def _rt_label(label: str) -> str:
-    """'Gross low' -> 'Gross low (RT)'; 'Tax (cheapest)' -> 'Tax (cheapest, RT)'."""
-    return label[:-1] + ", RT)" if label.endswith(")") else label + " (RT)"
+SUB_FILL = PatternFill("solid", fgColor="DDEBF7")
+SUB_FONT = Font(bold=True, size=10, color="1F4E79")
 
 
-def _line(ws, r: int, label: str, attr, trip: str, names: list, values: list,
-          best: Optional[str]) -> int:
-    """One figure line on row r; -> the next row."""
-    ws.cell(r, 1, label).font = (RT_FONT if trip == "RT"
-                                 else Font(bold=label == "Gross low"))
-    for i, (a, value) in enumerate(zip(names, values), start=2):
-        cell = ws.cell(r, i, round(value) if isinstance(value, float) else value)
-        cell.alignment = CENTER
-        if trip == "RT":
-            cell.font = RT_FONT
-        if isinstance(cell.value, (int, float)) and attr not in ("flights", "nonstop"):
-            cell.number_format = "#,##0"
-        if attr == "note" and value:
-            cell.fill = WARN_FILL
-        elif best == a and value not in (None, ""):
-            cell.fill = BEST_FILL
-    return r + 1
+def _airline_header(ws, r: int, names: list, trips: list) -> int:
+    """The Airline header row from r - each name merged across its OW | RT
+    columns, with an OW / RT row under it when the run has round trips; -> next
+    row."""
+    hdr = ws.cell(r, 1, "Airline")
+    hdr.fill, hdr.font = HDR_FILL, HDR_FONT
+    n = len(trips)
+    for k, a in enumerate(names):
+        c = 2 + k * n
+        for i in range(n):
+            ws.cell(r, c + i).fill = HDR_FILL
+        h = ws.cell(r, c, a)
+        h.fill, h.font, h.alignment = HDR_FILL, HDR_FONT, CENTER
+        if n > 1:
+            ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c + n - 1)
+    if trips == ["OW"]:                   # one-way only: no OW / RT row
+        return r + 1
+    ws.cell(r + 1, 1).fill = SUB_FILL
+    for k in range(len(names)):
+        for i, trip in enumerate(trips):
+            sub = ws.cell(r + 1, 2 + k * n + i, trip)
+            sub.fill, sub.font, sub.alignment = SUB_FILL, SUB_FONT, CENTER
+    return r + 2
+
+
+def _put_value(ws, r: int, c: int, attr, value, rt: bool, best: bool) -> None:
+    """One figure in one airline/trip column."""
+    cell = ws.cell(r, c, round(value) if isinstance(value, float) else value)
+    cell.alignment = CENTER
+    if rt:
+        cell.font = Font(color=RT_FONT.color)
+    if isinstance(cell.value, (int, float)) and attr not in ("flights", "nonstop"):
+        cell.number_format = "#,##0"
+    if attr == "note" and value:
+        cell.fill = WARN_FILL
+    elif best:
+        cell.fill = BEST_FILL
 
 
 def _value(c_, attr, fare, lows: dict, note: Optional[str]):

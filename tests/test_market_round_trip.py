@@ -258,24 +258,28 @@ def test_the_workbook_puts_each_round_trip_under_its_one_way_line(tmp_path):
     ow, rt = build_fares(res), build_fares(res, trip="RT", stay=9)
     wb = load_workbook(write_workbook(tmp_path / "rt.xlsx", table=ow, best_by_route={},
                                       rows=list(ow.rows), rt_table=rt))
-    # Fares by Class: same six columns; the class's RT line right under it
+    # Fares by Class: OW figures then RT figures across each class line
     cls = _sheet(wb, "Fares by Class")
     head = next(r for r in cls if r and r[0] == "RBD")
-    assert head[:7] == ["RBD", "Base", "YQ+YR", "Base with YQ", "Tax", "Gross", None]
-    q, q_rt = cls[cls.index(head) + 1], cls[cls.index(head) + 2]
-    assert q[0] == "Q" and q[5] == 4849
-    assert q_rt[0] == "Q RT" and q_rt[5] == 9698 and q_rt[3] == 6448 + 1000
-    # Fare Comparison: no separate block; "(RT)" lines under the one-way ones
+    figures = ["Base", "YQ+YR", "Base with YQ", "Tax", "Gross"]
+    assert head[:11] == ["RBD"] + figures + figures
+    group = cls[cls.index(head) - 1]
+    assert group[1] == "OW" and group[6] == "RT"
+    q = cls[cls.index(head) + 1]
+    assert q[0] == "Q" and q[5] == 4849 and q[10] == 9698 and q[8] == 6448 + 1000
+    # Fare Comparison: each airline has OW | RT columns under its name
     cmp_ = _sheet(wb, "Fare Comparison")
     labels = [r[0] for r in cmp_ if r and r[0]]
-    assert "ONE WAY" not in labels and not any(str(x).startswith("ROUND TRIP") for x in labels)
-    i = labels.index("Gross low")
-    assert labels[i + 1] == "Gross low (RT)"
-    gross = next(r for r in cmp_ if r and r[0] == "Gross low (RT)")
-    airlines = next(r for r in cmp_ if r and r[0] == "Airline")
-    assert gross[airlines.index("BS")] == 9698 and gross[airlines.index("2A")] is None
+    assert not any("(RT)" in str(x) or str(x).startswith("ROUND TRIP") for x in labels)
+    head = next(r for r in cmp_ if r and r[0] == "Airline")
+    sub = cmp_[cmp_.index(head) + 1]
+    bs, ta = head.index("BS"), head.index("2A")
+    assert sub[bs:bs + 2] == ["OW", "RT"] and head[bs + 1] is None   # merged over both
+    gross = next(r for r in cmp_ if r and r[0] == "Gross low")
+    assert gross[bs] == 4849 and gross[bs + 1] == 9698
+    assert gross[ta] == 4849 and gross[ta + 1] is None              # 2A: one-way only
     back = next(r for r in cmp_ if r and r[0] == "Return flight")
-    assert back[airlines.index("BS")] == "BS 142 18:35"
+    assert back[bs] is None and back[bs + 1] == "BS 142 18:35"
     # Fares: one table with a Trip column, the RT line under its airline's OW line
     fares = _sheet(wb, "Fares")
     head = next(r for r in fares if r and r[0] == "Route")
@@ -297,8 +301,9 @@ def test_one_way_only_sheets_have_no_trip_column(tmp_path):
                                       rows=list(ow.rows)))
     head = next(r for r in _sheet(wb, "Fares") if r and r[0] == "Route")
     assert head[:3] == ["Route", "Airline", "Flights"]
-    labels = [r[0] for r in _sheet(wb, "Fare Comparison") if r and r[0]]
-    assert not any("(RT)" in str(x) for x in labels)
+    cmp_ = _sheet(wb, "Fare Comparison")
+    head = next(r for r in cmp_ if r and r[0] == "Airline")
+    assert cmp_[cmp_.index(head) + 1][0] == "Flights"            # no OW / RT row
 
 
 def test_pair_trips_puts_round_trips_under_their_one_way_cells():
